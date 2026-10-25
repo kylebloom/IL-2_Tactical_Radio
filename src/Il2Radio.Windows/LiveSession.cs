@@ -11,19 +11,56 @@ using Il2Radio.Core.MissionLog;
 using Il2Radio.Core.Radio;
 using Il2Radio.Core.Telemetry;
 
-namespace Il2Radio.Diag;
+namespace Il2Radio.Windows;
+
+/// <summary>How a <see cref="LiveSession"/> runs: the developer monitor (Diag) or the player's app.</summary>
+internal sealed record LiveOptions
+{
+    /// <summary>UDP telemetry port to listen on and capture; null leaves telemetry alone (nothing but the monitor uses it).</summary>
+    public int? UdpPort { get; init; }
+
+    public TimeSpan? Duration { get; init; }
+
+    /// <summary>Where the evidence summary (and the UDP capture) is written at the end.</summary>
+    public string OutputDir { get; init; } = Path.Combine(Environment.CurrentDirectory, "diag-output");
+
+    /// <summary>
+    /// The player's view: data-source state and the radio's own replies, without telemetry, the
+    /// contact table or the reasons contacts stayed silent, which would show aircraft nobody reported.
+    /// </summary>
+    public bool Compact { get; init; }
+
+    public string Title { get; init; } = "IL-2 radio feasibility monitor";
+
+    public KeyBindings Keys { get; init; } = KeyBindings.Default;
+
+    /// <summary>Remind to start track recording when none runs this long into a mission; zero switches it off.</summary>
+    public TimeSpan RecordingReminder { get; init; } = TimeSpan.FromSeconds(60);
+
+    /// <summary>The app's start-up check lines, kept in the compact view (otherwise its alerts are listed).</summary>
+    public IReadOnlyList<string> StartupResults { get; init; } = [];
+}
 
 /// <summary>
 /// Watches every data source IL-2 exposes during a mission and records evidence of what each one
 /// actually delivers: player telemetry, mission-log growth, ACMI growth and AI position updates.
 /// </summary>
-internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeSpan? duration = null, RadioVoice? voice = null)
+internal sealed partial class LiveSession(Il2Install install, LiveOptions options, RadioVoice? voice = null)
 {
+    /// <summary>What the reminder says, in the console and the chat output.</summary>
+    public const string RecordingReminderText = "No track is recording, so your flight can't see where anyone is. Press LCtrl+R to record.";
+
+    /// <summary>Log chunks arrive about every 33 s while a mission runs; none for this long means it ended or is paused.</summary>
+    private static readonly TimeSpan MissionQuietAfter = TimeSpan.FromSeconds(90);
+
     private readonly ContactTracker _tracker = new();
+    private readonly SightingMemory _sightings = new(); // what the flight has spotted, kept between calls
     private readonly DateTime _startedUtc = DateTime.UtcNow;
     private readonly object _gate = new();
-    private readonly List<string> _notes = [];
-    private readonly string _outputDir = Path.Combine(Environment.CurrentDirectory, "diag-output");
+    private readonly List<(string Text, bool MonitorOnly)> _notes = []; // MonitorOnly: kept out of the compact view (radio calls with their silences, which name unreported aircraft)
+    private readonly string _outputDir = options.OutputDir;
+    private readonly int? _udpPort = options.UdpPort;
+    private readonly TrackRecordingWatch _recordingWatch = new(options.RecordingReminder);
 
     // Telemetry
     private long _motionPackets, _statePackets, _otherPackets;
@@ -45,6 +82,12 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
     // Mission file
     private DateTime _missionStamp;
 
+    // Running mission, from its log chunks
+    private string? _chunkStamp;
+    private DateTime? _missionStartUtc;
+    private DateTime? _chunksLastWriteUtc;
+    private bool _recording; // a track for this mission is being written (IL-2 holds the ACMI locked)
+
     // ACMI
     private string? _acmiPath;
     private long _acmiOffset;
@@ -56,12 +99,16 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
     private long _acmiSizeOnDisk;
     private int _acmiGrowthCount;
 
-    private string _lastCommandOutput = $"Keys: {NumpadKeys.Legend}";
+    private string _lastCommandOutput = $"Keys: {options.Keys.Legend}";
+    private string _lastExchange = $"Keys: {options.Keys.Legend}"; // the compact view's: replies only
 
-    public async Task<int> RunAsync()
+    /// <summary>Runs until the quit key, Ctrl+C, the duration or <paramref name="stop"/>.</summary>
+    public async Task<int> RunAsync(CancellationToken stop = default)
     {
         Directory.CreateDirectory(_outputDir);
-        using var cts = duration is { } d ? new CancellationTokenSource(d) : new CancellationTokenSource();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(stop);
+        if (options.Duration is { } d)
+            cts.CancelAfter(d);
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
         if (ShadowCopy.IsElevated())
@@ -74,14 +121,14 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
             Note("snapshots: NOT running as administrator — a locked ACMI cannot be read during recording");
         }
 
-        var udp = Task.Run(() => ListenUdpAsync(cts.Token));
+        var udp = _udpPort is int port ? Task.Run(() => ListenUdpAsync(port, cts.Token)) : Task.CompletedTask;
         while (!cts.IsCancellationRequested)
         {
             Poll();
             Render();
             for (int i = 0; i < 20 && !cts.IsCancellationRequested; i++)
             {
-                foreach (var key in NumpadKeys.Pressed())
+                foreach (var key in options.Keys.Pressed())
                     HandleKey(key, cts);
                 await Task.Delay(50);
             }
@@ -104,6 +151,8 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
                      RadioKey.FriendlyPositions => RadioCommand.FriendlyPositions,
                      RadioKey.FlightPosition => RadioCommand.FlightPosition,
                      RadioKey.Rejoin => RadioCommand.Rejoin,
+                     RadioKey.EnemyContacts => RadioCommand.EnemyContacts,
+                     RadioKey.IdentifyContact => RadioCommand.IdentifyContact,
                      _ => (RadioCommand?)null,
                  } is { } command)
             _ = RequestAsync(command);
@@ -127,10 +176,55 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
     /// <summary>State of the IL-2 audio meter that holds replies while IL-2 transmits, shown in the monitor header.</summary>
     public Func<string?>? AudioStatus { get; set; }
 
+    /// <summary>Raised with a message for the player, such as the track-recording reminder, e.g. for the chat output.</summary>
+    public event Action<string>? Alert;
+
+    private readonly List<string> _missionAlerts = [];
+    private DateTime? _alertedMission;
+
+    /// <summary>
+    /// Raises <see cref="Alert"/> now and again whenever a mission starts, for problems that last the
+    /// whole session (e.g. IL-2 not exporting tracks): text shown before the flight has faded by then.
+    /// </summary>
+    public void AlertEachMission(string text)
+    {
+        lock (_gate)
+            _missionAlerts.Add(text);
+        Note($"warning: {text}", monitorOnly: true); // the compact view lists these on their own
+        Alert?.Invoke(text);
+    }
+
+    /// <summary>
+    /// Connects the outputs: the key click and the voice's hold for IL-2's own radio, and the chat
+    /// output (calls, replies in step with the voice, alerts, and the chat's menu and paging keys).
+    /// </summary>
+    public void Attach(Il2AudioMeter? meter, IChatSink? chat)
+    {
+        if (voice is not null)
+            Keyed += (_, _) => voice.PlayKeyClick();
+        if (voice is not null && meter is not null)
+        {
+            // Don't talk over IL-2's own AI radio: replies wait while its audio peaks above the engine.
+            voice.ChannelBusy = () => meter.Busy;
+            AudioStatus = () => meter.Status;
+        }
+
+        if (chat is null)
+            return;
+        // The call shows the moment the key is pressed; the answers follow once positions are refreshed.
+        Keyed += (radio, player) => chat.Post([RadioChat.RequestLine(radio, player)]);
+        Transmitted += (_, result, _, problem) => chat.Post(RadioChat.Replies(result, problem), syncToVoice: voice is not null);
+        if (voice is not null)
+            voice.Speaking += (transmission, _) => chat.Spoken(transmission.Text);
+        ChatStatus = () => chat.Status;
+        ChatKey += key => ChatSinks.HandleKey(chat, key, options.Keys);
+        Alert += text => chat.Post([new ChatLine(ChatLineKind.System, "", text, -1, TimeSpan.Zero)]);
+    }
+
     private string Describe(RadioCommand command, string? problem = null)
     {
         var settings = new RadioSettings();
-        var result = RadioCommands.Execute(command, _tracker, settings);
+        var result = RadioCommands.Execute(command, _tracker, settings, _sightings);
         Transmitted?.Invoke(command, result, _tracker.Player, problem);
         voice?.Say(result.Replies.Select(r => new Transmission(
             r.Text,
@@ -143,13 +237,16 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
             sb.AppendLine($"  RADIO: \"{r.Text}\" (fix age {r.FixAgeSeconds:F1} s)");
         if (result.Outcome == ReplyOutcome.PlayerPositionUnknown)
             sb.AppendLine("  (no live player position — no relative report can be made)");
+        string replies = sb.ToString();
         foreach (var s in result.Suppressed.Take(8))
             sb.AppendLine($"  silent: {s.Contact.DisplayName} — {s.Reason}");
-        Note(sb.ToString().TrimEnd());
+        Note(sb.ToString().TrimEnd(), monitorOnly: true);
+        lock (_gate)
+            _lastExchange = problem is null ? replies : replies + $"  ({problem})\n";
         return sb.ToString();
     }
 
-    private async Task ListenUdpAsync(CancellationToken token)
+    private async Task ListenUdpAsync(int udpPort, CancellationToken token)
     {
         UdpClient client;
         try
@@ -196,12 +293,60 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
 
     private void Poll()
     {
+        bool remind;
+        var alerts = new List<string>();
         lock (_gate)
         {
             try { PollMission(); } catch (Exception ex) { Note($"mission: {ex.Message}"); }
             try { PollBinaryLog(); } catch (Exception ex) { Note($"mlg: {ex.Message}"); }
             try { PollTextLogs(); } catch (Exception ex) { Note($"text log: {ex.Message}"); }
             try { PollAcmi(); } catch (Exception ex) { Note($"acmi: {ex.Message}"); }
+            try { PollRecording(); } catch (Exception ex) { Note($"recording: {ex.Message}"); }
+            var now = DateTime.UtcNow;
+            var mission = RunningMissionStartUtc(now);
+            remind = _recordingWatch.Update(now, mission, _recording);
+
+            // A mission found in the first seconds was already running at start-up, when the alerts were shown.
+            if (mission is { } m && m != _alertedMission)
+            {
+                _alertedMission = m;
+                if (now - _startedUtc > TimeSpan.FromSeconds(30))
+                    alerts.AddRange(_missionAlerts);
+            }
+        }
+
+        if (remind)
+        {
+            Note($"reminder: {RecordingReminderText}");
+            alerts.Add(RecordingReminderText);
+        }
+        foreach (string alert in alerts)
+            Alert?.Invoke(alert);
+    }
+
+    /// <summary>Start of the mission whose log chunks are still arriving, or null (no mission, ended or paused). Caller holds _gate.</summary>
+    private DateTime? RunningMissionStartUtc(DateTime nowUtc) =>
+        _chunksLastWriteUtc is { } last && nowUtc - last < MissionQuietAfter ? _missionStartUtc : null;
+
+    /// <summary>
+    /// Whether this mission's track is recording: IL-2 holds the newest ACMI without read sharing
+    /// exactly while it writes it, so a failed shared open means recording. Only an ACMI created
+    /// after the mission started counts. Caller holds _gate.
+    /// </summary>
+    private void PollRecording()
+    {
+        _recording = false;
+        if (_acmiPath is null || !File.Exists(_acmiPath))
+            return;
+        if (_missionStartUtc is { } start && File.GetCreationTimeUtc(_acmiPath) < start.AddMinutes(-2))
+            return; // a track from an earlier mission
+        try
+        {
+            using var fs = new FileStream(_acmiPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        }
+        catch (IOException)
+        {
+            _recording = true;
         }
     }
 
@@ -233,6 +378,13 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
         {
             chunks = [whole]; // a whole-mission log; only appears once the mission ends
         }
+        else
+        {
+            _chunksLastWriteUtc = null; // the chunks were deleted: the next mission is loading
+        }
+
+        if (_usingChunks && chunks.Count > 0)
+            TrackMission(chunks);
 
         foreach (string path in chunks)
         {
@@ -300,6 +452,27 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
     [GeneratedRegex(@"^missionReport\((?<stamp>[^)]+)\)\[(?<index>\d+)\]\.")]
     private static partial Regex ChunkName();
 
+    /// <summary>
+    /// Notes which mission the chunks belong to and when they last grew. Their names carry the
+    /// mission's local start time ("missionReport(2026-10-25_19-01-02)[3].mlg"); if that doesn't parse,
+    /// the moment the chunks were first seen stands in. Caller holds _gate.
+    /// </summary>
+    private void TrackMission(List<string> chunks)
+    {
+        string stamp = ChunkName().Match(Path.GetFileName(chunks[0])).Groups["stamp"].Value;
+        if (stamp != _chunkStamp)
+        {
+            _chunkStamp = stamp;
+            _missionStartUtc = DateTime.TryParseExact(stamp, "yyyy-MM-dd_HH-mm-ss", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeLocal, out var local)
+                ? local.ToUniversalTime()
+                : DateTime.UtcNow;
+            Note($"mission: started {_missionStartUtc.Value.ToLocalTime():HH:mm:ss}");
+        }
+
+        _chunksLastWriteUtc = chunks.Max(File.GetLastWriteTimeUtc);
+    }
+
     private void PollAcmi()
     {
         var newest = NewestSince(install.TracksDir, "*.acmi");
@@ -336,7 +509,7 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
             // IL-2 opens the ACMI without read sharing while recording. It is read on demand
             // through a shadow-copy snapshot when a radio request is made.
             if (!_acmiLocked)
-                Note("acmi: locked by IL-2 while recording — positions will be read by snapshot when you press Num1.");
+                Note("acmi: locked by IL-2 while recording — positions will be read by snapshot on each radio call.");
             _acmiLocked = true;
             return;
         }
@@ -443,49 +616,95 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
         lock (_gate)
         {
             var now = DateTime.UtcNow;
-            sb.AppendLine($"IL-2 radio feasibility monitor — {DateTime.Now:HH:mm:ss}   ({NumpadKeys.Legend})");
+            sb.AppendLine($"{options.Title} — {DateTime.Now:HH:mm:ss}   ({options.Keys.Legend})");
             if (ChatStatus?.Invoke() is { } chatStatus)
                 sb.AppendLine(chatStatus);
             if (AudioStatus?.Invoke() is { } audioStatus)
                 sb.AppendLine(audioStatus);
             sb.AppendLine(new string('─', 110));
-            sb.AppendLine($"UDP telemetry :{udpPort}  motion {_motionPackets}  state {_statePackets}  other {_otherPackets}  last {Ago(_lastPacketUtc, now)}  vehicle {_vehicleName ?? "?"}");
-            if (_lastMotion is { } m)
-                sb.AppendLine($"   player heading {m.HeadingDegrees:000}°  pitch {m.Pitch * 57.3:F0}°  roll {m.Roll * 57.3:F0}°   (no world position in telemetry)");
-            if (_lastState is { } s)
-                sb.AppendLine($"   IAS {(s.IndicatedAirspeedMs * 3.6):F0} km/h  AGL {s.AboveGroundLevelM:F0} m  paused {s.Paused}");
-            sb.AppendLine($"Binary log    {(_mlg is null ? "(no mission log yet)" : Path.GetFileName(_mlg.Path))}  events {_mlgEvents}  growth {_mlgGrowthCount}×  last {Ago(_mlgLastGrowthUtc, now)}");
-            sb.AppendLine($"Text log      events {_textEvents}  files {_textLogOffsets.Count}");
-            sb.AppendLine($"ACMI          {(_acmiPath is null ? "(no new .acmi yet — enable tacviewrecord and record a track)" : Path.GetFileName(_acmiPath))}{(_acmiLocked ? $"  LOCKED by IL-2 ({_acmiSizeOnDisk / 1024} KB; read {_acmiOffset / 1024} KB, refreshed on Num1)" : "")}  growth {_acmiGrowthCount}×  last {Ago(_acmiLastGrowthUtc, now)}  t={_acmi?.CurrentTime:F0}s");
-            sb.AppendLine(new string('─', 110));
-
-            var player = _tracker.Player;
-            sb.AppendLine($"{"contact",-30} {"type",-18} {"coal",4} {"status",-10} {"source/detail",-22} {"age s",7}  relative to player");
-            foreach (var c in _tracker.Contacts.OrderByDescending(c => c.IsPlayer).ThenBy(c => c.Coalition).ThenBy(c => c.FormationIndex ?? 99).Take(28))
-            {
-                string src = c.LastFix is { } f ? $"{f.Source}/{f.Detail}" : "-";
-                string age = c.LastFix is { } f2 ? _tracker.AgeSeconds(f2).ToString("F0") : "-";
-                string rel = "";
-                // Only live tracks give a current relative position; event snapshots are history.
-                if (!c.IsPlayer && player?.LastFix is { Source: PositionSource.AcmiTrack } pf && c.LastFix is { Source: PositionSource.AcmiTrack } cf
-                    && Navigation.Relative(pf.Position, cf.Position) is { } r)
-                    rel = $"brg {r.BearingDegrees:000} rng {r.RangeMetres / 1000:F1} km Δalt {r.AltitudeDeltaMetres:+0;-0} m";
-                else if (c.LastFix is { } snap)
-                    rel = $"(no live position; last seen at {snap.Detail})";
-                string name = (c.IsPlayer ? "YOU " : c.InPlayerFlight ? $"#{c.FormationIndex} " : "") + c.DisplayName;
-                sb.AppendLine($"{Trunc(name, 30),-30} {Trunc(c.TypeName, 18),-18} {c.Coalition,4} {c.Status,-10} {Trunc(src, 22),-22} {age,7}  {rel}");
-            }
-
-            sb.AppendLine(new string('─', 110));
-            sb.AppendLine(_lastCommandOutput.TrimEnd());
-            sb.AppendLine(new string('─', 110));
-            foreach (string note in _notes.TakeLast(8))
-                sb.AppendLine(note);
+            if (options.Compact)
+                RenderCompact(sb, now);
+            else
+                RenderMonitor(sb, now);
         }
 
         if (!Console.IsOutputRedirected)
             Console.Clear();
         Console.Write(sb.ToString());
+    }
+
+    /// <summary>The player's view. Shows nothing about other aircraft beyond what the radio itself said. Caller holds _gate.</summary>
+    private void RenderCompact(StringBuilder sb, DateTime now)
+    {
+        var missionStart = RunningMissionStartUtc(now);
+        sb.AppendLine(missionStart is { } start
+            ? $"Mission     running since {start.ToLocalTime():HH:mm:ss}"
+            : $"Mission     {(_chunkStamp is null ? "waiting for a mission to start" : "none running (ended, paused or loading)")}");
+        sb.AppendLine(_recording
+            ? $"Track       recording ({Path.GetFileName(_acmiPath)}, {_acmiSizeOnDisk / 1024} KB): positions are live"
+            : missionStart is not null
+                ? "Track       NOT recording: press LCtrl+R in the cockpit, or nobody can report positions"
+                : "Track       not recording (press LCtrl+R once in the cockpit)");
+        var player = _tracker.Player;
+        int flight = _tracker.Contacts.Count(c => c.InPlayerFlight && !c.IsPlayer);
+        sb.AppendLine(player is null
+            ? "You         not identified yet (the mission log names you once you spawn)"
+            : $"You         {player.DisplayName} in {player.TypeName}{(flight > 0 ? $", {flight} others in your flight" : "")}");
+        if (options.StartupResults.Count > 0)
+        {
+            sb.AppendLine("At start-up:");
+            foreach (string line in options.StartupResults)
+                sb.AppendLine(line);
+        }
+        else
+        {
+            foreach (string alert in _missionAlerts)
+                sb.AppendLine($"Warning     {alert}");
+        }
+        sb.AppendLine(new string('─', 110));
+        sb.AppendLine(_lastExchange.TrimEnd());
+        sb.AppendLine(new string('─', 110));
+        foreach (var note in _notes.Where(n => !n.MonitorOnly).TakeLast(8))
+            sb.AppendLine(note.Text);
+    }
+
+    /// <summary>The developer monitor: every source, every contact, every reason for silence. Caller holds _gate.</summary>
+    private void RenderMonitor(StringBuilder sb, DateTime now)
+    {
+        sb.AppendLine(_udpPort is int udpPort
+            ? $"UDP telemetry :{udpPort}  motion {_motionPackets}  state {_statePackets}  other {_otherPackets}  last {Ago(_lastPacketUtc, now)}  vehicle {_vehicleName ?? "?"}"
+            : "UDP telemetry (not listening)");
+        if (_lastMotion is { } m)
+            sb.AppendLine($"   player heading {m.HeadingDegrees:000}°  pitch {m.Pitch * 57.3:F0}°  roll {m.Roll * 57.3:F0}°   (no world position in telemetry)");
+        if (_lastState is { } s)
+            sb.AppendLine($"   IAS {(s.IndicatedAirspeedMs * 3.6):F0} km/h  AGL {s.AboveGroundLevelM:F0} m  paused {s.Paused}");
+        sb.AppendLine($"Binary log    {(_mlg is null ? "(no mission log yet)" : Path.GetFileName(_mlg.Path))}  events {_mlgEvents}  growth {_mlgGrowthCount}×  last {Ago(_mlgLastGrowthUtc, now)}");
+        sb.AppendLine($"Text log      events {_textEvents}  files {_textLogOffsets.Count}");
+        sb.AppendLine($"ACMI          {(_acmiPath is null ? "(no new .acmi yet — enable tacviewrecord and record a track)" : Path.GetFileName(_acmiPath))}{(_acmiLocked ? $"  LOCKED by IL-2 ({_acmiSizeOnDisk / 1024} KB; read {_acmiOffset / 1024} KB, refreshed on each call)" : "")}  growth {_acmiGrowthCount}×  last {Ago(_acmiLastGrowthUtc, now)}  t={_acmi?.CurrentTime:F0}s");
+        sb.AppendLine(new string('─', 110));
+
+        var player = _tracker.Player;
+        sb.AppendLine($"{"contact",-30} {"type",-18} {"coal",4} {"status",-10} {"source/detail",-22} {"age s",7}  relative to player");
+        foreach (var c in _tracker.Contacts.OrderByDescending(c => c.IsPlayer).ThenBy(c => c.Coalition).ThenBy(c => c.FormationIndex ?? 99).Take(28))
+        {
+            string src = c.LastFix is { } f ? $"{f.Source}/{f.Detail}" : "-";
+            string age = c.LastFix is { } f2 ? _tracker.AgeSeconds(f2).ToString("F0") : "-";
+            string rel = "";
+            // Only live tracks give a current relative position; event snapshots are history.
+            if (!c.IsPlayer && player?.LastFix is { Source: PositionSource.AcmiTrack } pf && c.LastFix is { Source: PositionSource.AcmiTrack } cf
+                && Navigation.Relative(pf.Position, cf.Position) is { } r)
+                rel = $"brg {r.BearingDegrees:000} rng {r.RangeMetres / 1000:F1} km Δalt {r.AltitudeDeltaMetres:+0;-0} m";
+            else if (c.LastFix is { } snap)
+                rel = $"(no live position; last seen at {snap.Detail})";
+            string name = (c.IsPlayer ? "YOU " : c.InPlayerFlight ? $"#{c.FormationIndex} " : "") + c.DisplayName;
+            sb.AppendLine($"{Trunc(name, 30),-30} {Trunc(c.TypeName, 18),-18} {c.Coalition,4} {c.Status,-10} {Trunc(src, 22),-22} {age,7}  {rel}");
+        }
+
+        sb.AppendLine(new string('─', 110));
+        sb.AppendLine(_lastCommandOutput.TrimEnd());
+        sb.AppendLine(new string('─', 110));
+        foreach (var note in _notes.TakeLast(8))
+            sb.AppendLine(note.Text);
     }
 
     private string WriteSummary()
@@ -495,7 +714,9 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
         lock (_gate)
         {
             sb.AppendLine($"# Live session evidence ({_startedUtc:u} → {DateTime.UtcNow:u})\n");
-            sb.AppendLine($"- UDP telemetry on port {udpPort}: motion packets {_motionPackets}, state packets {_statePackets}, vehicle `{_vehicleName ?? "?"}`");
+            sb.AppendLine(_udpPort is int udpPort
+                ? $"- UDP telemetry on port {udpPort}: motion packets {_motionPackets}, state packets {_statePackets}, vehicle `{_vehicleName ?? "?"}`"
+                : "- UDP telemetry: not listened to");
             sb.AppendLine($"- Binary mission log: {(_mlg?.Path ?? "none")} — {_mlgEvents} events, file grew during session {_mlgGrowthCount} times (last {(_mlgLastGrowthUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "never")})");
             sb.AppendLine($"- Text mission log: {_textEvents} events across {_textLogOffsets.Count} files");
             sb.AppendLine($"- ACMI: {(_acmiPath ?? "none")} — grew {_acmiGrowthCount} times (last {(_acmiLastGrowthUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "never")}), stream time {_acmi?.CurrentTime:F0} s");
@@ -514,17 +735,17 @@ internal sealed partial class LiveSession(Il2Install install, int udpPort, TimeS
             foreach (var c in _tracker.Contacts)
                 sb.AppendLine($"- {(c.IsPlayer ? "**player** " : "")}{c.DisplayName} ({c.TypeName}) coalition {c.Coalition}, {c.Status}, last fix {c.LastFix?.Source}/{c.LastFix?.Detail}");
             sb.AppendLine("\n## Notes\n");
-            foreach (string n in _notes)
-                sb.AppendLine($"    {n.Replace("\n", "\n    ")}");
+            foreach (var n in _notes)
+                sb.AppendLine($"    {n.Text.Replace("\n", "\n    ")}");
         }
 
         File.WriteAllText(path, sb.ToString());
         return path;
     }
 
-    private void Note(string text)
+    private void Note(string text, bool monitorOnly = false)
     {
-        lock (_gate) _notes.Add($"[{DateTime.Now:HH:mm:ss}] {text}");
+        lock (_gate) _notes.Add(($"[{DateTime.Now:HH:mm:ss}] {text}", monitorOnly));
     }
 
     private static string Ago(DateTime? t, DateTime now) => t is null ? "never" : $"{(now - t.Value).TotalSeconds:F0}s ago";

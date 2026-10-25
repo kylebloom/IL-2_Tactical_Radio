@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using Il2Radio.Core.Acmi;
+using Il2Radio.Core.Contacts;
 using Il2Radio.Core.Geometry;
 using Il2Radio.Core.MissionFile;
 using Il2Radio.Core.MissionLog;
@@ -287,13 +288,44 @@ public class AcmiStreamTests
     public void Empty_transform_fields_keep_previous_values_and_removal_is_tracked()
     {
         var acmi = new AcmiStream();
-        acmi.Feed(Acmi.Header + "#0\nb2,T=0.01|0.02|500,Type=Air+FixedWing\n#2\nb2,T=||600\n#3\n-b2\n");
+        acmi.Feed(Acmi.Header + "#0\nb2,T=0.01|0.02|500,Type=Air+FixedWing\n#2\nb2,T=||600\n#3\n-b2\n#4\n");
 
         var obj = acmi.Objects["b2"];
         Assert.Equal(0.01, obj.Longitude);
         Assert.Equal(600, obj.Altitude);
         Assert.True(obj.Removed);
         Assert.Equal(3, obj.RemovedTime);
+    }
+
+    [Fact]
+    public void Final_frame_removals_of_a_closed_recording_are_not_applied()
+    {
+        // IL-2 ends a recording by removing every object in the last frame.
+        var acmi = new AcmiStream();
+        acmi.Feed(Acmi.Header + "#0\na,T=0|0|500,Type=Air+FixedWing\nb,T=0|0|600,Type=Air+FixedWing\n#168.84\n-a\n-b\n");
+
+        Assert.False(acmi.Objects["a"].Removed);
+        Assert.False(acmi.Objects["b"].Removed);
+        Assert.Equal(2, acmi.PendingRemovals);
+    }
+}
+
+public class ContactTrackerAcmiTests
+{
+    [Fact]
+    public void Aircraft_removed_by_one_recording_segment_come_back_in_the_next()
+    {
+        var tracker = new ContactTracker();
+        var first = new AcmiStream();
+        first.Feed(Acmi.Header + "#0\n" + Acmi.Object("a", 0, 0, 500, "Pilot A", "Axis") + "#1\n-a\n#2\n");
+        tracker.Apply(first);
+        Assert.Equal(Contacts.ContactStatus.Despawned, Assert.Single(tracker.Contacts).Status);
+
+        var second = new AcmiStream(); // next file, e.g. _01.acmi
+        second.Feed(Acmi.Header + "#0\n" + Acmi.Object("a", 100, 0, 500, "Pilot A", "Axis"));
+        tracker.Apply(second);
+
+        Assert.Equal(Contacts.ContactStatus.Airborne, Assert.Single(tracker.Contacts).Status);
     }
 }
 

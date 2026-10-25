@@ -2,7 +2,7 @@ using System.IO.MemoryMappedFiles;
 using Il2Radio.Core.Osd;
 using Il2Radio.Core.Radio;
 
-namespace Il2Radio.Diag;
+namespace Il2Radio.Windows;
 
 /// <summary>
 /// Shows the radio log in RivaTuner Statistics Server's on-screen display through its documented

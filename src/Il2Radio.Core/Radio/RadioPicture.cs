@@ -19,6 +19,9 @@ public sealed record RadioSettings
 
     /// <summary>The player is "in formation" when this close to a member of the flight's main group.</summary>
     public double InFormationMetres { get; init; } = 1_500;
+
+    /// <summary>Spotting and identification model used by the enemy-contact commands.</summary>
+    public VisibilitySettings Visibility { get; init; } = new();
 }
 
 public enum ReplyOutcome

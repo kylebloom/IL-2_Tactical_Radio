@@ -1,0 +1,32 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Windows-only I/O and the live session, shared by the radio app (Il2Radio.App) and the developer console (Il2Radio.Diag). -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\Il2Radio.Core\Il2Radio.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Management" Version="10.0.14" />
+    <PackageReference Include="System.Speech" Version="10.0.14" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Voice-pack manifests (file names only, no audio), built in so the single-file app needs no voices folder -->
+    <EmbeddedResource Include="..\..\voices\*.json" LogicalName="voices/%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Il2Radio.Diag" />
+    <InternalsVisibleTo Include="Il2Radio" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

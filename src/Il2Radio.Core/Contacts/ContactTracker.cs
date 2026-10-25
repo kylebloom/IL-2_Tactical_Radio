@@ -43,6 +43,9 @@ public sealed class Contact(string key)
     public int? FormationIndex { get; internal set; }
     public ContactStatus Status { get; internal set; } = ContactStatus.Spawned;
     public bool Damaged { get; internal set; }
+
+    /// <summary>The despawn came from the Tacview track (object removed), not the mission log, so a reappearance can undo it.</summary>
+    internal bool DespawnedByTrack { get; set; }
     public PositionFix? LastFix { get; internal set; }
 
     /// <summary>Callsign number from the mission plan (8 = "Oriole"); 0 when the plan has none for this pilot.</summary>
@@ -205,7 +208,16 @@ public sealed class ContactTracker(TimeProvider? time = null)
             if (c.Callsign == 0) ResolveCallsign(c);
             if (c.Coalition < 0) c.Coalition = AcmiCoalition(obj.Coalition);
             if (obj.Removed && c.IsOperational)
+            {
                 c.Status = ContactStatus.Despawned;
+                c.DespawnedByTrack = true;
+            }
+            else if (!obj.Removed && c.Status == ContactStatus.Despawned && c.DespawnedByTrack)
+            {
+                // Seen again, e.g. in the next recording segment (_01.acmi) after the previous one closed.
+                c.Status = ContactStatus.Airborne;
+                c.DespawnedByTrack = false;
+            }
             if (acmi.PositionOf(obj) is { } p)
                 c.LastFix = new PositionFix(p, PositionSource.AcmiTrack, obj.LastPositionTime, "track", obj.HeadingDegrees);
 

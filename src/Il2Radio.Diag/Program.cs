@@ -6,7 +6,7 @@ using Il2Radio.Core.Contacts;
 using Il2Radio.Core.MissionFile;
 using Il2Radio.Core.MissionLog;
 using Il2Radio.Core.Radio;
-using Il2Radio.Diag;
+using Il2Radio.Windows;
 
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 string command = args.Length > 0 ? args[0].ToLowerInvariant() : "help";
@@ -33,25 +33,8 @@ switch (command)
         using (var meter = voice is null || Option("--radio-wait") == "off" ? null : new Il2AudioMeter(RadioWaitRatio()))
         using (var chat = ChatSinks.Start(ChatOptions.Parse(args).WithGameScreen(install).WithIl2Areas(install)))
         {
-            var session = new LiveSession(install, port, duration, voice);
-            if (voice is not null)
-                session.Keyed += (_, _) => voice.PlayKeyClick();
-            if (voice is not null && meter is not null)
-            {
-                // Don't talk over IL-2's own AI radio: replies wait while its audio peaks above the engine.
-                voice.ChannelBusy = () => meter.Busy;
-                session.AudioStatus = () => meter.Status;
-            }
-            if (chat is not null)
-            {
-                // The call shows the moment the key is pressed; the answers follow once positions are refreshed.
-                session.Keyed += (radio, player) => chat.Post([RadioChat.RequestLine(radio, player)]);
-                session.Transmitted += (_, result, _, problem) => chat.Post(RadioChat.Replies(result, problem), syncToVoice: voice is not null);
-                if (voice is not null)
-                    voice.Speaking += (transmission, _) => chat.Spoken(transmission.Text);
-                session.ChatStatus = () => chat.Status;
-                session.ChatKey += key => ChatSinks.HandleKey(chat, key);
-            }
+            var session = new LiveSession(install, new LiveOptions { UdpPort = port, Duration = duration }, voice);
+            session.Attach(meter, chat);
             return await session.RunAsync();
         }
     case "chat-test":
@@ -216,28 +199,11 @@ int Check(bool apply)
     Console.WriteLine($"IL-2 install: {install.Root}");
     var cfg = StartupConfig.Load(install.StartupCfg);
 
-    (string Section, string Key, string Value, string Why)[] wanted =
-    [
-        ("telemetrydevice", "enable", "true", "player state/events over UDP"),
-        ("telemetrydevice", "addr", "\"127.0.0.1\"", ""),
-        ("telemetrydevice", "port", "29373", ""),
-        ("telemetrydevice", "decimation", "2", ""),
-        ("motiondevice", "enable", "true", "player attitude over UDP"),
-        ("motiondevice", "addr", "\"127.0.0.1\"", ""),
-        ("motiondevice", "port", "29373", ""),
-        ("motiondevice", "decimation", "2", ""),
-        ("system", "mission_text_log", "1", "text mission log (event positions, roster)"),
-        ("track_record", "tacviewrecord", "1", "Tacview ACMI output while a track is recorded — only candidate for continuous AI positions"),
-    ];
-
-    bool changed = false;
-    foreach (var (section, key, value, why) in wanted)
+    foreach (var (section, key, value, why, _) in Il2Outputs.All)
     {
         string? current = cfg.Get(section, key);
         bool ok = current == value;
         Console.WriteLine($"  [{(ok ? "ok" : "--")}] {section}.{key} = {current ?? "(missing)"}{(ok ? "" : $"   → want {value}")}{(why.Length > 0 ? $"   ({why})" : "")}");
-        if (apply)
-            changed |= cfg.Set(section, key, value);
     }
 
     if (!apply)
@@ -248,15 +214,12 @@ int Check(bool apply)
 
     if (Process.GetProcessesByName("Il-2").Length > 0)
         return Fail("IL-2 is running; it rewrites startup.cfg on exit. Close the game and retry.");
-    if (!changed)
+    if (Il2Outputs.Enable(install, Il2Outputs.All) is not { } backup)
     {
         Console.WriteLine("\nNothing to change.");
         return 0;
     }
 
-    string backup = $"{install.StartupCfg}.radio-backup-{DateTime.Now:yyyyMMdd-HHmmss}";
-    File.Copy(install.StartupCfg, backup);
-    cfg.Save(install.StartupCfg);
     Console.WriteLine($"\nUpdated startup.cfg. Backup: {backup}");
     return 0;
 }
@@ -342,7 +305,22 @@ int AcmiCmd(string? path)
 {
     if (path is null || !File.Exists(path)) return Fail("No .acmi file found. Enable tacviewrecord (see 'check') and record a track in-mission.");
     var acmi = new AcmiStream();
-    using (var stream = File.OpenRead(path))
+    byte[] bytes;
+    try
+    {
+        bytes = File.ReadAllBytes(path);
+    }
+    catch (IOException) when (ShadowCopy.IsElevated())
+    {
+        Console.WriteLine("ACMI is locked by IL-2 (track recording); reading it through a shadow-copy snapshot...");
+        bytes = ShadowCopy.ReadFrom(path, 0).Bytes;
+    }
+    catch (IOException)
+    {
+        return Fail("The ACMI is locked by IL-2 while a track is recording. Stop recording (LCtrl+R), or run as administrator to read it by snapshot.");
+    }
+
+    using (var stream = new MemoryStream(bytes))
     {
         Stream content = stream;
         ZipArchive? zip = null;
@@ -373,16 +351,23 @@ int AcmiCmd(string? path)
     var tracker = new ContactTracker();
     if (install is not null && File.Exists(install.GeneratedMission))
         tracker.SetPlan(MissionPlan.Load(install.GeneratedMission));
+    // IL-2 keeps only the current mission's log chunks; use them only if they belong to this recording.
     List<string> chunks = install is null ? [] : LatestLogChunks(install.DataDir);
+    if (chunks.Count > 0 && !SameMission(path, chunks[0]))
+    {
+        Console.WriteLine("\n(The mission-log chunks on disk belong to a different mission; replaying from the ACMI alone, so flight membership is unknown.)");
+        chunks = [];
+    }
     foreach (string chunk in chunks)
         foreach (var e in BinaryMissionLog.DecodeAll(File.ReadAllBytes(chunk)))
             tracker.Apply(e);
     tracker.Apply(acmi);
 
     Console.WriteLine($"\nRadio checks replayed at end of recording (t={acmi.CurrentTime:F0} s, {chunks.Count} log chunks, author {acmi.Author}); player: {tracker.Player?.DisplayName ?? "(not identified)"}");
+    var sightings = new SightingMemory();
     foreach (var command in Enum.GetValues<RadioCommand>())
     {
-        var result = RadioCommands.Execute(command, tracker);
+        var result = RadioCommands.Execute(command, tracker, memory: sightings);
         Console.WriteLine($"\n  {RadioCommands.Title(command)} → {result.Outcome}");
         foreach (var r in result.Replies)
             Console.WriteLine($"    RADIO: \"{r.Text}\"");
@@ -391,6 +376,19 @@ int AcmiCmd(string? path)
     }
 
     return 0;
+}
+
+/// <summary>
+/// Track files are named "...yyyy-MM-dd_HH-mm-ss_NN.acmi" and log chunks "missionReport(yyyy-MM-dd_HH-mm-ss)[N]";
+/// both stamps are taken at mission start, a few seconds apart.
+/// </summary>
+static bool SameMission(string acmiPath, string chunkPath)
+{
+    static DateTime? Stamp(string name) =>
+        System.Text.RegularExpressions.Regex.Match(name, @"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})") is { Success: true } m
+        && DateTime.TryParseExact(m.Groups[1].Value, "yyyy-MM-dd_HH-mm-ss", System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var t) ? t : null;
+    return Stamp(Path.GetFileName(acmiPath)) is { } a && Stamp(Path.GetFileName(chunkPath)) is { } c && Math.Abs((a - c).TotalMinutes) <= 10;
 }
 
 static List<string> LatestLogChunks(string dataDir)

@@ -1,6 +1,6 @@
 using Il2Radio.Core.Audio;
 
-namespace Il2Radio.Diag;
+namespace Il2Radio.Windows;
 
 /// <summary>
 /// Which voice speaks a transmission. <c>auto</c>: recorded clips for the speaker's nation when a pack
@@ -17,7 +17,7 @@ internal sealed class VoiceSelection
         Mode = mode;
         _voices = voices;
         _forced = forced;
-        Problems = problems;
+        Problems = problems.Distinct().ToList(); // a folder copy and the built-in manifest fail the same way
     }
 
     public string Mode { get; }
@@ -39,10 +39,10 @@ internal sealed class VoiceSelection
 
         var problems = new List<string>();
         var packs = new List<VoicePack>();
-        foreach (var pack in VoicePack.Discover(Folders, il2Root, problems))
+        foreach (var pack in VoicePack.Discover(Folders, il2Root, problems).Concat(BuiltIn(il2Root, problems)))
         {
             if (packs.All(p => !p.Name.Equals(pack.Name, StringComparison.OrdinalIgnoreCase)))
-                packs.Add(pack); // the same manifest in ./voices and next to the exe: first wins
+                packs.Add(pack); // the same pack in ./voices, next to the exe and built in: first wins, so an edited copy overrides
         }
 
         // Your own recordings take precedence over the game's for the same nation.
@@ -65,6 +65,31 @@ internal sealed class VoiceSelection
         }
 
         return new VoiceSelection(forced.Pack.Name, [forced], forced, problems);
+    }
+
+    /// <summary>The repository's voices/*.json manifests, embedded in this assembly. They point into the IL-2 install, so need it.</summary>
+    private static IEnumerable<VoicePack> BuiltIn(string? il2Root, List<string> problems)
+    {
+        var assembly = typeof(VoiceSelection).Assembly;
+        foreach (string name in assembly.GetManifestResourceNames().Where(n => n.StartsWith("voices/", StringComparison.Ordinal)).Order(StringComparer.Ordinal))
+        {
+            using var reader = new StreamReader(assembly.GetManifestResourceStream(name)!);
+            string label = Path.Combine(AppContext.BaseDirectory, "(built in) " + Path.GetFileName(name));
+            VoicePack? pack = null;
+            try
+            {
+                pack = VoicePack.Parse(reader.ReadToEnd(), label, il2Root);
+                if (pack is null)
+                    problems.Add($"{Path.GetFileName(name)}: needs the IL-2 install (pass --game or set IL2_PATH)");
+            }
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidDataException)
+            {
+                problems.Add($"{name}: {ex.Message}");
+            }
+
+            if (pack is not null)
+                yield return pack;
+        }
     }
 
     /// <summary>The clip voice for a speaker of this IL-2 country, or null for text-to-speech.</summary>

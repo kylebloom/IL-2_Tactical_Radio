@@ -16,7 +16,9 @@ namespace Il2Radio.Core.Audio;
 /// <c>clock.1</c>–<c>clock.12</c>, <c>compass.n|ne|e|se|s|sw|w|nw</c>, <c>steer</c>,
 /// <c>range.close</c>, <c>range.1</c>, <c>range.2</c>, ... (kilometres), <c>range.far</c>,
 /// <c>vertical.above|below|level</c>, <c>altitude</c> + <c>altitude.&lt;metres, nearest 100&gt;</c>,
-/// <c>heading</c>, <c>information</c>, <c>withus</c>.
+/// <c>heading</c>, <c>information</c>, <c>withus</c>,
+/// <c>class.fighter|fighters|attack|attacks|bomber|bombers|recon|recons|transport</c>,
+/// <c>nocontacts</c> (no game clip; that reply uses text-to-speech) and the optional <c>contact.type</c>.
 /// </remarks>
 public static class ClipPhraser
 {
@@ -97,6 +99,20 @@ public static class ClipPhraser
                 case SpeechWord.WithUs:
                     ok = Required("withus", "information");
                     break;
+                case SpeechWord.ContactCount:
+                    Optional(t.Value == 2 ? "pair" : t.Value > 2 ? "group" : null);
+                    break;
+                case SpeechWord.ContactClass:
+                    Optional(ClassKey(t.Value), ClassKey(-t.Value));
+                    break;
+                case SpeechWord.ContactType:
+                    // The game has no clips naming aircraft types: the class word ("fighters") stands in,
+                    // and the type stays in the on-screen text. A custom pack can supply "contact.type".
+                    Optional("contact.type");
+                    break;
+                case SpeechWord.NoContacts:
+                    ok = Required("nocontacts");
+                    break;
             }
 
             if (!ok)
@@ -104,6 +120,21 @@ public static class ClipPhraser
         }
 
         return keys.Count > 0 ? keys : null;
+    }
+
+    /// <summary>"class.fighter" / "class.fighters" (negative value = plural) for an <see cref="AircraftClass"/>.</summary>
+    public static string? ClassKey(double value)
+    {
+        string? name = (AircraftClass)(int)Math.Abs(value) switch
+        {
+            AircraftClass.Fighter => "fighter",
+            AircraftClass.Attack => "attack",
+            AircraftClass.Bomber => "bomber",
+            AircraftClass.Recon => "recon",
+            AircraftClass.Transport => "transport",
+            _ => null,
+        };
+        return name is null ? null : value < 0 && name != "transport" ? $"class.{name}s" : $"class.{name}";
     }
 
     /// <summary>Eight-point compass key for a true bearing: 110° → "compass.e".</summary>

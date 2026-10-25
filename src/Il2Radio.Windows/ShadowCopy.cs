@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Management;
 using System.Security.Principal;
 
-namespace Il2Radio.Diag;
+namespace Il2Radio.Windows;
 
 /// <summary>
 /// Reads a file that another process holds open without read sharing (IL-2's ACMI while a track is

@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace Il2Radio.Diag;
+namespace Il2Radio.Windows;
 
 /// <summary>
 /// Watches the loudness of IL-2's own audio session (Il-2.exe on the default output device) with

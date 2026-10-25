@@ -109,6 +109,9 @@ public sealed record MissionPlan(
 {
     public PlannedAircraft? Player => Aircraft.FirstOrDefault(a => a.IsPlayer);
 
+    /// <summary>Cloud, haze and start time from the mission's Options block.</summary>
+    public MissionWeather Weather { get; init; } = MissionWeather.Unknown;
+
     /// <summary>Callsign words by <see cref="PlannedAircraft.Callsign"/> number (English), empty when unknown.</summary>
     public IReadOnlyDictionary<int, string> CallsignNames { get; init; } = new Dictionary<int, string>();
 
@@ -165,7 +168,10 @@ public sealed record MissionPlan(
             })
             .ToList();
 
-        return new MissionPlan(options.GetString("GuiMap"), options.Get("Date") ?? "", options.Get("Time") ?? "", countries, aircraft);
+        return new MissionPlan(options.GetString("GuiMap"), options.Get("Date") ?? "", options.Get("Time") ?? "", countries, aircraft)
+        {
+            Weather = MissionWeather.FromOptions(options),
+        };
     }
 
     /// <summary>
@@ -177,5 +183,34 @@ public sealed record MissionPlan(
         var plan = FromBlocks(MissionFileParser.ParseFile(path));
         string? dataDir = Path.GetDirectoryName(Path.GetDirectoryName(Path.GetFullPath(path)));
         return dataDir is null ? plan : plan with { CallsignNames = CallsignTable.Load(dataDir) };
+    }
+}
+
+/// <summary>
+/// Visibility-relevant conditions from a mission's Options block. <see cref="CloudCoverage"/> is derived
+/// from the cloud preset name (<c>summer\00_Clear_05\sky.ini</c>: the leading number 00–04 runs from clear
+/// to overcast). That naming is community knowledge of the editor presets, not verified for every preset.
+/// </summary>
+public sealed record MissionWeather(double CloudBaseMetres, double CloudThicknessMetres, double CloudCoverage, double Haze, TimeSpan StartTime)
+{
+    public static readonly MissionWeather Unknown = new(0, 0, 0, 0, TimeSpan.FromHours(12));
+
+    public double CloudTopMetres => CloudBaseMetres + CloudThicknessMetres;
+
+    public static MissionWeather FromOptions(MissionBlock options)
+    {
+        double Number(string key) => options.GetDouble(key) is var v && double.IsNaN(v) ? 0 : v;
+        TimeSpan start = TimeSpan.TryParse(options.Get("Time") ?? "", System.Globalization.CultureInfo.InvariantCulture, out var t) ? t : Unknown.StartTime;
+        return new MissionWeather(Number("CloudLevel"), Number("CloudHeight"), CoverageOf(options.GetString("CloudConfig")), Math.Clamp(Number("Haze"), 0, 1), start);
+    }
+
+    /// <summary>0 (clear) to 1 (overcast) from a preset path such as <c>summer\02_Medium_03\sky.ini</c>.</summary>
+    public static double CoverageOf(string cloudConfig)
+    {
+        string preset = cloudConfig.Replace('/', '\\').Split('\\').FirstOrDefault(p => p.Length >= 2 && char.IsDigit(p[0]) && char.IsDigit(p[1])) ?? "";
+        if (preset.Length >= 2 && int.TryParse(preset[..2], out int index))
+            return Math.Clamp(index / 4.0, 0, 1);
+        string lower = cloudConfig.ToLowerInvariant();
+        return lower.Contains("overcast") ? 1 : lower.Contains("heavy") ? 0.75 : lower.Contains("medium") ? 0.5 : lower.Contains("light") ? 0.25 : 0;
     }
 }

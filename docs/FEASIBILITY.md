@@ -127,6 +127,9 @@ Safeguards built into the core:
 The evidence file answers: does the `.mlg` grow during flight, do text logs rotate live, does ACMI grow live, and how many AI aircraft received continuous updates.
 
 ## Roadmap (evidence-driven)
+
+> Historical: this was the plan at the feasibility stage, and items 1–6 have since been done. The current roadmap is [ROADMAP.md](ROADMAP.md).
+
 1. **Run the live test above.** Decide the position source.
 2. **If ACMI streams:** confirm frame and units, identify the player object, and measure the object radius and update rate. Calibrate ACMI against IL-2 coordinates with take-off events, so planned waypoints and log snapshots can be shown alongside. Then build command 1 for real, plus commands 3 and 5 (formation position, rejoin vector).
 3. **If ACMI is close-only or zip-only:** reduce scope. Offer status-based reports from logs ("Number Two airborne", "Number Four going down", "Number Five landed") and planned-route guidance clearly phrased as plan ("briefed route: next waypoint bearing...", never "I see"). Dead reckoning from player telemetry is possible but has unbounded drift. It would only be used with explicit uncertainty wording.
@@ -153,7 +156,7 @@ The evidence file answers: does the `.mlg` grow during flight, do text logs rota
 | Community tools | None found that put text into single-player chat. SRS's overlay is a separate window, and its guide says it "does not appear in Full-Screen mode or in VR". | COMMUNITY ([SRS guide](https://forum.il2-series.com/topic/73-installation-and-usage-of-srs-for-il-2-voice-comms-app-by-jason-williams/), [SRS overlay in VR](https://forum.il2sturmovik.com/topic/76980-srs-overlay-in-vr/)) |
 
 ### Alternative implemented: chat-styled overlay (`live --chat …`, `chat-test`)
-`src/Il2Radio.Diag/ChatOverlay.cs` is a separate per-pixel-alpha layered window. It is click-through (`WS_EX_TRANSPARENT`), never takes focus (`WS_EX_NOACTIVATE`, shown without activation), stays topmost (and re-asserts that every 2 s), and is hidden from the taskbar and Alt-Tab. It shows `Speaker: text` lines newest at the bottom, each on a translucent dark box like IL-2's own "Game is Paused" line, fading after 14 s. `Il2Radio.Core/Radio/RadioChat.cs` builds the lines: first the player's call (e.g. "Gert Knoll: All friendlies, report positions."), then each `RadioReply.Text` exactly as spoken, under the replying pilot's name. Nothing is written to the game or its files.
+`src/Il2Radio.Windows/ChatOverlay.cs` is a separate per-pixel-alpha layered window. It is click-through (`WS_EX_TRANSPARENT`), never takes focus (`WS_EX_NOACTIVATE`, shown without activation), stays topmost (and re-asserts that every 2 s), and is hidden from the taskbar and Alt-Tab. It shows `Speaker: text` lines newest at the bottom, each on a translucent dark box like IL-2's own "Game is Paused" line, fading after 14 s. `Il2Radio.Core/Radio/RadioChat.cs` builds the lines: first the player's call (e.g. "Gert Knoll: All friendlies, report positions."), then each `RadioReply.Text` exactly as spoken, under the replying pilot's name. Nothing is written to the game or its files.
 
 **Fullscreen test on this machine (2026-10-25: IL-2 running a paused Career mission, `graphics.fullscreen = 1`, Il-2.exe compatibility flags only `HIGHDPIAWARE`, so fullscreen optimizations are not disabled):**
 - IL-2's window is a `WS_POPUP` covering 1920×1080. While IL-2 was **not** the foreground window, the overlay showed over the game in a screen capture. (VERIFIED)
@@ -188,7 +191,7 @@ The client scans slots from **1**, leaving slot 0 to the primary client (Afterbu
 
 **Implementation:**
 - `Il2Radio.Core/Osd/RtssOsd.cs` holds the slot logic and the text formatting, working over a span of the whole mapping. It is unit-tested against a fake memory block (`RtssOsdTests`): claiming, reuse, other owners, no free slot, invalid or v1 headers, an out-of-range table, the busy lock, the legacy 256-byte field, release, colour tags, wrapping, tag sanitising and the size limit.
-- `Il2Radio.Diag/RtssChat.cs` opens the named mapping on each update, like the SDK sample, so RTSS can start or restart at any time. It rewrites on every change and every 2 s, releases its slot when nothing is visible and on exit, and reports `RTSS: not running`, `no free OSD slot (owners…)` or `connected (vX.Y)`.
+- `Il2Radio.Windows/RtssChat.cs` opens the named mapping on each update, like the SDK sample, so RTSS can start or restart at any time. It rewrites on every change and every 2 s, releases its slot when nothing is visible and on exit, and reports `RTSS: not running`, `no free OSD slot (owners…)` or `connected (vX.Y)`.
 - Fading uses the shared `ChatTimeline`. RTSS colours have no alpha, so lines are darkened over the last 2 s.
 
 **Verified here (2026-10-25)** without RTSS installed:
@@ -319,3 +322,20 @@ The display text uses the English table: "Oriole one, flight of five…". The re
 **Fallbacks:** no plan match, or no word in the table → "Number N" in the player's flight, otherwise the pilot's name (both as before). No callsign clip → the number clip alone.
 
 **Scope note:** pilots of other flights seen only in the ACMI also get their callsign when the plan has their name ("Eagle one"), because that's how they'd answer on the radio.
+
+## Enemy contacts and identification (built 2026-10-25)
+
+The ACMI stream gives every aircraft on the map. Reporting all of it would be radar, so commands 2 and 4 pass it through a visibility model ([Visibility.cs](../src/Il2Radio.Core/Radio/Visibility.cs), [EnemyCommands.cs](../src/Il2Radio.Core/Radio/EnemyCommands.cs)). Everything below is a **game-design model (SPECULATIVE as physiology)**, tuned to feel plausible, not measured.
+
+- **Observers:** the player's own flight, with live fixes and within radio range. Flying alone, any friendly in radio range observes instead. The player is not an observer; he has his own eyes.
+- **Spotting:** each observer gets one look per request.
+  - Probability is `1 / (1 + (r / r50)^4)`, with `r50` = 400 m per metre of wingspan (fighter ≈ 4 km, Ju 88 ≈ 8 km). Nothing is spotted beyond 2.2 × `r50`.
+  - Ranges shrink with haze (`Options.Haze`), darkness (crude clock-based curve; no sun position yet) and a target below the observer against the ground (× 0.75).
+  - Looks that cross the mission's cloud layer (`CloudLevel` to `CloudLevel + CloudHeight`) get through only a `1 − coverage` share. Coverage comes from the `CloudConfig` preset number: 00 clear to 04 overcast. That naming is community knowledge and UNVERIFIED for every preset.
+  - The dice are deterministic per observer, target and 15 s slot, so repeating a call quickly gives the same answer.
+- **Identification ranges** (per metre of wingspan): class 400 m, side 300 m, type 180 m. That gives a fighter about 4 km for its shape, 3 km for its markings and 1.8 km for its type. Near the edge of type range a call may be hedged ("possible Yaks"), and with a 12 % chance names a classic look-alike (Yak ↔ Bf 109, Fw 190 ↔ La-5, Il-2 ↔ Hs 129). A closer look corrects it.
+- **Memory:** a spotted aircraft stays tracked for 60 s while it remains within reach. Its identification level only rises, so calls don't flicker.
+- **Honesty:** only aircraft present in the live track can be reported, and destroyed or despawned ones never are. Friendlies count as "unidentified" until their markings are made out, and are left out of enemy reports once identified. With no live player position, there is no reply.
+- **Replay check (VERIFIED, Career recording 2026-10-25 15:58, ACMI only):** "four Yaks, at your four o'clock, approximately 8 kilometres, high" was reported by a friendly fighter dogfighting them at 350–700 m, with the player 7–9 km away.
+- **Found during the replay (VERIFIED):** a closed recording ends with one frame removing every object (152 removals at the last timestamp). The ACMI reader now applies removals only when the next frame starts, and the tracker revives aircraft that reappear in the next recording segment.
+- **Not modelled yet:** sun glare and bounces out of the sun, the observer's head and cockpit blind spots, AGL or terrain masking, and combat awareness from log events (an aircraft shooting at you is obviously spotted).

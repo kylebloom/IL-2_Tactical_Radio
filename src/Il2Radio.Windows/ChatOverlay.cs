@@ -6,7 +6,7 @@ using System.Windows.Forms;
 using Il2Radio.Core.Osd;
 using Il2Radio.Core.Radio;
 
-namespace Il2Radio.Diag;
+namespace Il2Radio.Windows;
 
 /// <summary>
 /// Shows the radio exchange as text in the style of IL-2's chat. It is a separate window drawn by
@@ -96,7 +96,7 @@ internal sealed class ChatOverlay : IChatSink
         }
 
         Save("");
-        timeline.ToggleMenu(NumpadKeys.Menu, at);
+        timeline.ToggleMenu(options.KeyMap.Menu, at);
         Save("-menu");
         timeline.Scroll(+1, at);
         Save("-log");

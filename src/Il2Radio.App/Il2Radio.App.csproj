@@ -1,0 +1,37 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The radio for players: Il2Radio.exe, double-clicked, settings in settings.json beside it.
+    dotnet publish src/Il2Radio.App  →  one self-contained Il2Radio.exe (no .NET install needed).
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\Il2Radio.Core\Il2Radio.Core.csproj" />
+    <ProjectReference Include="..\Il2Radio.Windows\Il2Radio.Windows.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <AssemblyName>Il2Radio</AssemblyName>
+    <RootNamespace>Il2Radio.App</RootNamespace>
+    <Product>IL-2 Tactical Radio</Product>
+    <!-- requireAdministrator: live positions are read through Volume Shadow Copy snapshots -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>embedded</DebugType>
+    <!-- no loose .pdb files from the libraries beside the exe -->
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+    <PublishDir>$(MSBuildThisFileDirectory)..\..\publish\</PublishDir>
+  </PropertyGroup>
+
+</Project>

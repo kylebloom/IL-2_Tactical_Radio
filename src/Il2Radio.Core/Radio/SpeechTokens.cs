@@ -43,6 +43,18 @@ public enum SpeechWord
 
     /// <summary>"You are with us."</summary>
     WithUs,
+
+    /// <summary>Number of aircraft in a reported contact.</summary>
+    ContactCount,
+
+    /// <summary>Contact class as <see cref="AircraftClass"/>; negative when plural ("fighters").</summary>
+    ContactClass,
+
+    /// <summary>A named aircraft type or identification verdict; recorded voices have no clips for it.</summary>
+    ContactType,
+
+    /// <summary>"No contacts."</summary>
+    NoContacts,
 }
 
 /// <summary>

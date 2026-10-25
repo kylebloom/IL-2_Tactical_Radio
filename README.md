@@ -8,22 +8,19 @@ A companion app for IL-2 Sturmovik: Great Battles single-player Career Mode. It 
 This is the one supported way to fly with the radio. You don't need anything else in this README to use it; the rest is reference.
 
 **Once, before the first flight**
-1. Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
-2. Install RivaTuner Statistics Server and turn its on-screen display on ([steps below](#setting-up-rtss-one-time)). It shows the radio text inside IL-2, including in fullscreen.
-3. With IL-2 **closed**, open a terminal in this folder and run:
+1. Get `Il2Radio.exe`. To build it yourself, install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) and run this in this folder:
    ```bash
-   dotnet run --project src/Il2Radio.Diag -- check --apply
+   dotnet publish src/Il2Radio.App
    ```
-   This switches on the data IL-2 needs to export, and backs up `startup.cfg` first.
+   This writes one self-contained `publish\Il2Radio.exe` (about 50 MB), which runs without .NET installed. Put it in a folder of its own, for example `C:\Games\IL-2 Radio\`. Its settings and session logs go next to it.
+2. Install RivaTuner Statistics Server and turn its on-screen display on ([steps below](#setting-up-rtss-one-time)). It shows the radio text inside IL-2, including in fullscreen.
 
 **Every flight**
 1. Start RivaTuner Statistics Server; it sits in the system tray.
-2. Open a terminal **as administrator** in this folder and run:
-   ```bash
-   dotnet run --project src/Il2Radio.Diag -- live --chat rtss
-   ```
-   Administrator rights are needed to read aircraft positions while IL-2 is writing them.
-3. Start IL-2 and fly a Career mission. Once you're in the cockpit, press **LCtrl+R** to start track recording; the positions come from that track.
+2. Double-click `Il2Radio.exe` and accept the administrator prompt. Administrator rights are needed to read aircraft positions while IL-2 is writing them.
+   - It checks that it runs as administrator, that IL-2 exports its mission log and Tacview tracks, and that RTSS is running. Each check prints `[ok]` or `[!!]` with what to do; problems are also shown in game at the start of each mission.
+   - **On the first start**, if IL-2 is closed and isn't exporting that data yet, it offers to switch it on in `startup.cfg` (type `y`; the file is backed up first). If IL-2 is running, close it and start the radio again.
+3. Start IL-2 and fly a Career mission. Once you're in the cockpit, press **LCtrl+R** to start track recording; the positions come from that track. If no track is recording a minute into the mission, the radio reminds you in game.
 4. With Num Lock on, use the numpad:
 
    | Key | Does |
@@ -31,17 +28,45 @@ This is the one supported way to fly with the radio. You don't need anything els
    | Numpad 1 | Ask all friendlies for their positions |
    | Numpad 2 | Ask your flight where it is |
    | Numpad 3 | Separated: ask your flight to help you rejoin |
+   | Numpad 4 | Ask your flight what enemy or unknown aircraft it can see |
+   | Numpad 5 | Ask your flight to identify the nearest aircraft it can see |
    | Numpad 0 | Show or hide this list in game |
    | Numpad 7 / 9 | Page back / forward through earlier radio messages |
-   | Numpad . | Quit (also writes a session report to `diag-output\`) |
+   | Numpad . | Quit (also writes a session report to `logs\` next to the program) |
 
-If IL-2 isn't installed in the default Steam folder, add `--game "<IL-2 folder>"` to both commands.
+   Closing the window also quits cleanly.
+
+### Settings
+The first start creates `settings.json` next to `Il2Radio.exe` with every setting at its default. Edit it with any text editor and restart the radio. A misspelt name or a bad value is reported by name when the radio starts; delete the file to get the defaults back.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `il2Path` | `null` | IL-2 folder (the one with `data\startup.cfg`). `null` looks in `IL2_PATH` and the usual Steam folders |
+| `volume` | `0.8` | Radio volume, 0 to 1, independent of IL-2's own |
+| `voice` | `"auto"` | `auto`: the game's pilot voices by nation, else Windows TTS. `tts`: always TTS. Or a voice pack's name or folder |
+| `radioWait`, `radioWaitRatio` | `true`, `1.8` | Hold replies while IL-2's own radio is talking ([details](#audio)) |
+| `recordingReminderSeconds` | `60` | Remind you to press LCtrl+R this long into a mission without a track; `0` never |
+| `chat.output` | `"rtss"` | `rtss` (in game, works in fullscreen), `overlay` (windowed IL-2 only), `window` (e.g. a second screen) or `off` |
+| `chat.rtssPosition`, `chat.rtssMargin` | `"left-middle"`, `32` | RTSS text position: `left-middle`, `top-left`, `top-right`, `bottom-left`, `bottom-right`, `default` or `"X,Y"`; margin in screen pixels |
+| `chat.rtssColumns`, `chat.rtssZoom`, `chat.rtssCell` | `72`, `null`, `null` | RTSS line width; OSD zoom (`null`: from IL-2's RTSS profile); character size `[w, h]` for the right and bottom presets |
+| `chat.screen`, `chat.windowArea`, `chat.fontPixels` | `0`, `[0.015, 0.40, 0.42, 0.30]`, `16` | Overlay/window: screen number, area (left, top, width, height as screen fractions), font size on a 1080-line screen |
+| `chat.keepClear` | `true` | Keep the text out of IL-2's own message line and subtitles |
+| `keys.*` | `Num1` … `Num.` | One key per action: `friendlyPositions`, `flightPosition`, `rejoin`, `enemyContacts`, `identifyContact`, `menu`, `older`, `newer`, `quit`. Names: `Num0`–`Num9`, `Num.`, `Num+`, `Num-`, `Num*`, `Num/`, `F1`–`F24`, `A`–`Z`, `0`–`9`, `Insert`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, arrows, `Pause`, `ScrollLock`. `""` leaves an action unbound |
+
+Keys are watched, not taken: IL-2 still receives them, so pick keys IL-2 doesn't use. The options are described in more detail under [Radio text](#radio-text-chat), where they appear as `live` flags of the diagnostic console.
 
 ## Layout
-- `src/Il2Radio.Core`: decoders (binary/text mission log, UDP telemetry, ACMI, .Mission), `ContactTracker`, radio command 1
-- `src/Il2Radio.Diag`: diagnostic console
-- `voices`: voice-pack manifests (file names only; the game packs point into your IL-2 install)
+- `src/Il2Radio.Core`: decoders (binary/text mission log, UDP telemetry, ACMI, .Mission), `ContactTracker`, radio commands, visibility model, settings
+- `src/Il2Radio.Windows`: Windows-only I/O (keys, audio, chat outputs, shadow copies) and the live session
+- `src/Il2Radio.App`: the radio app, `Il2Radio.exe`
+- `src/Il2Radio.Diag`: diagnostic console for development
+- `voices`: voice-pack manifests (file names only; the game packs point into your IL-2 install). Built into both programs.
 - `tests/Il2Radio.Core.Tests`: xUnit tests, including a real Career `.mlg` fixture
+
+Docs:
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how each subsystem works; start here before changing code.
+- [docs/ROADMAP.md](docs/ROADMAP.md): what's left, and what still needs checking in a flight.
+- [docs/FEASIBILITY.md](docs/FEASIBILITY.md): research and evidence, with sources.
 
 ## Build & test
 ```bash
@@ -50,6 +75,7 @@ dotnet test
 Requires the .NET 10 SDK.
 
 ## Diagnostic console
+For development: the full monitor (every source, every contact, why each one stayed silent) and offline tools. It takes command-line flags instead of `settings.json`; for `live`, run the terminal as administrator.
 ```bash
 dotnet run --project src/Il2Radio.Diag -- check            # which IL-2 outputs are enabled
 dotnet run --project src/Il2Radio.Diag -- check --apply    # enable them (IL-2 must be closed; startup.cfg is backed up)
@@ -78,11 +104,26 @@ The UDP telemetry port can only point to one listener. If you use SRS or a bass-
 | Numpad 1 | Request friendly positions | "Oriole one, five aircraft together, bearing one-one-zero, approximately 18 kilometres, altitude 2700 metres." |
 | Numpad 2 | Request flight position | "Oriole one, flight of five at your three o'clock, approximately 18 kilometres, 2400 metres above you." |
 | Numpad 3 | Separated, request rejoin | "Oriole one, steer one-one-zero, approximately 18 kilometres. We are at 2700 metres, heading zero-eight-zero." |
+| Numpad 4 | Request enemy contacts | "Oriole two, four Yaks, at your four o'clock, approximately 8 kilometres, high." |
+| Numpad 5 | Identify nearest contact | "Oriole two, contact at your two o'clock, under two kilometres: a Messerschmitt, enemy, heading east." |
 | Numpad 0 | Show or hide the command list in the chat output | |
 | Numpad 7 / 9 | Page back / forward through the radio log (paging forward past the newest page returns to the live lines) | |
 | Numpad . | Quit (writes the evidence file) | |
 
 Aircraft within 2 km and 600 m of each other answer as one group through their lowest-numbered member. Only your own flight answers Numpad 2 and 3.
+
+**Contacts and identification (Numpad 4 and 5) aren't radar.** Your flight reports only what its pilots could plausibly see. Flying alone, any friendly in radio range reports instead.
+- **Spotting:** likelier for larger aircraft and at closer range. Haze, darkness, a target below you against the ground, and cloud between observer and target all make it harder. It's a game-design model, not physiology.
+- **What gets said:** depends on range. In order of getting closer, about four ranges apart for a fighter:
+  - a speck: "unidentified aircraft"
+  - its shape: "unidentified fighters"
+  - its markings, side known (~3 km): "enemy fighters"
+  - its type (~1.8 km): "Yaks"
+
+  Bombers can be made out further away than fighters.
+- **Uncertainty:** near the edge of identification range, a call can be hedged ("possible Yaks") or mistake a look-alike (Yak ↔ Messerschmitt), and a closer look corrects it.
+- **Memory:** spotted aircraft stay tracked for 60 s, so identifications don't flicker between calls.
+- **Voices:** recorded game clips cover class words ("fighters", "bombers"), clock positions, ranges and high/low. Replies naming a type use text-to-speech.
 
 Pilots identify themselves by their Career callsign and number from the mission plan ("Oriole two"). The callsign words come from your install's `data\GUI\DefaultCallsigns.eng`. If a pilot isn't in the plan or the word is unknown, he says "Number two", or his name if he's from another unit.
 

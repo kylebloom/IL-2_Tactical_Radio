@@ -78,9 +78,15 @@ public sealed class VoicePack
     /// Loads a manifest. Returns null when it refers to the IL-2 install (<c>{il2}</c>) and none is known.
     /// A relative root is relative to the manifest's folder.
     /// </summary>
-    public static VoicePack? Load(string manifestPath, string? il2Root)
+    public static VoicePack? Load(string manifestPath, string? il2Root) => Parse(File.ReadAllText(manifestPath), manifestPath, il2Root);
+
+    /// <summary>
+    /// Reads manifest text that came from <paramref name="manifestPath"/>, or from somewhere else
+    /// (a built-in manifest) when that is only a label; a relative root is then relative to its folder.
+    /// </summary>
+    public static VoicePack? Parse(string json, string manifestPath, string? il2Root)
     {
-        var m = JsonSerializer.Deserialize<Manifest>(File.ReadAllText(manifestPath), JsonOptions)
+        var m = JsonSerializer.Deserialize<Manifest>(json, JsonOptions)
                 ?? throw new InvalidDataException($"{manifestPath}: empty manifest");
         string root = m.Root ?? ".";
         bool fromGame = root.Contains("{il2}", StringComparison.OrdinalIgnoreCase);

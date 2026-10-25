@@ -1,8 +1,9 @@
 using Il2Radio.Core;
 using Il2Radio.Core.Osd;
 using Il2Radio.Core.Radio;
+using Il2Radio.Core.Settings;
 
-namespace Il2Radio.Diag;
+namespace Il2Radio.Windows;
 
 public enum ChatMode
 {
@@ -29,8 +30,12 @@ public sealed record ChatOptions(
     (int Width, int Height)? RtssScreen = null,
     (int Width, int Height)? RtssCell = null,
     bool KeepClear = true,
-    IReadOnlyList<Il2TextArea>? Il2Areas = null)
+    IReadOnlyList<Il2TextArea>? Il2Areas = null,
+    KeyBindings? Keys = null)
 {
+    /// <summary>The radio keys, for the menu and the log's paging hint.</summary>
+    public KeyBindings KeyMap => Keys ?? KeyBindings.Default;
+
     /// <summary>IL-2's own text areas to keep clear of (none with --keep-clear off).</summary>
     public IReadOnlyList<Il2TextArea> Areas => KeepClear ? Il2Areas ?? Il2ScreenAreas.All : [];
 
@@ -75,6 +80,24 @@ public sealed record ChatOptions(
             options = options with { KeepClear = keepClear.ToLowerInvariant() switch { "on" => true, "off" => false, _ => throw new ArgumentException($"--keep-clear {keepClear}: expected on or off") } };
         return options;
     }
+
+    /// <summary>The options from the app's settings file. Call only on validated settings.</summary>
+    public static ChatOptions From(ChatSettings chat, KeyBindings keys) => new()
+    {
+        Mode = Enum.Parse<ChatMode>(chat.Output, ignoreCase: true),
+        Screen = chat.Screen,
+        Left = (float)chat.WindowArea[0],
+        Top = (float)chat.WindowArea[1],
+        Width = (float)chat.WindowArea[2],
+        Height = (float)chat.WindowArea[3],
+        FontPixels = (float)chat.FontPixels,
+        RtssPlacement = chat.Placement(),
+        RtssColumns = chat.RtssColumns,
+        RtssZoom = chat.RtssZoom,
+        RtssCell = chat.RtssCell is [var w, var h] ? (w, h) : null,
+        KeepClear = chat.KeepClear,
+        Keys = keys,
+    };
 
     /// <summary>Fills in the game's render size from startup.cfg unless --rtss-screen was given.</summary>
     public ChatOptions WithGameScreen(Il2Install? install)
@@ -141,14 +164,14 @@ internal static class ChatSinks
 
     /// <summary>A timeline with the outputs' shared settings.</summary>
     public static ChatTimeline Timeline(ChatOptions options) =>
-        new(options.HoldSeconds, maxLines: options.MaxLines) { HistoryHint = NumpadKeys.HistoryHint };
+        new(options.HoldSeconds, maxLines: options.MaxLines) { HistoryHint = options.KeyMap.HistoryHint };
 
     /// <summary>Acts on the chat keys (menu and log paging); other keys are not the chat's.</summary>
-    public static void HandleKey(IChatSink chat, RadioKey key)
+    public static void HandleKey(IChatSink chat, RadioKey key, KeyBindings keys)
     {
         switch (key)
         {
-            case RadioKey.Menu: chat.ToggleMenu(NumpadKeys.Menu); break;
+            case RadioKey.Menu: chat.ToggleMenu(keys.Menu); break;
             case RadioKey.Older: chat.Scroll(+1); break;
             case RadioKey.Newer: chat.Scroll(-1); break;
         }
@@ -189,7 +212,8 @@ internal static class ChatSinks
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); }; // so the RTSS slot is released
 
-        Console.WriteLine($"Showing a sample radio exchange every 20 s for {seconds} s ({options.Mode}). Num0 menu, Num7/Num9 radio log, Num. or Ctrl+C to stop.");
+        var keys = options.KeyMap;
+        Console.WriteLine($"Showing a sample radio exchange every 20 s for {seconds} s ({options.Mode}). {keys.Legend}; Ctrl+C also stops.");
         string? status = null;
         var next = DateTime.MinValue;
         while (!stop.IsCancellationRequested)
@@ -201,11 +225,11 @@ internal static class ChatSinks
             }
             if (chat.Status is { } s && s != status)
                 Console.WriteLine(status = s);
-            foreach (var key in NumpadKeys.Pressed())
+            foreach (var key in keys.Pressed())
             {
                 if (key == RadioKey.Quit)
                     stop.Cancel();
-                HandleKey(chat, key);
+                HandleKey(chat, key, keys);
             }
             stop.Token.WaitHandle.WaitOne(50);
         }

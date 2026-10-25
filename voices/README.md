@@ -2,9 +2,11 @@
 
 A voice pack is a JSON manifest that maps clip **keys** to audio files. Replies are spoken by joining clips in key order, then putting the result through the radio effect. When a pack can't say a required part of a reply, that reply is spoken with Windows text-to-speech instead.
 
-The app looks for manifests in `./voices` and in the `voices` folder next to `Il2Radio.Diag.exe`:
+The app looks for manifests in `./voices` and in the `voices` folder next to the program (`Il2Radio.exe` or `Il2Radio.Diag.exe`):
 - `*.json` directly in either folder;
 - `*/voice.json` one folder down.
+
+The four IL-2 manifests in this folder are also built into the program, so `Il2Radio.exe` needs no `voices` folder. A manifest of the same pack name in one of the folders above takes precedence over the built-in copy, so an edited copy wins.
 
 ## The IL-2 packs in this folder
 `il2-ger.json`, `il2-rus.json`, `il2-usa.json` and `il2-gbr.json` point at the game's own pilot recordings in **your** install (`{il2}` = the IL-2 root, found automatically or from `--game` / `IL2_PATH`). They contain file names only. The recordings are read in place and never copied, so please don't copy IL-2's `.ogg` files into this repository or share them. See [docs/FEASIBILITY.md](../docs/FEASIBILITY.md#recorded-radio-voices-researched-2026-10-25).

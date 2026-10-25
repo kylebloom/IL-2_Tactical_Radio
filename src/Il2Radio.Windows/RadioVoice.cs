@@ -6,7 +6,7 @@ using System.Speech.Synthesis;
 using Il2Radio.Core.Audio;
 using Il2Radio.Core.Radio;
 
-namespace Il2Radio.Diag;
+namespace Il2Radio.Windows;
 
 /// <summary>
 /// One transmission: who speaks (selects the voice), how far away they are (selects the hiss), and

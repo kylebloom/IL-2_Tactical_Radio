@@ -75,6 +75,30 @@ public sealed class AcmiStream
     public double CurrentTime { get; private set; }
 
     public IReadOnlyDictionary<string, AcmiObject> Objects => _objects;
+
+    /// <summary>
+    /// Removals in the newest frame, not yet applied. When IL-2 stops recording it removes every object
+    /// in one final frame (VERIFIED: 152 removals at the last timestamp of a Career recording). Removals
+    /// are therefore applied only once a later frame starts, so a closed recording does not read as
+    /// everyone despawning; genuine removals are delayed by one frame (~0.2 s).
+    /// </summary>
+    public int PendingRemovals => _pendingRemovals.Count;
+
+    private readonly List<(string Id, double Time)> _pendingRemovals = [];
+
+    private void ApplyPendingRemovals()
+    {
+        foreach (var (id, time) in _pendingRemovals)
+        {
+            if (_objects.TryGetValue(id, out var removed))
+            {
+                removed.Removed = true;
+                removed.RemovedTime = time;
+            }
+        }
+
+        _pendingRemovals.Clear();
+    }
     public long LinesParsed { get; private set; }
 
     public void Feed(string text)
@@ -130,6 +154,7 @@ public sealed class AcmiStream
 
         if (line[0] == '#')
         {
+            ApplyPendingRemovals(); // the frame they belong to is complete
             if (double.TryParse(line.AsSpan(1), NumberStyles.Float, CultureInfo.InvariantCulture, out double t))
                 CurrentTime = t;
             return;
@@ -137,11 +162,8 @@ public sealed class AcmiStream
 
         if (line[0] == '-')
         {
-            if (_objects.TryGetValue(line[1..].Trim(), out var removed))
-            {
-                removed.Removed = true;
-                removed.RemovedTime = CurrentTime;
-            }
+            if (_objects.ContainsKey(line[1..].Trim()))
+                _pendingRemovals.Add((line[1..].Trim(), CurrentTime));
             return;
         }
 

@@ -31,6 +31,8 @@ public static class RadioChat
         RadioCommand.FriendlyPositions => "All friendlies, report positions.",
         RadioCommand.FlightPosition => "Flight, report your position.",
         RadioCommand.Rejoin => "Flight, I am separated. Request rejoin.",
+        RadioCommand.EnemyContacts => "Flight, report contacts.",
+        RadioCommand.IdentifyContact => "Flight, identify nearest contact.",
         _ => RadioCommands.Title(command) + ".",
     };
 

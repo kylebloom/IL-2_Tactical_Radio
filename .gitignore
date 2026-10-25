@@ -3,3 +3,4 @@ obj/
 diag-output/
 *.user
 .vs/
+publish/
