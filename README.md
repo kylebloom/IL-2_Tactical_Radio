@@ -1,0 +1,168 @@
+# IL-2 Tactical Radio (feasibility PoC)
+
+A companion app for IL-2 Sturmovik: Great Battles single-player Career Mode. It adds a few realistic radio requests, such as asking friendly aircraft for their positions. It runs outside the game and only reads data IL-2 already exports, so it works with Mods Off and doesn't touch game files or the game process.
+
+**Current milestone:** a proof of concept to find out what IL-2 actually exposes. Read [docs/FEASIBILITY.md](docs/FEASIBILITY.md) first. In short: aircraft identities, flights and statuses are available live. AI positions are only available at discrete events. Continuous positions depend on IL-2's Tacview export, which still needs a live test.
+
+## How to run it
+This is the one supported way to fly with the radio. You don't need anything else in this README to use it; the rest is reference.
+
+**Once, before the first flight**
+1. Install the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
+2. Install RivaTuner Statistics Server and turn its on-screen display on ([steps below](#setting-up-rtss-one-time)). It shows the radio text inside IL-2, including in fullscreen.
+3. With IL-2 **closed**, open a terminal in this folder and run:
+   ```bash
+   dotnet run --project src/Il2Radio.Diag -- check --apply
+   ```
+   This switches on the data IL-2 needs to export, and backs up `startup.cfg` first.
+
+**Every flight**
+1. Start RivaTuner Statistics Server; it sits in the system tray.
+2. Open a terminal **as administrator** in this folder and run:
+   ```bash
+   dotnet run --project src/Il2Radio.Diag -- live --chat rtss
+   ```
+   Administrator rights are needed to read aircraft positions while IL-2 is writing them.
+3. Start IL-2 and fly a Career mission. Once you're in the cockpit, press **LCtrl+R** to start track recording; the positions come from that track.
+4. With Num Lock on, use the numpad:
+
+   | Key | Does |
+   |---|---|
+   | Numpad 1 | Ask all friendlies for their positions |
+   | Numpad 2 | Ask your flight where it is |
+   | Numpad 3 | Separated: ask your flight to help you rejoin |
+   | Numpad 0 | Show or hide this list in game |
+   | Numpad 7 / 9 | Page back / forward through earlier radio messages |
+   | Numpad . | Quit (also writes a session report to `diag-output\`) |
+
+If IL-2 isn't installed in the default Steam folder, add `--game "<IL-2 folder>"` to both commands.
+
+## Layout
+- `src/Il2Radio.Core`: decoders (binary/text mission log, UDP telemetry, ACMI, .Mission), `ContactTracker`, radio command 1
+- `src/Il2Radio.Diag`: diagnostic console
+- `voices`: voice-pack manifests (file names only; the game packs point into your IL-2 install)
+- `tests/Il2Radio.Core.Tests`: xUnit tests, including a real Career `.mlg` fixture
+
+## Build & test
+```bash
+dotnet test
+```
+Requires the .NET 10 SDK.
+
+## Diagnostic console
+```bash
+dotnet run --project src/Il2Radio.Diag -- check            # which IL-2 outputs are enabled
+dotnet run --project src/Il2Radio.Diag -- check --apply    # enable them (IL-2 must be closed; startup.cfg is backed up)
+dotnet run --project src/Il2Radio.Diag -- mission          # planned Career mission (_gen.Mission)
+dotnet run --project src/Il2Radio.Diag -- mlg              # decode newest data\FlightLogs\*.mlg
+dotnet run --project src/Il2Radio.Diag -- acmi             # summarise newest data\Tracks\*.acmi
+dotnet run --project src/Il2Radio.Diag -- snapshot-test    # time reading a locked file via Volume Shadow Copy (admin)
+dotnet run --project src/Il2Radio.Diag -- live             # run while flying (see keys below)
+```
+Pass `--game <IL-2 root>` or set `IL2_PATH` if IL-2 isn't in the default Steam location.
+
+`check --apply` sets these in `data\startup.cfg`:
+| Section.key | Value | Purpose |
+|---|---|---|
+| `telemetrydevice.*` / `motiondevice.*` | enable, 127.0.0.1:29373 | player state and attitude (UDP) |
+| `system.mission_text_log` | 1 | text mission log |
+| `track_record.tacviewrecord` | 1 | Tacview ACMI while a track records |
+
+The UDP telemetry port can only point to one listener. If you use SRS or a bass-shaker tool, they'll conflict for now (a relay is on the roadmap).
+
+`live` writes `diag-output\evidence-*.md` and a raw UDP capture you can replay. Please share the evidence file after a test flight.
+
+### Radio keys (Num Lock on; they work while IL-2 has focus)
+| Key | Command | Example reply |
+|---|---|---|
+| Numpad 1 | Request friendly positions | "Oriole one, five aircraft together, bearing one-one-zero, approximately 18 kilometres, altitude 2700 metres." |
+| Numpad 2 | Request flight position | "Oriole one, flight of five at your three o'clock, approximately 18 kilometres, 2400 metres above you." |
+| Numpad 3 | Separated, request rejoin | "Oriole one, steer one-one-zero, approximately 18 kilometres. We are at 2700 metres, heading zero-eight-zero." |
+| Numpad 0 | Show or hide the command list in the chat output | |
+| Numpad 7 / 9 | Page back / forward through the radio log (paging forward past the newest page returns to the live lines) | |
+| Numpad . | Quit (writes the evidence file) | |
+
+Aircraft within 2 km and 600 m of each other answer as one group through their lowest-numbered member. Only your own flight answers Numpad 2 and 3.
+
+Pilots identify themselves by their Career callsign and number from the mission plan ("Oriole two"). The callsign words come from your install's `data\GUI\DefaultCallsigns.eng`. If a pilot isn't in the plan or the word is unknown, he says "Number two", or his name if he's from another unit.
+
+### Audio
+Replies are spoken by **IL-2's own radio voice actors** in the speaker's language: German for Luftwaffe (country 201), Russian for VVS (101), English for RAF and USAAF (102, 103). The app reads the recordings straight from your install (`data\Audio\radio\…\*.ogg`) and joins fragments such as number, clock position, range and high/low. Nothing is copied out of the game or modified. No setup is needed if IL-2 is in the default Steam folder; otherwise pass `--game <IL-2 root>` or set `IL2_PATH`.
+
+The game's fragments are coarser than the English text, which still appears on screen. For example, "flight of five at your three o'clock, approximately 18 kilometres, 2400 metres above you" is spoken as *Oriole · one · group · three o'clock · long range · high*. Replies the recordings can't express ("you are with us") fall back to Windows text-to-speech.
+
+Every transmission then goes through a radio effect:
+- squelch burst at the start, tail and click at the end
+- 300–3000 Hz voice band with slight overdrive. The game's clips are already radio-processed, so they only get a gentle drive.
+- background hiss that gets louder the further away the speaker is
+
+Each flight number gets its own voice actor (four German and five Soviet pilot voices, reused beyond that), or its own TTS pitch and rate. A new request cuts off any replies still waiting to be spoken.
+```bash
+dotnet run --project src/Il2Radio.Diag -- say                          # sample replies, German pilots
+dotnet run --project src/Il2Radio.Diag -- say --country 101            # Soviet pilots
+dotnet run --project src/Il2Radio.Diag -- say --voice tts              # the same replies with Windows TTS
+dotnet run --project src/Il2Radio.Diag -- say "Number one, you are with us." --range 0.8 --volume 0.6   # free text: TTS
+dotnet run --project src/Il2Radio.Diag -- voice-check --country 201 --play   # play every clip with its key
+dotnet run --project src/Il2Radio.Diag -- live --volume 0.6            # or --voice tts, or --no-audio
+```
+Volume is independent of IL-2's own sound settings.
+
+**Not talking over IL-2's radio:** `live` watches the Windows peak meter of Il-2.exe's audio session (read-only, as the volume mixer does). A reply waits while IL-2's audio rises clearly above its engine floor (default 1.8×), for at most 8 s. IL-2 mixes radio, engine and guns into one stream, so this is a heuristic: gunfire also holds replies. It has not yet been checked against real IL-2 chatter. The monitor header shows the peak, floor and state; tune with `--radio-wait-ratio R`, or switch it off with `--radio-wait off`.
+```bash
+dotnet run --project src/Il2Radio.Diag -- audio-meter --seconds 120     # watch the meter while AI pilots talk, to pick R
+```
+
+**Your own recordings:** put WAV or OGG clips and a `voice.json` manifest in `voices/<name>/`. Your packs take precedence over the game's for the countries they list. Keys and the manifest format are in [voices/README.md](voices/README.md). Please don't copy IL-2's audio files into this repository.
+
+**Unverified:** the meaning of each German or Russian fragment is inferred from its file name. For the English set it was spot-checked with speech recognition. If `voice-check --play` shows a clip saying something else, fix its line in `voices/il2-ger.json`.
+
+### Radio text (chat)
+IL-2 offers no way for an external program to write into its chat in single-player (see [FEASIBILITY.md](docs/FEASIBILITY.md#radio-text-in-il-2s-chat--message-area-researched-2026-10-25)). Instead, `live` shows the exchange through one of three outputs.
+- **On key press:** your call ("Gert Knoll: All friendlies, report positions.") appears straight away, and you hear a mic key click and a short carrier burst at the radio volume. This cuts off any transmission still playing.
+- **Replies:** each reply appears under the pilot's name as the voice starts speaking it.
+- **No answer:** if nobody can answer, one line says why, e.g. "no reply: position snapshot needs administrator rights".
+- Lines fade out after 14 s; Numpad 7 and 9 page through the whole exchange history (the last 200 lines, time-stamped). Numpad 0 lists the radio keys. Both views close after 14 s without a key, or when you make a new call.
+- **Look:** measured from IL-2's own "Game is Paused" message. Each line has its own black box at 42 % opacity, sized to the text, with light grey (#E0E0DC) Arial text in a single colour, speaker included. The box is 2.6 cap heights tall with 1.45 cap heights of side padding. The tool's own notes ("no reply") are dimmer. RTSS can't draw boxes, so it gets the colours only; its font and shadow come from RTSS's own OSD settings.
+- **Keeping clear of IL-2's text:** the overlay and the RTSS text stay out of IL-2's bottom-left message line and the subtitle rows that the planned Career mission uses (read from `_gen.Mission`). By default the overlay is narrowed to end left of the centre subtitles, and the RTSS text is limited in columns and rows (the monitor header says so). `--keep-clear off` disables this. The areas are estimates (`Il2ScreenAreas`).
+
+| `--chat` | What | Works with IL-2 fullscreen (`fullscreen = 1`)? |
+|---|---|---|
+| `rtss` | Text in the RivaTuner Statistics Server on-screen display, drawn inside the game's frames | **Yes** (needs RTSS running, see below) |
+| `overlay` (default) | Transparent, click-through window styled like IL-2's message line | No, hidden while IL-2 has focus. Needs `fullscreen = 0` |
+| `window` | Ordinary window, e.g. `--chat-screen 1` for a second monitor | Yes, on the other screen |
+
+```bash
+dotnet run --project src/Il2Radio.Diag -- chat-test --chat rtss            # loop a sample exchange; start it, then fly in IL-2
+dotnet run --project src/Il2Radio.Diag -- chat-test --png chat.png          # render the overlay's live, menu and log views to chat*.png
+dotnet run --project src/Il2Radio.Diag -- live --chat rtss
+dotnet run --project src/Il2Radio.Diag -- live --chat rtss --rtss-pos bottom-left --rtss-margin 48
+dotnet run --project src/Il2Radio.Diag -- live --chat rtss --rtss-pos 40,300 --rtss-columns 60
+dotnet run --project src/Il2Radio.Diag -- live --chat-pos 0.015,0.40,0.42,0.30 --chat-font 16
+dotnet run --project src/Il2Radio.Diag -- live --chat window --chat-screen 1
+dotnet run --project src/Il2Radio.Diag -- live --chat off
+```
+- `--chat-pos` is left, top, width and height as fractions of the screen. Text is bottom-aligned, so the default ends just above IL-2's own bottom-left message line. `--chat-font` is pixel size on a 1080-line screen.
+- `--rtss-columns` sets where RTSS lines wrap (RTSS doesn't wrap).
+- **RTSS position:** `--rtss-pos left-middle|top-left|top-right|bottom-left|bottom-right|default|X,Y` with `--rtss-margin PX` (screen pixels, default 32).
+  - **Default `left-middle`:** the text starts at 42 % of the screen height on the left. That keeps it on the canopy side, clear of the gunsight, the instrument panel and RTSS's own top-left counter, and it grows downwards without reaching IL-2's bottom-left message line.
+  - **How it's placed:** each preset is converted to RTSS's `<P=x,y>` tag. The game resolution comes from `startup.cfg` (or `--rtss-screen WxH`), and the OSD zoom from IL-2's RTSS profile (or `--rtss-zoom Z`). No RTSS setting needs changing, and the FPS counter stays where RTSS puts it.
+  - **Right and bottom presets** use an estimated character size; if they sit off, calibrate with `--rtss-cell W,H` (default `9,16`).
+  - `default` leaves the text at RTSS's own OSD position.
+  - `X,Y` is in RTSS's zoomed pixels.
+  - The monitor header shows the position in use, e.g. `text at <P=16,302> (LeftMiddle, margin 32 px, 2560x1440, zoom 2 …)`.
+
+#### Setting up RTSS (one time)
+1. Download RivaTuner Statistics Server **only** from its official distributor, Guru3D: <https://www.guru3d.com/download/rtss-rivatuner-statistics-server-download/>. MSI Afterburner from msi.com also bundles it. Install it and start it; it lives in the system tray.
+2. Open the RTSS window. On the **Global** profile, set **Show On-Screen Display** to On. If you'd rather limit it to IL-2, press **Add** and pick `…\IL-2 Sturmovik Battle of Stalingrad\bin\game\Il-2.exe`, then turn it on there.
+3. Optional: turn off **Show own statistics** if you don't want RTSS's frame-rate counter as well. Use **On-Screen Display zoom** for text size and drag the preview to move the OSD.
+4. Nothing else is needed for third-party text. `live` and `chat-test` claim their own OSD slot ("IL-2 Tactical Radio") and release it on exit. The monitor header shows `RTSS: connected` or `RTSS: not running`. Don't run `chat-test` while `live` is running: they share the slot.
+
+RTSS hooks the game's Direct3D output to draw its OSD; this tool only writes text into RTSS's shared memory. If IL-2 doesn't show the OSD, try **Application detection level** Medium in RTSS.
+
+### Live positions need administrator rights
+While a track is recording, IL-2 writes the Tacview ACMI file (every aircraft, ~5 updates/s) but keeps it locked. When you press Numpad 1, `live` takes a Windows Volume Shadow Copy snapshot, reads only the new part of the file, and deletes the snapshot straight away. The game process is never touched. Snapshots need administrator rights, so run the terminal as administrator. Snapshots left behind by a crash are removed on the next start.
+
+## Known limitations
+- IL-2 telemetry contains no world position, not even the player's.
+- Single-player mission logs contain no periodic positions (AType 17 is absent).
+- Command 1 only replies from fresh live tracks. With no live position source it deliberately says nothing rather than guessing.

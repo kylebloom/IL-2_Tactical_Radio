@@ -1,0 +1,173 @@
+using Il2Radio.Core.Contacts;
+using Il2Radio.Core.Geometry;
+
+namespace Il2Radio.Core.Radio;
+
+public sealed record RadioSettings
+{
+    /// <summary>Beyond this range a friendly cannot hear the request or answer it.</summary>
+    public double RadioRangeMetres { get; init; } = 40_000;
+
+    /// <summary>Fixes older than this are not "live" and are never reported as a current position.</summary>
+    public double MaxFixAgeSeconds { get; init; } = 10;
+
+    /// <summary>Aircraft closer than this (horizontally) to each other count as flying together.</summary>
+    public double GroupRadiusMetres { get; init; } = 2_000;
+
+    /// <summary>Aircraft further apart than this vertically are not flying together.</summary>
+    public double GroupAltitudeBandMetres { get; init; } = 600;
+
+    /// <summary>The player is "in formation" when this close to a member of the flight's main group.</summary>
+    public double InFormationMetres { get; init; } = 1_500;
+}
+
+public enum ReplyOutcome
+{
+    /// <summary>At least one reply backed by fresh live fixes in the same frame as the player.</summary>
+    Position,
+
+    /// <summary>The integration cannot establish where the player is, so relative replies are impossible.</summary>
+    PlayerPositionUnknown,
+
+    /// <summary>No friendly could answer with information the integration can establish.</summary>
+    NoReply,
+}
+
+/// <summary>
+/// One radio transmission. <see cref="Contact"/> is the speaker; <see cref="Members"/> are the aircraft
+/// the reply describes (the speaker included). <see cref="Relative"/> is from the player to the group centre.
+/// <see cref="Text"/> is the English wording for display and TTS; <see cref="Tokens"/> says the same thing
+/// language-neutrally, for voices built from recorded clips.
+/// </summary>
+public sealed record RadioReply(Contact Contact, IReadOnlyList<Contact> Members, RelativePosition Relative, double FixAgeSeconds, string Text, IReadOnlyList<SpeechToken>? Tokens = null);
+
+/// <summary>Contacts that were deliberately not reported, and why. Useful for diagnostics and tests.</summary>
+public sealed record SuppressedContact(Contact Contact, string Reason);
+
+public sealed record RadioResult(ReplyOutcome Outcome, IReadOnlyList<RadioReply> Replies, IReadOnlyList<SuppressedContact> Suppressed);
+
+internal sealed record LiveContact(Contact Contact, PositionFix Fix, RelativePosition Relative, double AgeSeconds);
+
+/// <summary>Aircraft flying together, with the member who speaks for them.</summary>
+internal sealed record ContactGroup(IReadOnlyList<LiveContact> Members, WorldPoint Centre, RelativePosition Relative, double? Heading)
+{
+    public LiveContact Speaker =>
+        Members.Where(m => m.Contact.InPlayerFlight && m.Contact.FormationIndex is not null)
+            .OrderBy(m => m.Contact.FormationIndex).FirstOrDefault()
+        ?? Members.OrderBy(m => m.Relative.RangeMetres).First();
+
+    public double NearestRangeMetres => Members.Min(m => m.Relative.RangeMetres);
+
+    public double MaxAgeSeconds => Members.Max(m => m.AgeSeconds);
+}
+
+/// <summary>
+/// What the radio can honestly know right now: the player's live position and every candidate
+/// friendly with a fresh live fix within radio range. Everything else is listed as suppressed.
+/// </summary>
+internal sealed record RadioPicture(Contact Player, PositionFix PlayerFix, IReadOnlyList<LiveContact> Live, List<SuppressedContact> Suppressed)
+{
+    public static RadioPicture? Build(ContactTracker tracker, RadioSettings settings, Func<Contact, Contact, bool> isCandidate, List<SuppressedContact> suppressed)
+    {
+        var player = tracker.Player;
+        if (player?.LastFix is not { } playerFix || !IsLive(tracker, playerFix, settings))
+            return null;
+
+        var live = new List<LiveContact>();
+        foreach (var c in tracker.Contacts.Where(c => !c.IsPlayer && isCandidate(player, c)))
+        {
+            if (!c.IsOperational)
+            {
+                suppressed.Add(new(c, $"not operational ({c.Status})"));
+                continue;
+            }
+
+            if (c.LastFix is not { } fix)
+            {
+                suppressed.Add(new(c, "no position observed"));
+                continue;
+            }
+
+            double age = tracker.AgeSeconds(fix);
+            if (!IsLive(tracker, fix, settings))
+            {
+                suppressed.Add(new(c, $"last fix is {fix.Source}/{fix.Detail}, {age:F0} s old — not live"));
+                continue;
+            }
+
+            if (Navigation.Relative(playerFix.Position, fix.Position) is not { } rel)
+            {
+                suppressed.Add(new(c, "position in a different coordinate frame than the player"));
+                continue;
+            }
+
+            if (rel.RangeMetres > settings.RadioRangeMetres)
+            {
+                suppressed.Add(new(c, $"out of radio range ({rel.RangeMetres / 1000:F0} km)"));
+                continue;
+            }
+
+            live.Add(new LiveContact(c, fix, rel, age));
+        }
+
+        return new RadioPicture(player, playerFix, live, suppressed);
+    }
+
+    public static bool IsFriendly(Contact player, Contact c) => c.Coalition >= 0 && c.Coalition == player.Coalition;
+
+    public static bool IsFlightMate(Contact player, Contact c) => c.InPlayerFlight && IsFriendly(player, c);
+
+    /// <summary>Single-linkage grouping: aircraft within the group radius and altitude band of any member join it.</summary>
+    public IReadOnlyList<ContactGroup> Groups(RadioSettings settings)
+    {
+        var remaining = Live.ToList();
+        var groups = new List<ContactGroup>();
+        while (remaining.Count > 0)
+        {
+            var members = new List<LiveContact> { remaining[0] };
+            remaining.RemoveAt(0);
+            for (int i = 0; i < members.Count; i++)
+            {
+                for (int j = remaining.Count - 1; j >= 0; j--)
+                {
+                    if (!Together(members[i].Fix.Position, remaining[j].Fix.Position, settings))
+                        continue;
+                    members.Add(remaining[j]);
+                    remaining.RemoveAt(j);
+                }
+            }
+
+            groups.Add(Summarise(members));
+        }
+
+        return groups;
+    }
+
+    private ContactGroup Summarise(List<LiveContact> members)
+    {
+        var p = members[0].Fix.Position;
+        var centre = new WorldPoint(
+            members.Average(m => m.Fix.Position.North),
+            members.Average(m => m.Fix.Position.East),
+            members.Average(m => m.Fix.Position.Altitude),
+            p.Frame);
+        return new ContactGroup(members, centre, Navigation.Relative(PlayerFix.Position, centre)!.Value, MeanHeading(members));
+    }
+
+    private static bool Together(WorldPoint a, WorldPoint b, RadioSettings settings) =>
+        Navigation.Relative(a, b) is { } r
+        && r.RangeMetres <= settings.GroupRadiusMetres
+        && Math.Abs(r.AltitudeDeltaMetres) <= settings.GroupAltitudeBandMetres;
+
+    private static double? MeanHeading(IEnumerable<LiveContact> members)
+    {
+        var headings = members.Select(m => m.Fix.Heading).OfType<double>().ToList();
+        if (headings.Count == 0)
+            return null;
+        double x = headings.Sum(h => Math.Cos(h * Math.PI / 180)), y = headings.Sum(h => Math.Sin(h * Math.PI / 180));
+        return (Math.Atan2(y, x) * 180 / Math.PI + 360) % 360;
+    }
+
+    private static bool IsLive(ContactTracker tracker, PositionFix fix, RadioSettings settings) =>
+        fix.Source == PositionSource.AcmiTrack && tracker.AgeSeconds(fix) <= settings.MaxFixAgeSeconds;
+}

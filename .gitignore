@@ -1,0 +1,5 @@
+bin/
+obj/
+diag-output/
+*.user
+.vs/

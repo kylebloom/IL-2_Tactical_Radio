@@ -1,0 +1,41 @@
+using Il2Radio.Core.Contacts;
+
+namespace Il2Radio.Core.Radio;
+
+/// <summary>
+/// Radio command 1, "Request positions of nearby friendly aircraft". Friendlies flying together
+/// answer as one group through their senior member; stragglers answer for themselves. A friendly
+/// answers only when the integration has a fresh live track of it; planned waypoints and stale
+/// event snapshots are never presented as current positions.
+/// </summary>
+public static class FriendlyPositionsCommand
+{
+    public static RadioResult Execute(ContactTracker tracker, RadioSettings? settings = null)
+    {
+        settings ??= new RadioSettings();
+        var suppressed = new List<SuppressedContact>();
+        if (RadioPicture.Build(tracker, settings, RadioPicture.IsFriendly, suppressed) is not { } picture)
+            return new RadioResult(ReplyOutcome.PlayerPositionUnknown, [], suppressed);
+
+        var replies = picture.Groups(settings)
+            .OrderBy(g => g.Relative.RangeMetres)
+            .Select(g =>
+            {
+                var speaker = g.Speaker.Contact;
+                string size = g.Members.Count > 1 ? $"{RadioPhrases.Count(g.Members.Count)} aircraft together, " : "";
+                string text = $"{RadioPhrases.Who(speaker)}, {size}bearing {RadioPhrases.Bearing(g.Relative.BearingDegrees)}, " +
+                              $"{RadioPhrases.Range(g.Relative.RangeMetres)}, {RadioPhrases.Altitude(g.Centre.Altitude)}.";
+                List<SpeechToken> tokens = [.. SpeechToken.Identify(speaker)];
+                if (g.Members.Count > 1)
+                    tokens.Add(new(SpeechWord.Group, g.Members.Count));
+                tokens.Add(new(SpeechWord.Bearing, g.Relative.BearingDegrees));
+                tokens.Add(new(SpeechWord.Range, g.Relative.RangeMetres));
+                tokens.Add(new(SpeechWord.Vertical, g.Relative.AltitudeDeltaMetres));
+                tokens.Add(new(SpeechWord.Altitude, g.Centre.Altitude));
+                return new RadioReply(speaker, g.Members.Select(m => m.Contact).ToList(), g.Relative, g.MaxAgeSeconds, text, tokens);
+            })
+            .ToList();
+
+        return new RadioResult(replies.Count > 0 ? ReplyOutcome.Position : ReplyOutcome.NoReply, replies, suppressed);
+    }
+}

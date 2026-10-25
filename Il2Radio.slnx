@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Il2Radio.Core/Il2Radio.Core.csproj" />
+    <Project Path="src/Il2Radio.Diag/Il2Radio.Diag.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Il2Radio.Core.Tests/Il2Radio.Core.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,321 @@
+# Feasibility assessment — IL-2 Great Battles tactical radio
+
+Status as of 2026-10-25. Evidence levels used throughout:
+
+| Tag | Meaning |
+|---|---|
+| **VERIFIED** | Checked on this machine against real IL-2 output (BoS install, Career Mode files) |
+| **DOCUMENTED** | Official or well-established documentation; not yet re-tested here |
+| **COMMUNITY** | Reverse engineered or reported by community projects |
+| **SPECULATIVE** | Plausible, untested |
+
+## The critical question
+
+> Can an external application access the actual, current positions and identities of AI aircraft during a running single-player Career mission?
+
+**Answer (2026-10-25): the data exists live, but IL-2 locks it.** With `tacviewrecord = 1` and track recording on (LCtrl+R), IL-2 writes a plain-text ACMI file to `data\Tracks` in real time (~18 KB/s). It contains **every** aircraft and ground vehicle in the mission at ~5 Hz, with real lat/lon/altitude, attitude, AGL, type, pilot name and coalition. IL-2 opens the file **without read sharing** while recording, so no other process can read it until recording stops. Mission-log events arrive live in ~33 s chunks (see §5–6).
+
+| Data | Available? | Source | Evidence |
+|---|---|---|---|
+| Identity of every aircraft (type, pilot name, country/coalition, object id) | Yes | mission log AType 12 | VERIFIED |
+| Which aircraft are in the player's flight, and their formation numbers | Yes | mission log AType 10 (`FORM`, `ISPL`) | VERIFIED |
+| Status: airborne, landed, damaged, destroyed, bailed out, despawned | Yes | AType 5/6/2/3/18/16/4 | VERIFIED |
+| AI position at spawn, take-off, landing, damage, kill, bail-out | Yes, as snapshots | same events | VERIFIED |
+| Continuous AI positions | **Not in mission logs**: AType 17 appears in none of 66 local logs (63,431 records) | — | VERIFIED |
+| Continuous AI positions | **Yes, but only readable after recording stops** (file locked while open) | `data\Tracks\*.acmi` | VERIFIED |
+| Player attitude, IAS, AGL, engine, hits | Yes, ~real time | UDP motion + telemetry | COMMUNITY (formats); UDP path tested with synthetic packets |
+| Player **world position** | **No**: neither UDP stream contains it | — | COMMUNITY (IL2Shaker decoders) |
+| Planned flight, waypoints, enemy flights in the mission | Yes, as plan only | `data\Missions\_gen.Mission` | VERIFIED |
+
+The player's own position is just as much a blocker as AI positions. Bearing and range need it, and the UDP telemetry does not carry it.
+
+## Findings by research item
+
+### 1–2. Modding capabilities, Mods On/Off
+IL-2 GB has no plugin API, no in-mission scripting runtime and no public SDK. The "mods" system (JSGME-style file overrides, which need Mods On) is for skins, sounds and the GUI, not for game logic. Everything in this project uses outputs the game already provides and edits only `startup.cfg`. It is therefore **Mods Off compatible**. Nothing here touches `.gtp` archives, the game process or its memory. (DOCUMENTED / general community knowledge)
+
+### 3. Career Mode mission generation
+- Before each sortie, the Career generator writes the mission as **text** to `data\Missions\_gen.Mission` and binary to `_gen.msnbin`. Localisation goes to `_gen.eng` etc. (VERIFIED: 4.4 MB text file, 34 `Plane` blocks)
+- The player plane is the one with `AILevel = 0`. `Name = "Pilot Name,rosterId,n"`, `Country`, `Callsign`, `Callnum`, `Script` (aircraft type) and the start position are all present. (VERIFIED)
+- Career state lives in SQLite at `data\Career\cp.db`. IL-2 Integrator reads planned routes from its `mission.route` column ([source](https://github.com/rafaelvcaetano/il2integrator/blob/master/service-career/src/main/java/me/magnum/il2mapintegrator/career/CareerDatabase.java)). (COMMUNITY)
+- IL-2 Allied Radio uses the same `_gen.Mission` approach for Career/AQMB missions ([forum](https://forum.il2-series.com/topic/5325-il-2-allied-radio/)). (COMMUNITY)
+
+No per-mission editing is needed, so existing careers keep working.
+
+### 4. Telemetry protocols
+Two UDP outputs, configured in `startup.cfg`:
+```
+[KEY = telemetrydevice]  addr = "127.0.0.1"  decimation = 2  enable = true  port = 29373  [END]
+[KEY = motiondevice]     addr = "127.0.0.1"  decimation = 2  enable = true  port = 29373  [END]
+```
+- Motion packet `0x494C0100`: tick, yaw/pitch/roll, angular rates, accelerations. Telemetry packet `0x54000101`: indicators (RPM, manifold pressure, gear, IAS, AGL, flaps...) plus events (vehicle name, guns, bombs, hits, damage, seat). Layouts are taken from [IL2Shaker's decoders](https://github.com/sicsix/IL2Shaker/tree/master/IL2TelemetryRelay) and the official `IL2_MotionOutput.pdf` ([forum thread](https://forum.il2sturmovik.com/topic/72958-key-telemetrydevice-what-are-the-packet_id-outputs)). (COMMUNITY)
+- **Only the player's vehicle. No world position.** (COMMUNITY, consistent across all decoders)
+- Only one `addr:port` per device, so it conflicts with SRS (UDP 4322), Allied Radio and bass-shaker tools. A relay or forwarder will be needed for coexistence. (COMMUNITY / [SRS troubleshooting](https://srsforil2.com/))
+
+### 5–6. Live AI positions and properties
+**Mission logs.** IL-2 writes a binary `data\FlightLogs\missionReport(...).mlg` for every mission, used by the debriefing (`data\LParser\BoS.LogParser.Offline.exe`). With `mission_text_log = 1` it also writes text `missionReport(...)[N].txt` files that rotate during the mission. Server stats tools parse those in near real time ([il2_stats](https://github.com/vaal-/il2_stats/blob/master/src/mission_report/parse_mission_log_line.py)).
+
+This project decodes the binary format directly (layout in [`BinaryMissionLog.cs`](../src/Il2Radio.Core/MissionLog/BinaryMissionLog.cs)). All 66 local logs (63,431 records) decode with consistent framing (VERIFIED). Results:
+- Every aircraft is identified, with pilot name, type, country and status changes. (VERIFIED)
+- In single-player, AType 10 marks the whole player flight with formation numbers 1..N and `ISPL` on the human. (VERIFIED)
+- **No AType 17 periodic positions** in any local log. In the sample Career mission, the player's 7 wingmen have exactly **one** position each over 50 minutes (take-off). (VERIFIED)
+- **Live delivery (VERIFIED in a Career flight on 2026-10-25):** with `mission_text_log = 1` and no `text_log_folder`, IL-2 writes rotating chunks `missionReport(<start>)[N].mlg` and a matching `.txt` **directly in `data\`**, about every 33 s of wall time. So log events (spawns, take-offs, kills...) reach the app with roughly ≤35 s latency. Chunk `[0]` holds the spawn roster, including the player's flight (`AType 10`, formation numbers). No AType 17 appeared during the flight either.
+
+**Tacview ACMI.** `[KEY = track_record] tacviewrecord = 1` makes IL-2 write ACMI files while a track is being recorded (LCtrl+R, or automatic track recording) ([Tacview IL-2 guide](https://tacview.fandom.com/wiki/User_Guide_–_IL‑2_Sturmovik?oldid=710)). ACMI is an open text format with a position for every object every frame. A Tacview forum note says IL-2 exports "only the objects around the local aircraft". That would actually suit this project's realism goals. (COMMUNITY) Unknown so far:
+1. Is the file written **incrementally** while recording, or only on close?
+2. Is it plain text or zip-compressed (`.zip.acmi`, which can't be read until closed)?
+3. Which objects and properties does it include (`Pilot`, `Coalition`, radius)?
+
+**Live test results (VERIFIED, Career, 107 s recording):** plain text (not zipped), `FileVersion=2.1`, absolute lat/lon (`ReferenceLongitude/Latitude` = 0). All 11 aircraft were present, including enemies 60 km away (so it is not proximity-limited), each with 537 updates (~5 Hz), plus 233 ground objects. Names look like `Name=Bf 109 F-4 - Heinz Koelzig` with **unescaped commas** in AI roster suffixes and a 0x01 prefix on flight-mates. The player appears under the account nickname, which also appears as `0,Author=`. Coalition values are `Allies`/`Axis`. Replaying command 1 at the end of the recording gave correct replies for all five flight-mates ("Number one, bearing zero-three-zero, approximately 22 kilometres, altitude 1100 metres").
+
+**Blocker:** while recording, IL-2 holds the file with no read sharing (`ERROR_SHARING_VIOLATION`). Options: (a) stop and restart recording periodically, since each stop closes a readable file; (b) read through a Volume Shadow Copy snapshot (documented Windows backup API, needs admin, heavy at high frequency); (c) use logs live and the ACMI only after a sortie.
+
+**Resolved (VERIFIED 2026-10-25, Career flight, elevated terminal):** on-demand Volume Shadow Copy via `Win32_ShadowCopy`. One Numpad 1 press read 563 KB of new ACMI data: snapshot 1010 ms, read 25 ms, delete 134 ms, about 1.2 s total. It produced correct replies from all five flight-mates, about 17 km away at bearing 110, with fix age 0.2 s. It needs administrator rights and never touches the game process.
+
+### 7. Mission scripting exposing state
+The mission editor's MCU logic (check zones, timers, triggers) runs inside the game. It has no file, network or console output except the mission log itself. A custom mission could fire log events (e.g. `MCU_CheckZone` → objective events, AType 8) as a crude proximity sensor. Career missions are generated, though, so this would mean rewriting `_gen.Mission` before every sortie. That is fragile and not recommended. (SPECULATIVE)
+
+### 8. Extending in-game radio commands
+The in-game radio menu (Tab) is hard-coded per aircraft and nation. It cannot be extended without modifying game data. Commands will come from external hotkeys and joystick buttons instead. (DOCUMENTED / community consensus)
+
+### 9. Independent audio
+Yes. SRS and Allied Radio both play their own audio alongside IL-2 (SRS uses NAudio with radio filters: [source](https://github.com/ciribob/IL2-SimpleRadioStandalone/tree/master/IL2-SR-Client/Audio)). (COMMUNITY)
+
+### 10. How existing tools integrate
+| Project | Data used | Live AI positions? |
+|---|---|---|
+| [IL-2 SRS](https://github.com/ciribob/IL2-SimpleRadioStandalone) | telemetry events 10–14 (server address, client id, coalition); multiplayer | No |
+| [IL-2 Integrator](https://github.com/rafaelvcaetano/il2integrator) | Career `cp.db` (planned route), PWCG files, HTTP/UDP for map apps | No (planned only) |
+| [IL-2 Allied Radio](https://forum.il2-series.com/topic/5325-il-2-allied-radio/) | `_gen.Mission` date and nationality + player telemetry | No |
+| [IL2Shaker](https://github.com/sicsix/IL2Shaker) | motion + telemetry UDP | No (player only) |
+| [il2_stats](https://github.com/vaal-/il2_stats) | text mission logs (server) | Event positions only |
+
+No known tool gets live AI positions in single-player. This project would be the first, and only if ACMI streams.
+
+## Technology recommendation: C# / .NET 10
+
+The integration surface is UDP datagrams, binary and text files that grow while being written, SQLite, Windows audio and DirectInput/XInput input. None of it needs in-process code, Lua or C++.
+- **Binary parsing and file tailing**: `Span<T>` and `BinaryPrimitives` are ideal and allocation-light. The `.mlg` decoder is ~150 lines.
+- **Audio**: NAudio (as SRS uses) for clip playback and radio filters. `System.Speech` / WinRT SAPI for optional TTS.
+- **Input**: global hotkeys via Win32 `RegisterHotKey`. Joystick via DirectInput (SharpDX/Vortice) or `Windows.Gaming.Input`, read-only, so it never steals bindings from IL-2.
+- **Deployment**: single-file self-contained `.exe`, no runtime install.
+- **Testability**: xUnit with recorded fixtures.
+
+Python would also work for parsing but is weaker for global input, audio and packaging. C++ brings no benefit since there is nothing to inject into. .NET is chosen on these merits, not just familiarity.
+
+## Architecture (as implemented in the PoC)
+
+```
+startup.cfg outputs ─┬─ UDP motion/telemetry ──► TelemetryDecoder ─┐
+                     ├─ FlightLogs\*.mlg ──────► BinaryMissionLogTail ├─► ContactTracker ─► FriendlyPositionsCommand ─► (text now; audio later)
+                     ├─ logs\text\*.txt ───────► TextMissionLog      │     every fix keeps Source + age + frame
+                     └─ Tracks\*.acmi ─────────► AcmiStream ──────────┘
+_gen.Mission ─────────► MissionPlan (PLANNED only: names, flight, coalition table)
+```
+Safeguards built into the core:
+- `PositionFix.Source`: `LogEvent` snapshots are never treated as live. Only `AcmiTrack` fixes younger than `MaxFixAgeSeconds` produce position replies.
+- `CoordinateFrame`: IL-2 world and ACMI positions are never mixed until a calibration is proven.
+- Destroyed, bailed-out and despawned aircraft never answer. Pilot kills are told apart from gunner kills.
+- A source that stops updating ages all of its fixes, using the wall clock.
+
+## Next test (needs you, ~10 minutes)
+1. Close IL-2, then run `Il2Radio.Diag check --apply` (backs up `startup.cfg` and enables telemetry, text log and Tacview).
+2. Run `Il2Radio.Diag live`, then start a Career mission. Make sure a track is recording (LCtrl+R if not automatic).
+3. Fly 3–5 minutes near your flight, press **Numpad 1** a few times, then **Numpad .** to quit (Num Lock on).
+4. Send back `diag-output\evidence-*.md`. Also run `Il2Radio.Diag acmi` on the resulting `.acmi`.
+
+The evidence file answers: does the `.mlg` grow during flight, do text logs rotate live, does ACMI grow live, and how many AI aircraft received continuous updates.
+
+## Roadmap (evidence-driven)
+1. **Run the live test above.** Decide the position source.
+2. **If ACMI streams:** confirm frame and units, identify the player object, and measure the object radius and update rate. Calibrate ACMI against IL-2 coordinates with take-off events, so planned waypoints and log snapshots can be shown alongside. Then build command 1 for real, plus commands 3 and 5 (formation position, rejoin vector).
+3. **If ACMI is close-only or zip-only:** reduce scope. Offer status-based reports from logs ("Number Two airborne", "Number Four going down", "Number Five landed") and planned-route guidance clearly phrased as plan ("briefed route: next waypoint bearing...", never "I see"). Dead reckoning from player telemetry is possible but has unbounded drift. It would only be used with explicit uncertainty wording.
+4. **Detection model** for commands 2 and 4 (enemy contacts, identification). Visual range, aspect and cloud give probabilistic detection and identification. Identification confidence grows with time and proximity ("single-engine fighter" → "looks like a Messerschmitt"). Only applies to objects that actually exist in the live source.
+5. **Input**: global hotkeys plus joystick button mapping (read-only).
+6. **Audio**: NAudio playback of clip sequences with a band-pass/noise radio effect and an independent volume. Optional SAPI TTS fallback.
+7. **Coexistence**: UDP relay so SRS, shakers and this tool can share telemetry.
+8. Other GB modules: no module-specific code is expected. Re-verify on Bodenplatte and Normandy maps.
+
+## Radio text in IL-2's chat / message area (researched 2026-10-25)
+
+> Can an external app put the radio request and the replies into IL-2's own chat or message log during single-player Career?
+
+**Answer: no supported path exists. The tool draws its own chat-styled overlay instead, and that overlay only shows if IL-2 runs windowed.**
+
+| Path | Result | Evidence |
+|---|---|---|
+| UDP telemetry / motion output | Output only. `startup.cfg` sets a *destination* `addr:port`, and every decoder and the official `IL2_MotionOutput.pdf` describe outgoing packets only. No inbound channel. | COMMUNITY ([IL2Shaker](https://github.com/sicsix/IL2Shaker/tree/master/IL2TelemetryRelay), [forum](https://forum.il2sturmovik.com/topic/72958-key-telemetrydevice-what-are-the-packet_id-outputs)) |
+| Remote console `chatmsg roomtype id message` | The command exists, but the shipped `bin\console\readme.txt` says the server side is "coded into the dserver.exe binary" and is enabled through DServer's `startup.cfg` (`rcon_start`). The strings `rcon_start` and `chatmsg` occur in `bin\game\DServer.exe` and **not** in `Il-2.exe`. Career runs offline in `Il-2.exe`, so there is nothing to connect to. | VERIFIED (shipped readme + string search of both binaries); [forum thread on the packet format](https://forum.il2sturmovik.com/topic/61076-calls-to-the-remote-console-rconclient-from-code/) |
+| `serverinput` (an external trigger for mission logic) | DServer remote console only, same as above. | VERIFIED (same readme) |
+| `MCU_TR_Subtitle` in the Career mission | Career already uses them: this machine's `_gen.Mission` has 5 (e.g. `PLAYER_DESTROYED`, `LCText = 247` → `_gen.eng` "Your aircraft is critically damaged…"), with `SubtitleInfo { Duration, FontSize, HAlign, VAlign, R/G/BColor }`. **But** the text is a fixed localisation entry, it can only fire from mission logic, single-player has no external trigger, and the replies depend on live geometry, so they cannot be written in advance. It would also mean rewriting the generated mission (probably `_gen.msnbin`, which the game likely loads; SPECULATIVE) between generation and take-off. `&` and `<` also break subtitles. Rejected. | VERIFIED (local `_gen.Mission` / `_gen.eng`); COMMUNITY ([subtitle quirks](https://forum.il2sturmovik.com/topic/53595-the-mystery-of-the-disappearing-subtitle-translator)) |
+| `MCU_Icon` | Map icons and lines, not messages. | VERIFIED (531 in `_gen.Mission`) |
+| Memory writes, DLL injection, D3D11 `Present` hooks (how Steam/Discord/RTSS draw in-game) | Excluded by project rule: process injection, and a possible anti-cheat concern in multiplayer builds. | (rule) |
+| Community tools | None found that put text into single-player chat. SRS's overlay is a separate window, and its guide says it "does not appear in Full-Screen mode or in VR". | COMMUNITY ([SRS guide](https://forum.il2-series.com/topic/73-installation-and-usage-of-srs-for-il-2-voice-comms-app-by-jason-williams/), [SRS overlay in VR](https://forum.il2sturmovik.com/topic/76980-srs-overlay-in-vr/)) |
+
+### Alternative implemented: chat-styled overlay (`live --chat …`, `chat-test`)
+`src/Il2Radio.Diag/ChatOverlay.cs` is a separate per-pixel-alpha layered window. It is click-through (`WS_EX_TRANSPARENT`), never takes focus (`WS_EX_NOACTIVATE`, shown without activation), stays topmost (and re-asserts that every 2 s), and is hidden from the taskbar and Alt-Tab. It shows `Speaker: text` lines newest at the bottom, each on a translucent dark box like IL-2's own "Game is Paused" line, fading after 14 s. `Il2Radio.Core/Radio/RadioChat.cs` builds the lines: first the player's call (e.g. "Gert Knoll: All friendlies, report positions."), then each `RadioReply.Text` exactly as spoken, under the replying pilot's name. Nothing is written to the game or its files.
+
+**Fullscreen test on this machine (2026-10-25: IL-2 running a paused Career mission, `graphics.fullscreen = 1`, Il-2.exe compatibility flags only `HIGHDPIAWARE`, so fullscreen optimizations are not disabled):**
+- IL-2's window is a `WS_POPUP` covering 1920×1080. While IL-2 was **not** the foreground window, the overlay showed over the game in a screen capture. (VERIFIED)
+- Once IL-2 had focus, it set `WS_EX_TOPMOST` on itself. The overlay stayed above it in z-order (`EnumWindows`) but was **absent** from three captures over 9 s, including with `CAPTUREBLT`. The overlay's rendered bitmap was checked separately and was correct. So when focused, `fullscreen = 1` bypasses desktop composition here and hides other windows. (VERIFIED by capture; please confirm by eye)
+- The overlay did not take focus from IL-2 or minimise it. (VERIFIED: IL-2 stayed foreground and not minimised)
+
+**Consequence:** to see the overlay in flight, IL-2 has to run **windowed** (`fullscreen = 0`, `win_width = 1920`, `win_height = 1080`). Untested trade-offs:
+- Whether IL-2's windowed mode at desktop size has a title bar or overhangs the screen is unknown. (SPECULATIVE; [a forum thread](https://forum.il2sturmovik.com/topic/76162-game-goes-over-the-borders-of-my-screen-when-open) reports overhang with Windows scaling above 100%)
+- Composed (windowed) presentation is usually close to fullscreen performance on Windows 10/11 ([DirectX blog](https://devblogs.microsoft.com/directx/demystifying-full-screen-optimizations)). One VR user reports a 10–20 fps loss in windowed mode. (DOCUMENTED / COMMUNITY)
+- In VR the overlay is never visible in the headset.
+- **Second-monitor option:** `--chat window --chat-screen 1` shows an ordinary dark window on another display and works with any IL-2 mode. Untested here because this machine has one display.
+
+**Known approximations:** the request line appears when the reply is computed, after the ~1.2 s snapshot rather than at the key press. With audio on, each reply now appears when `RadioVoice.Speaking` reports that its transmission started. If that event never arrives, the reply still appears after its estimate plus 10 s. With `--no-audio`, replies are spaced by an airtime estimate (0.9 s + 14 characters/s). The colours were replaced on 2026-10-25 by IL-2's own message style, measured from an in-game "Game is Paused" screenshot: one black box per line at 42 % opacity and single-colour #E0E0DC Arial text (`Il2ChatStyle`).
+
+**User check by eye (2026-10-25):** "the text shows until I put IL-2 in focus, then it disappears." This confirms the capture result. The user wants to stay in fullscreen, hence the RTSS output below.
+
+### RTSS on-screen display output (`--chat rtss`, implemented 2026-10-25)
+RivaTuner Statistics Server (RTSS) already draws on-screen text inside games' own frames, including exclusive fullscreen. It also accepts text from other programs through a documented named shared-memory block, `RTSSSharedMemoryV2`. MSI Afterburner, CapFrameX and many small tools use it, and RTSS's own description invites "display any custom text in On-Screen Display directly from your own application" ([Guru3D RTSS page](https://www.guru3d.com/download/rtss-rivatuner-statistics-server-download/)). RTSS hooks the game to render; this project only writes text into RTSS's memory and never opens or touches the IL-2 process.
+
+**Layout and protocol** (DOCUMENTED: RTSS SDK `RTSSSharedMemory.h` and the SDK sample's `UpdateOSD`/`ReleaseOSD`, as carried in [CapFrameX's copy of the header](https://github.com/CXWorld/CapFrameX/blob/master/source/CapFrameX.RTSSInterface/Include/RTSSSharedMemory.h) and [its client](https://github.com/CXWorld/CapFrameX/blob/master/source/CapFrameX.RTSSInterface/RTSSCoreControl.cpp), which `static_assert`s the entry offsets; the same pattern appears in [SysLat](https://github.com/Skewjo/SysLat_Software/blob/master/RTSSClient.cpp) and [YetAnotherKeyDisplayer](https://github.com/Jagailo/YetAnotherKeyDisplayer/blob/master/RTSSCustomOSD/OSD.cpp)):
+
+| Field | Offset | Use |
+|---|---|---|
+| `dwSignature` | 0 | `'RTSS'` (0x52545353) when valid; `0xDEAD` while shutting down |
+| `dwVersion` | 4 | `0x0002xxxx` required |
+| `dwOSDEntrySize` / `dwOSDArrOffset` / `dwOSDArrSize` | 20 / 24 / 28 | OSD slot table (stride, offset, count) |
+| `dwOSDFrame` | 32 | incremented after each change so RTSS redraws |
+| `dwBusy` | 36 | v2.14+: set bit 0 atomically while writing; if it was already set, skip this update |
+| slot `szOSD[256]` / `szOSDOwner[256]` / `szOSDEx[4096]` | 0 / 256 / 512 in each entry | text (≤ v2.6), owner name, extended text (v2.7+) |
+
+The client scans slots from **1**, leaving slot 0 to the primary client (Afterburner). It first looks for a slot it already owns, otherwise claims the first slot with an empty owner. It writes zero-terminated ANSI text, increments `dwOSDFrame`, and on exit zeroes its whole entry and increments the frame again. Format tags need v2.11+. The SDK sample documents `<C=RRGGBB>` … `<C>` for colour and `<P=x,y>` for absolute position, and warns that `<P>` can overlap other clients' text. Size tags appear only as variables (`<S1=75>`, `<S1>`) in the sample, so they are not used.
+
+**Implementation:**
+- `Il2Radio.Core/Osd/RtssOsd.cs` holds the slot logic and the text formatting, working over a span of the whole mapping. It is unit-tested against a fake memory block (`RtssOsdTests`): claiming, reuse, other owners, no free slot, invalid or v1 headers, an out-of-range table, the busy lock, the legacy 256-byte field, release, colour tags, wrapping, tag sanitising and the size limit.
+- `Il2Radio.Diag/RtssChat.cs` opens the named mapping on each update, like the SDK sample, so RTSS can start or restart at any time. It rewrites on every change and every 2 s, releases its slot when nothing is visible and on exit, and reports `RTSS: not running`, `no free OSD slot (owners…)` or `connected (vX.Y)`.
+- Fading uses the shared `ChatTimeline`. RTSS colours have no alpha, so lines are darkened over the last 2 s.
+
+**Verified here (2026-10-25)** without RTSS installed:
+- `chat-test --chat rtss` reports "not running".
+- A stand-in process then created a v2.21-shaped `RTSSSharedMemoryV2` mapping. The real code path claimed slot 1, wrote the coloured, wrapped text, left `dwBusy = 0`, bumped `dwOSDFrame` on each change, and cleared the slot on exit.
+
+**Not verified (needs RTSS and IL-2):**
+- RTSS rendering in IL-2's exclusive fullscreen. That is RTSS's normal use and widely reported for IL-2 frame counters (COMMUNITY), but it is untested here.
+- Whether RTSS honours the space indentation of wrapped lines (it depends on the OSD font).
+- Whether the colours read well over the cockpit.
+
+**User test (2026-10-25):** "It looks and sounds great." The text sat at the very top-left with no padding, which is RTSS's default profile OSD position, because no position tag was sent.
+
+### RTSS text position and press feedback (2026-10-25)
+**How RTSS positions third-party text:**
+- **Global profile position:** each application profile has an OSD position (`dwOSDX/dwOSDY` in the app entry). The header documents "coordinate wrapping is allowed, i.e. -5 defines 5 pixel offset from the right side". Unwinder confirms on the [Guru3D forum](https://forums.guru3d.com/threads/osd-not-displaying-right-positioning.326359/) that negative values offset from the bottom/right and that coordinates are in zoom units. It moves every slot, including the frame counter, and is set by the user in RTSS. (DOCUMENTED)
+- **Per-slot hypertext tag `<P=x,y>`:** text after it is drawn at absolute coordinates from the top-left, "in zoomed pixel units". This is the SDK sample comment in [CapFrameX's copy](https://github.com/CXWorld/CapFrameX/blob/master/source/CapFrameX.RTSSInterface/RTSSCoreControl.cpp), which warns about overlapping other clients; usage guides such as [EliteSpeedrunTool's](https://github.com/GTA5Oracle/EliteSpeedrunTool/blob/master/doc/RTSS/RTSS-en.md) and [acr_telemetry's](https://github.com/decnet100/acr_telemetry/blob/main/docs/RTSS_OVERLAY.md) say the same. (DOCUMENTED / COMMUNITY) I found no source that the tag accepts negative wrap-around values, so they are not used.
+
+**Chosen:** `<P=x,y>` in our slot only, so RTSS settings and the frame counter are untouched.
+- Presets are converted to zoomed pixels from the game resolution (`startup.cfg`) and the OSD zoom, read from IL-2's RTSS app entry (`dwOSDPixel`, "OSD pixel zooming ratio", at offset 324 of `RTSS_SHARED_MEMORY_APP_ENTRY`).
+- Default `left-middle` (margin 32 px, top at 42 % height): the left canopy side, clear of the gunsight, the instrument panel, the top-left counter and IL-2's bottom-left message line (~73 %). It is anchored at its top, so it needs no text-size estimate. Right and bottom presets need the OSD character size, which is estimated (9×16 zoomed pixels) and can be calibrated.
+- **VERIFIED** against the real RTSS on this machine (shared memory v2.21, IL-2 hooked): the app entry for `Il-2.exe` was found with zoom 2, and the `<P>` position was computed for 2560×1440. Not yet verified by eye in IL-2. The inference that the `<P>` zoom equals `dwOSDPixel` is based on both being described as the OSD zoom; if positions look scaled, pass `--rtss-zoom`.
+
+**Press feedback:** `LiveSession.Keyed` fires as soon as a numpad key is accepted, before the ~1.2 s snapshot. It shows the player's call line at once (the RTSS output updates immediately; the overlay ticks every 50 ms) and plays `RadioVoice.PlayKeyClick()`: a ~3 ms click plus ~200 ms of carrier through `RadioEffect`, at the radio volume. Because `PlaySound` has a single channel, the click cuts off any playing transmission and drops queued ones, like keying over the channel. When the request then can't refresh positions (no track, no admin rights, snapshot error), the chat says why ("no reply: position snapshot failed"). A player-side recorded request clip was not added; a click is enough for now.
+
+## Recorded radio voices (researched 2026-10-25)
+
+Goal: replace or augment Windows TTS (only Microsoft David/Mark/Zira, all English, are installed here, VERIFIED via the `Speech` and `Speech_OneCore` registry tokens) with voices that sound like IL-2's own radio chatter, in the speaker's language.
+
+### a. IL-2's own radio recordings
+**Where they are (VERIFIED, BoS install, 2026-10-25).** The radio speech is **not** inside the `.gtp` archives. It is 8,878 loose Ogg Vorbis files (44.1 kHz mono) under `data\Audio\radio\<nation>\<actor>\`, next to the FMOD banks `MasterBank.bank` / `MasterBank.strings.bank`:
+
+| Nation folder | Actors | Notes |
+|---|---|---|
+| `ger` | 51–54 (226 clips each), 61, 71, 81–82, 91–93 | German |
+| `rus` | 01–05 (226 each), 11–12, 21–22, 31–32, 41–45, `fem\actor01`, `fem\actor31` | Russian, with female voices |
+| `usa` | 101–105 (229 each), 111–113, 121–122, 131–132 | English |
+| `gbr` | 151–155 (229 each), 161–162, 171–172, 181–182 | English |
+
+Every actor folder has `const\` (whole phrases) and `var*\` (fragments the game fills in). Actors 51–54, 01–05, 101–105 and 151–155 share one layout, file for file (the English sets add `out`/`over`). They hold the air-to-air vocabulary:
+- `varCallsign\cn_01…cn_20` (numbers), `acn_*` (a longer variant), `cs_bird_*`, `cs_tree_*`, `cs_storm_*` (callsign words)
+- `varDir\01clock…12clock`, `to_n|ne|e|se|s|sw|w|nw`, `toHigh`, `toLow`, `toLeft`, `toRight`, `toBack`, `toCourse`
+- `varRange\1_km…10_km`, `close`, `long`
+- `const\grp`, `pair`, `fighters`, `bombers`, `roger`, `copy`, `ord_rejoin`, `rep_*` (reports), `req_*` (requests) and so on.
+
+The roles of the other actors are inferred from their file names (SPECULATIVE): 61/11/12 are ground control (`clrtakeoff`, `clrtolnd`, `varWind`), and 91–93/41–45 are tank crews (`varShell`, `varTarget`, `varRange\50_m…5000_m`).
+
+**What the fragments say.** I couldn't listen to them, so meanings come from two sources:
+1. File names (SPECULATIVE on their own).
+2. Windows speech recognition (en-US, constrained grammar) on `usa\actor101`. Results: `cn_01` "…one…" (confidence 0.82), `cn_02` "…two…" (0.74), `to_e` "…east" (0.80), `toHigh` "high" (0.92), `toLow` "below/low" (0.81), `long` "long range" (0.73), `close` "close" (0.90). Clock clips weren't matched; dictation heard "…o'clock". (PARTIALLY VERIFIED for English)
+
+The German and Russian sets are the same script, file for file, so the same meanings are assumed (SPECULATIVE until heard). `Il2Radio.Diag voice-check --country 201 --play` plays every mapped clip with its key so this can be confirmed by ear.
+
+**The recordings are already radio-processed (VERIFIED by measurement).** There's no silence anywhere: a hiss floor of 5–10 % RMS runs through the whole file. RMS is ~0.25 at a 0.89 peak, so they're heavily compressed. The mean frequency (first-difference energy ratio) is ~1.5 kHz, so they're band-limited. The game therefore can't be adding all of the radio sound at runtime. This project gives them only the squelch, a gentle drive and the range-dependent hiss.
+
+**What they can't say.** There are no altitude numbers in metres for pilots (only tank crews have 50–5000 m, with different speakers), no three-digit bearings or headings, no "steer", no "you are with us" / "in formation", and no ranges beyond 10 km except "long range". Clip replies are therefore coarser than the English text: 18 km → "long range", bearing 110 → "east", altitude → only "high/low" relative to you. Replies the clips can't express fall back to TTS (today that's "in formation" / "with us").
+
+**Can they be played from the user's install?** Terms checked: the IL-2 series [user agreement](https://il2-series.com/user-agreement/) (il2sturmovik.com/user-agreement redirects there). No separate Great Battles EULA text could be found online. Relevant clauses:
+- 5.1: the user "has the right to use Objects".
+- 7.1: the operator holds the rights to "multimedia content" among the Objects.
+- 5.3: forbids "debugging, modifying, disassembling, decompiling", bypassing DRM, and cheats or bots "to gain unauthorized advantages".
+- Schedule 3: forbids mods "that unfairly alter game functionality".
+
+Reading a loose `.ogg` that the game ships unpacked, and playing it on the same PC, involves none of the forbidden actions. Nothing is unpacked, decompiled or modified, and no gameplay advantage is gained. That is my reading, not legal advice. **Redistributing the clips is clearly not allowed** (7.1). So:
+- the repo ships only manifests (`voices/il2-*.json`) that list file names relative to `{il2}`;
+- clips are read in place at runtime and never copied;
+- the game still works with Mods Off, and nothing in `data\` is written.
+
+Sources: [user agreement](https://il2-series.com/user-agreement/); [Cliffs of Dover Steam EULA](https://store.steampowered.com/eula/eula_63950), a different product but the same 1C licence style ("private use"); the install's `data\Licenses.txt`, which lists libogg/libvorbis, consistent with the Vorbis files found.
+
+### b. Phrase concatenation from clips (implemented)
+- Replies now carry language-neutral **`SpeechToken`s** next to the unchanged English text: `Speaker(1) Group(5) Clock(3) Range(18000) Vertical(2400)`. See [SpeechTokens.cs](../src/Il2Radio.Core/Radio/SpeechTokens.cs).
+- **`ClipPhraser`** maps tokens to clip keys (`callsign.1 group clock.3 range.far vertical.above`). It tries the most precise clip first, then coarser ones. Tokens that carry the message (direction, range, "with us") are required; decorations (number, group size, above/below, altitude, heading) are skipped when a pack lacks them.
+- A **`VoicePack`** is a JSON manifest mapping keys to WAV/OGG files ([voices/README.md](../voices/README.md)). It can have several speakers (`{speaker}`), and its root can be `{il2}` (the user's own install) or a folder of the user's own recordings. Its `countries` field selects it by the speaker's nationality.
+- **`ClipVoice`** decodes clips (WAV built in; OGG via [NVorbis](https://github.com/NVorbis/NVorbis), MIT, ~70 KB managed, the only new dependency). It resamples them with a windowed-sinc filter to 16 kHz, levels each clip to the same RMS and joins them with 25 ms crossfades. `RadioEffect` is applied on top.
+
+### c. Better local TTS (researched, not implemented)
+| Option | Languages | Licence | Cost / effort | Verdict |
+|---|---|---|---|---|
+| Windows OneCore voices (`Windows.Media.SpeechSynthesis`) | de-DE, ru-RU voices can be added through Windows language/speech packs (not re-checked here) | Part of Windows | Needs a WinRT target framework; only English voices installed here | Same robotic character as SAPI; no gain in realism |
+| Windows "natural" voices (Narrator) | many | Windows | Not exposed to the public SAPI/WinRT synthesis API; a community adapter exists (COMMUNITY, unverified) | Unsupported path |
+| [Piper](https://github.com/rhasspy/piper) | de_DE (e.g. *thorsten*, dataset [CC0](https://huggingface.co/rhasspy/piper-voices/blob/main/de/de_DE/thorsten/high/MODEL_CARD)), ru_RU (e.g. *dmitri*, [CC0](https://huggingface.co/rhasspy/piper-voices/blob/main/ru/ru_RU/dmitri/medium/MODEL_CARD)) | Engine MIT; the repo was archived 2025-10-06 and development moved to [OHF-Voice/piper1-gpl](https://github.com/OHF-Voice/piper1-gpl) (GPL, by name); voices licensed per model card | ~20–110 MB download per voice plus the piper runtime with espeak-ng; runs as a separate process | Best TTS option, but a German voice reading English text gives German-accented English. Native German would need German phrasing, which the tokens now make possible |
+
+### Recommendation and status
+**Use the game's own recordings, through the clip-concatenation engine, with Windows TTS as the fallback.**
+- It is the only option that sounds like IL-2's chatter, because it *is* IL-2's chatter (the same actors and processing).
+- It matches the speaker's nation (201 German, 101 Soviet, 102 British, 103 American).
+- It needs no download and adds one small dependency.
+- The same engine plays user-made or freely licensed recordings.
+
+Status (VERIFIED on this machine):
+- `say` renders the sample replies in German (`--country 201`, the default) and Russian (`--country 101`), at the same loudness as TTS.
+- `voice-check` resolves all 56 keys for every pilot actor of all four nations.
+- `live` passes each reply's tokens and the speaker's country (from the mission log, else the planned player's country).
+
+Not yet verified: how it sounds in a real flight, and whether the German and Russian fragments mean what their file names suggest.
+
+**Follow-ups:**
+- Listen with `voice-check --play` and correct `voices/il2-ger.json` if a key is wrong.
+- ~~Use Career callsigns instead of a bare number~~: done, see below.
+- Add German/Russian phrasing for TTS fallback (Piper) for what the clips can't say.
+- `RadioVoice.Speaking` now reports each transmission's real start and duration, which the chat overlay could use instead of its airtime estimate.
+
+### Career callsigns (implemented 2026-10-25)
+**Data (VERIFIED on this machine's Career mission and log, 2026-10-25):**
+- Every `Plane` block in `_gen.Mission` has `Callsign` and `Callnum`. The player's flight is `Callsign = 8`, `Callnum` 1–6, and the player is 4.
+- The mission log's AType 10 formation numbers (`FORM`) for the same six pilots are also 1–6. Callnum and formation number agree here; when both exist, the reply uses Callnum.
+- Career writes the player's flight-mates' names in `_gen.Mission` with a **0x01 prefix** (`"\u0001Heinz Koelzig"`, the same marker as in the ACMI). Names are now cleaned of control characters, otherwise they never match the log.
+- Other flights in the plan have their own callsigns (e.g. 12, 13, 15, 17, 19).
+
+**Callsign words (VERIFIED file contents):** `data\GUI\DefaultCallsigns.<lang>` is a plain-text table in the install:
+- `[ObjectType=1]` Planes: 1–20 are birds, for countries 101 and 201: Stork, Gannet, Raven, Rook, Thrush, Crane, Finch, Oriole, Canary, Swan, Kittiwake, Eagle, Pelican, Swift, Redshank, Duck, Pheasant, Seagull, Brambling, Hawk. 46–66 are British (Acorn, Charlie, …) and 67–85 American (Blue Bird, Plastic, …).
+- `[ObjectType=2]` Airfields: 21–40 are trees (Acacia, Beech, …).
+- `[ObjectType=3]` Spotters: 41–45 are storms (Storm, Typhoon, Hurricane, Cyclone, Volcano).
+- The Russian table (CP1251) lists the same IDs in Russian alphabetical order: Аист, Баклан, Ворон, Грач, Дрозд, Журавль, Зяблик, **Иволга** (8), Кайра, Лебедь, Марабу, Орёл, Пеликан, Стриж, Травник, Утка, Фазан, Чайка, Юрок, Ястреб. So the numbering is the original Russian list, and the English names are translations (Кайра = guillemot appears as "Canary", Марабу as "Kittiwake").
+- The `.ger` file contains the English words, untranslated.
+
+The display text uses the English table: "Oriole one, flight of five…". The repo carries no copy; the table is read from the install by `MissionPlan.Load`.
+
+**Clips (INFERRED, structurally strong):**
+- The pilot actors' `varCallsign` folders hold `cs_bird_01…20`, `cs_tree_21…40` and `cs_storm_41…45`. These are exactly the table's families and ID ranges, so `callsign.N` → `cs_<family>_NN` in `voices/il2-ger.json` and `il2-rus.json`.
+- All 45 clips exist for every German (51–54) and Soviet (01–05) pilot actor.
+- German clip `cs_bird_08` presumably says "Pirol" and the Russian one "Иволга"; not heard.
+- Speech recognition on the *English* actors' `cs_bird_*` didn't match the bird list (mostly no match; `cs_bird_20` came back as "Pelican", not "Hawk"). Since US/British callsigns use IDs 46+, those clips likely hold different words, so the US/GB packs map numbers only.
+- The `acs_*` / `acn_*` variants (about twice as long) are unused; their meaning is unknown.
+- Spoken order: `callsign.8 number.2 …` ("Oriole two"). `voice-check --country 201 --play` plays the 45 words for checking by ear.
+
+**Fallbacks:** no plan match, or no word in the table → "Number N" in the player's flight, otherwise the pilot's name (both as before). No callsign clip → the number clip alone.
+
+**Scope note:** pilots of other flights seen only in the ACMI also get their callsign when the plan has their name ("Eagle one"), because that's how they'd answer on the radio.
