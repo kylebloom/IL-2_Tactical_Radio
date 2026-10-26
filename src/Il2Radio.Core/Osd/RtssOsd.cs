@@ -134,12 +134,14 @@ public static class RtssOsd
         return null;
     }
 
-    /// <summary>Lines and widest line (in characters) of OSD text once the tags are removed.</summary>
+    /// <summary>Lines and widest line (in characters) of OSD text once the tags and the cursor-back are removed.</summary>
     public static (int Lines, int Columns) VisibleSize(string text)
     {
         if (text.Length == 0)
             return (0, 0);
-        var lines = System.Text.RegularExpressions.Regex.Replace(text, "<[^>]*>", "").Split('\n');
+        // U+0008 is RTSS's cursor return (ASCII backspace), not a column. A regex \b is a word boundary.
+        string plain = text.Replace("\u0008", "");
+        var lines = System.Text.RegularExpressions.Regex.Replace(plain, "<[^>]*>", "").Split('\n');
         return (lines.Length, lines.Max(l => l.Length));
     }
 
@@ -158,9 +160,10 @@ public static class RtssOsd
     /// <summary>
     /// Formats visible chat lines as OSD text, wrapped to <paramref name="wrapColumns"/> (RTSS does
     /// not wrap). With tags, each line takes IL-2's message colour with the SDK's &lt;C=RRGGBB&gt;
-    /// ... &lt;C&gt; syntax and fading lines are dimmed; tags need shared memory v2.11+. Output is
-    /// trimmed to fit <paramref name="capacity"/> bytes and <paramref name="maxRows"/> screen rows,
-    /// dropping the oldest lines first.
+    /// ... &lt;C&gt; syntax and fading lines are dimmed, and each visible row gets a translucent bar
+    /// exactly as wide as that row; tags need shared memory v2.11+. Output is trimmed to fit
+    /// <paramref name="capacity"/> bytes and <paramref name="maxRows"/> screen rows, dropping the
+    /// oldest lines first.
     /// </summary>
     public static string Format(IReadOnlyList<VisibleChatLine> lines, bool tags, int capacity = OsdExSize, int wrapColumns = 72, string prefix = "", int maxRows = int.MaxValue)
     {
@@ -177,15 +180,37 @@ public static class RtssOsd
         string speaker = line.Speaker.Length > 0 ? Clean(line.Speaker) + ": " : "";
         var wrapped = Wrap(Clean(line.Text), wrapColumns - speaker.Length);
         string indent = new(' ', speaker.Length);
-        string body = string.Join("\n" + indent, wrapped);
         if (!tags)
-            return speaker + body;
+            return speaker + string.Join("\n" + indent, wrapped);
 
         // IL-2's message line is one colour throughout, speaker included (see Il2ChatStyle).
-        return $"<C={Dim(Il2ChatStyle.Colour(line).ToString("X6"), visible.Alpha)}>{speaker}{body}<C>";
+        string colour = Dim(Il2ChatStyle.Colour(line).ToString("X6"), visible.Alpha);
+        int alpha = (int)Math.Round(Il2ChatStyle.BoxAlpha * Math.Clamp(visible.Alpha, 0f, 1f));
+        var rows = new List<string> { speaker + wrapped[0] };
+        for (int i = 1; i < wrapped.Count; i++)
+            rows.Add(indent + wrapped[i]);
+        return string.Join("\n", rows.Select(row => Bar(alpha, row.Length) + $"<C={colour}>{row}<C>"));
     }
 
-    /// <summary>RTSS colour tags have no alpha, so fading is approximated by darkening.</summary>
+    /// <summary>
+    /// One character-row of IL-2's message-box black, as wide as this row of text. Negative sizes are
+    /// character cells (Unwinder, Guru3D, 2020-10-16). The cursor return is the single character
+    /// U+0008 (ASCII backspace, what C++ writes as "\b"), which puts the cursor back on the bar so
+    /// the words are drawn on it. &lt;B=0,0&gt; is the whole OSD layer, not the text: in flight on
+    /// 2026-10-26 it drew a tall rectangle down the left of the canopy while the words sat at the
+    /// top right, outside it. An alpha of 00 is not usable, so a fully faded row draws no bar.
+    /// </summary>
+    private static string Bar(int alpha, int columns)
+    {
+        if (alpha <= 0 || columns <= 0)
+            return "";
+        return $"<C={alpha:X2}000000><B={-columns},-1>\u0008";
+    }
+
+    /// <summary>
+    /// Glyph colours stay six-digit RRGGBB, which RTSS treats as opaque and which already reads correctly
+    /// in flight. Fading darkens them. The panel behind the block is what carries the alpha.
+    /// </summary>
     private static string Dim(string rgb, float alpha)
     {
         float k = 0.25f + 0.75f * Math.Clamp(alpha, 0, 1);

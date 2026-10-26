@@ -81,6 +81,33 @@ public class FriendlyPositionsTests
 
         Assert.Equal(ReplyOutcome.NoReply, result.Outcome);
         Assert.Contains("out of radio range", Assert.Single(result.Suppressed).Reason);
+        var silence = Assert.Single(RadioChat.Replies(result));
+        Assert.Equal("no reply: nobody can answer", silence.Text);
+        Assert.DoesNotContain("is a track recording", silence.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Restarted_track_segment_still_reports_aircraft_that_are_in_it()
+    {
+        // The previous file's #t ran well past the live-fix limit. IL-2's next segment starts at #0.
+        Frame(10, Player(),
+            Acmi.Object("f1", 0, 3000, 1000, "Felix Knierim", "Axis"),
+            Acmi.Object("gone", 0, 5000, 1000, "Old Wingman", "Axis"));
+        Frame(40, Player(),
+            Acmi.Object("f1", 0, 3000, 1000, "Felix Knierim", "Axis"),
+            Acmi.Object("gone", 0, 5000, 1000, "Old Wingman", "Axis"));
+
+        var next = new AcmiStream();
+        next.Feed(Acmi.Header + "#0\n" + Player() + Acmi.Object("f1", 0, 4000, 1000, "Felix Knierim", "Axis")
+            + "#2\n" + Player() + Acmi.Object("f1", 0, 4000, 1000, "Felix Knierim", "Axis"));
+        _tracker.Apply(next);
+
+        var result = FriendlyPositionsCommand.Execute(_tracker);
+
+        Assert.Equal(ReplyOutcome.Position, result.Outcome);
+        Assert.Equal("Felix Knierim", Assert.Single(result.Replies).Contact.PilotName);
+        Assert.DoesNotContain(RadioChat.Lines(RadioCommand.FriendlyPositions, result, _tracker.Player),
+            l => l.Text.Contains("is a track recording", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -148,6 +175,10 @@ public class FriendlyPositionsTests
         var result = FriendlyPositionsCommand.Execute(tracker);
 
         Assert.Equal(ReplyOutcome.PlayerPositionUnknown, result.Outcome);
+        Assert.Empty(result.Replies);
+        var silence = Assert.Single(RadioChat.Replies(result));
+        Assert.Equal("no reply: no live position for your aircraft", silence.Text);
+        Assert.DoesNotContain("is a track recording", silence.Text, StringComparison.Ordinal);
     }
 
     [Fact]

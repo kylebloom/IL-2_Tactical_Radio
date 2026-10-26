@@ -8,7 +8,8 @@ namespace Il2Radio.Core.Radio;
 /// answers only when the integration has a fresh live track of it and he is inside radio range;
 /// planned waypoints and stale event snapshots are never presented as current positions. In
 /// <see cref="RadioRealism.Pilot"/>, a pilot who can see the player gives a clock position. One who
-/// can hear the call but cannot see the player answers with his own heading and altitude.
+/// can hear the call but cannot see the player answers with his own heading and altitude, and with
+/// the map square when he is still on his briefed route.
 /// </summary>
 public static class FriendlyPositionsCommand
 {
@@ -53,7 +54,7 @@ public static class FriendlyPositionsCommand
             if (!knows)
             {
                 // He heard the call (he is inside radio range) but cannot put the player on a clock.
-                replies.Add(PilotReport.Unseen(g, separated: false));
+                replies.Add(PilotReport.Unseen(g, separated: false, PlanSquare.Report(g, tracker.Plan)));
                 continue;
             }
 

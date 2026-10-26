@@ -27,7 +27,9 @@ public enum PositionSource
 
 /// <summary>A position observation. <see cref="SourceTime"/> is in the producing source's own clock.</summary>
 /// <param name="Heading">True heading in degrees (0 = north, clockwise) when the source reports it.</param>
-public sealed record PositionFix(WorldPoint Position, PositionSource Source, double SourceTime, string Detail, double? Heading = null);
+/// <param name="Latitude">Absolute degrees from an ACMI fix. Mission-log fixes leave this empty; the two frames are not the same grid.</param>
+/// <param name="Longitude">Absolute degrees, paired with <see cref="Latitude"/>.</param>
+public sealed record PositionFix(WorldPoint Position, PositionSource Source, double SourceTime, string Detail, double? Heading = null, double? Latitude = null, double? Longitude = null);
 
 public sealed class Contact(string key)
 {
@@ -240,7 +242,8 @@ public sealed class ContactTracker(TimeProvider? time = null)
                 c.DespawnedByTrack = false;
             }
             if (acmi.PositionOf(obj) is { } p)
-                c.LastFix = new PositionFix(p, PositionSource.AcmiTrack, obj.LastPositionTime, "track", obj.HeadingDegrees);
+                c.LastFix = new PositionFix(p, PositionSource.AcmiTrack, obj.LastPositionTime, "track", obj.HeadingDegrees,
+                    acmi.ReferenceLatitude + obj.Latitude, acmi.ReferenceLongitude + obj.Longitude);
 
             if ((playerName is not null && obj.Pilot == playerName) || (acmi.Author is { Length: > 0 } author && obj.Pilot == author))
             {
@@ -315,10 +318,37 @@ public sealed class ContactTracker(TimeProvider? time = null)
         _ => -1,
     };
 
+    /// <summary>
+    /// A new ACMI segment (<c>_01.acmi</c> and on) starts its <c>#t</c> clock again at 0. Anything
+    /// further back than this is that restart, not a late frame of the same file.
+    /// </summary>
+    private const double SegmentRestartSeconds = 1;
+
     private void AdvanceClock(PositionSource source, double time)
     {
-        double latest = _clocks.TryGetValue(source, out var c) ? Math.Max(c.Time, time) : time;
-        _clocks[source] = (latest, _time.GetUtcNow());
+        var now = _time.GetUtcNow();
+        if (_clocks.TryGetValue(source, out var existing) && time < existing.Time - SegmentRestartSeconds)
+        {
+            // Keeping the previous file's clock would make every fix in the new file older than
+            // MaxFixAgeSeconds, so a live picture is reported as "no live player position".
+            if (source == PositionSource.AcmiTrack)
+                DropAcmiFixes();
+            _clocks[source] = (time, now);
+            return;
+        }
+
+        double latest = _clocks.TryGetValue(source, out var clock) ? Math.Max(clock.Time, time) : time;
+        _clocks[source] = (latest, now);
+    }
+
+    /// <summary>Positions from the previous segment are not where anyone is in the new file.</summary>
+    private void DropAcmiFixes()
+    {
+        foreach (var c in _contacts.Values)
+        {
+            if (c.LastFix?.Source == PositionSource.AcmiTrack)
+                c.LastFix = null;
+        }
     }
 
     /// <summary>Career pilot names in logs look like "Hannes Guth,201033,0"; the suffix is a roster id.</summary>

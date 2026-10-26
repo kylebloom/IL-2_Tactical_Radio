@@ -79,6 +79,13 @@ public enum SpeechWord
     /// <summary>The speaker cannot see the player, so he gives no position relative to him.</summary>
     CannotSee,
 
+    /// <summary>
+    /// The speaker's map square. <see cref="SpeechToken.Value"/> is <see cref="Geometry.GridSquare.Code"/>
+    /// (row × 100 + column, so 1022 is row 10, column 22). <see cref="SpeechToken.Name"/> is the ninth
+    /// ("1"–"9") when the text includes it.
+    /// </summary>
+    Grid,
+
     /// <summary>The place that follows is where the contact was last seen, not a look he still holds.</summary>
     LastSeen,
 

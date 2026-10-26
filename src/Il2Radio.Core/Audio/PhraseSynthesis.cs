@@ -74,10 +74,36 @@ public static class SynthWords
         SpeechWord.RangeBand when t.Value > 0 && t.Value < 2 => "ein paar Kilometer",
         SpeechWord.OnMe => "bei mir",
         SpeechWord.CannotSee => "ich sehe dich nicht",
+        SpeechWord.Grid => GermanGrid(t),
         SpeechWord.LastSeen => "zuletzt gesehen",
         SpeechWord.ContactAmount when t.Value >= 4 => "viele",
         SpeechWord.ContactAmount when t.Value >= 3 => "einige",
         _ => null,
+    };
+
+    /// <summary>Digits of the map square, the way a grid reference is read. "zwo" keeps 2 distinct from 3.</summary>
+    private static string GermanGrid(SpeechToken t)
+    {
+        int code = (int)t.Value;
+        int row = code / 100, column = code % 100;
+        string words = $"{Digit(row / 10)} {Digit(row % 10)} {Digit(column / 10)} {Digit(column % 10)}";
+        if (t.Name is { Length: > 0 } ninth && int.TryParse(ninth, out int cell) && cell is >= 1 and <= 9)
+            words += " " + Digit(cell);
+        return "Planquadrat " + words;
+    }
+
+    private static string Digit(int n) => n switch
+    {
+        0 => "null",
+        1 => "eins",
+        2 => "zwo",
+        3 => "drei",
+        4 => "vier",
+        5 => "fünf",
+        6 => "sechs",
+        7 => "sieben",
+        8 => "acht",
+        _ => "neun",
     };
 
     /// <summary>German radio name for an <see cref="AircraftType.Family"/>; null for "aircraft" (no type made out).</summary>

@@ -71,7 +71,8 @@ public static class RadioChat
         {
             ReplyOutcome.Position => null,
             _ when problem is not null => $"no reply: {problem}",
-            ReplyOutcome.PlayerPositionUnknown => "no reply: no live position for your aircraft (is a track recording?)",
+            ReplyOutcome.PlayerPositionUnknown => "no reply: no live position for your aircraft",
+            ReplyOutcome.NoReply => "no reply: nobody can answer",
             _ => "no reply",
         };
         if (silence is not null)

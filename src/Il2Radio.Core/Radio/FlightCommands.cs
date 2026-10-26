@@ -33,7 +33,7 @@ public static class FlightCommands
             else if (settings.Realism == RadioRealism.Pilot
                      && !PilotReport.KnowsWhereYouAre(g, picture.Player, picture.PlayerFix, tracker, settings))
             {
-                replies.Add(PilotReport.Unseen(g, separated: i > 0));
+                replies.Add(PilotReport.Unseen(g, separated: i > 0, PlanSquare.Report(g, tracker.Plan)));
                 continue;
             }
             else if (settings.Realism == RadioRealism.Pilot)
@@ -112,7 +112,7 @@ public static class FlightCommands
         }
         else if (pilot && !knows)
         {
-            var unseen = PilotReport.Unseen(main, separated: false);
+            var unseen = PilotReport.Unseen(main, separated: false, PlanSquare.Report(main, tracker.Plan));
             text = unseen.Text;
             tokens = [.. unseen.Tokens!];
         }

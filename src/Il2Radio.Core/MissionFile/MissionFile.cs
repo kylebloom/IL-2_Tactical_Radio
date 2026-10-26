@@ -135,6 +135,14 @@ public sealed record MissionPlan(
 
     public int CoalitionOf(int country) => CountryToCoalition.GetValueOrDefault(country, -1);
 
+    /// <summary>
+    /// Waypoint polylines by planned-aircraft index, in mission-file metres. A chain follows each
+    /// waypoint's <c>Targets</c> link; a waypoint that nothing points at starts a path. This is the
+    /// briefed route, not a live position.
+    /// </summary>
+    public IReadOnlyDictionary<int, IReadOnlyList<IReadOnlyList<WorldPoint>>> Routes { get; init; }
+        = new Dictionary<int, IReadOnlyList<IReadOnlyList<WorldPoint>>>();
+
     public static MissionPlan FromBlocks(IReadOnlyList<MissionBlock> blocks)
     {
         var options = blocks.FirstOrDefault(b => b.Type == "Options") ?? new MissionBlock("Options");
@@ -171,8 +179,135 @@ public sealed record MissionPlan(
         return new MissionPlan(options.GetString("GuiMap"), options.Get("Date") ?? "", options.Get("Time") ?? "", countries, aircraft)
         {
             Weather = MissionWeather.FromOptions(options),
+            Routes = ParseRoutes(blocks),
         };
     }
+
+    /// <summary>Waypoint chains keyed by the plane index their entity points at (<c>MisObjID</c>).</summary>
+    private static Dictionary<int, IReadOnlyList<IReadOnlyList<WorldPoint>>> ParseRoutes(IReadOnlyList<MissionBlock> roots)
+    {
+        var all = Walk(roots).ToList();
+        var planeOfEntity = new Dictionary<int, int>();
+        foreach (var entity in all.Where(b => b.Type == "MCU_TR_Entity"))
+        {
+            int plane = entity.GetInt("MisObjID");
+            if (plane >= 0)
+                planeOfEntity[entity.GetInt("Index")] = plane;
+        }
+
+        var waypoints = new List<WaypointNode>();
+        foreach (var block in all.Where(b => b.Type == "MCU_Waypoint"))
+        {
+            double x = block.GetDouble("XPos"), y = block.GetDouble("YPos"), z = block.GetDouble("ZPos");
+            if (double.IsNaN(x) || double.IsNaN(z))
+                continue;
+            waypoints.Add(new WaypointNode(
+                block.GetInt("Index"),
+                IntList(block.Get("Targets")),
+                IntList(block.Get("Objects")),
+                WorldPoint.FromIl2(x, double.IsNaN(y) ? 0 : y, z)));
+        }
+
+        var byEntity = new Dictionary<int, List<WaypointNode>>();
+        foreach (var waypoint in waypoints)
+        {
+            foreach (int entity in waypoint.Objects)
+            {
+                if (!byEntity.TryGetValue(entity, out var list))
+                    byEntity[entity] = list = [];
+                list.Add(waypoint);
+            }
+        }
+
+        var routes = new Dictionary<int, IReadOnlyList<IReadOnlyList<WorldPoint>>>();
+        foreach (var (entity, points) in byEntity)
+        {
+            if (!planeOfEntity.TryGetValue(entity, out int plane))
+                continue;
+            var paths = OrderPaths(points);
+            if (paths.Count == 0)
+                continue;
+            if (!routes.TryGetValue(plane, out var existing))
+                routes[plane] = paths;
+            else
+                routes[plane] = [.. existing, .. paths];
+        }
+
+        return routes;
+    }
+
+    private static List<IReadOnlyList<WorldPoint>> OrderPaths(List<WaypointNode> points)
+    {
+        var byIndex = points.GroupBy(p => p.Index).ToDictionary(g => g.Key, g => g.First());
+        var incoming = new HashSet<int>();
+        foreach (var point in byIndex.Values)
+        {
+            foreach (int target in point.Targets)
+            {
+                if (byIndex.ContainsKey(target))
+                    incoming.Add(target);
+            }
+        }
+
+        var heads = byIndex.Values.Where(p => !incoming.Contains(p.Index)).OrderBy(p => p.Index).ToList();
+        if (heads.Count == 0 && byIndex.Count > 0)
+            heads.Add(byIndex.Values.OrderBy(p => p.Index).First());
+
+        var visited = new HashSet<int>();
+        var paths = new List<IReadOnlyList<WorldPoint>>();
+        foreach (var head in heads)
+        {
+            var line = new List<WorldPoint>();
+            var point = head;
+            while (visited.Add(point.Index))
+            {
+                line.Add(point.Position);
+                WaypointNode? next = null;
+                foreach (int target in point.Targets)
+                {
+                    if (byIndex.TryGetValue(target, out var candidate) && !visited.Contains(candidate.Index))
+                    {
+                        next = candidate;
+                        break;
+                    }
+                }
+
+                if (next is null)
+                    break;
+                point = next;
+            }
+
+            if (line.Count > 0)
+                paths.Add(line);
+        }
+
+        foreach (var point in byIndex.Values.Where(p => !visited.Contains(p.Index)).OrderBy(p => p.Index))
+            paths.Add([point.Position]);
+        return paths;
+    }
+
+    private static IEnumerable<MissionBlock> Walk(IEnumerable<MissionBlock> blocks)
+    {
+        foreach (var block in blocks)
+        {
+            yield return block;
+            foreach (var child in Walk(block.Children))
+                yield return child;
+        }
+    }
+
+    private static int[] IntList(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return [];
+        return text.Trim().TrimStart('[').TrimEnd(']')
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => int.TryParse(part, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value) ? value : -1)
+            .Where(value => value >= 0)
+            .ToArray();
+    }
+
+    private sealed record WaypointNode(int Index, int[] Targets, int[] Objects, WorldPoint Position);
 
     /// <summary>
     /// Loads a mission file. For a mission inside an IL-2 install (<c>data\Missions\…</c>), callsign words

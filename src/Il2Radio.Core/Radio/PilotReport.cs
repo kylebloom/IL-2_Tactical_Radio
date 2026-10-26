@@ -7,8 +7,9 @@ namespace Il2Radio.Core.Radio;
 /// <summary>
 /// What a pilot can honestly say about a position he was not given. The numbers are a game-design
 /// choice (SPECULATIVE as 1942 procedure): close is under 2 km, a few kilometres up to 8 km, otherwise
-/// far; own altitude is to the nearest 500 m; a heading is an eight-point compass point. Nothing here
-/// invents a bearing. Whether he can see the player uses the same visibility model as spotting.
+/// far; own altitude is to the nearest 500 m; a heading is an eight-point compass point. A pilot still
+/// on his briefed route may also name his map square. Nothing here invents a bearing. Whether he can
+/// see the player uses the same visibility model as spotting.
 /// </summary>
 internal static class PilotReport
 {
@@ -104,33 +105,39 @@ internal static class PilotReport
         return Visibility.Roll(observer.Contact.Key, player.Key, slot, salt: 3) < p;
     }
 
-    /// <summary>Own heading and altitude, and an admission that he cannot see the player. No clock and no steer.</summary>
-    public static RadioReply Unseen(ContactGroup group, bool separated)
+    /// <summary>
+    /// Own heading and altitude, and an admission that he cannot see the player. No clock and no steer.
+    /// <paramref name="grid"/> is the map square of his live position when he is still on his briefed route.
+    /// </summary>
+    public static RadioReply Unseen(ContactGroup group, bool separated, GridSquare? grid = null)
     {
         var speaker = group.Speaker.Contact;
         int count = group.Members.Count;
         string who = RadioPhrases.Who(speaker);
         string own = OwnStateSentence(group.Heading, group.Centre.Altitude);
+        string square = grid is { } g ? $" Grid {g.Text}." : "";
         string text;
         List<SpeechToken> tokens = [.. SpeechToken.Identify(speaker)];
         if (separated)
         {
             string with = count > 1 ? $" with {RadioPhrases.Count(count - 1)} other{(count > 2 ? "s" : "")}" : "";
-            text = $"{who}, separated{with}. I cannot see you. {own}";
+            text = $"{who}, separated{with}. I cannot see you. {own}{square}";
             tokens.Add(new(SpeechWord.Separated, Math.Max(0, count - 1)));
         }
         else if (count > 1)
         {
-            text = $"{who}, flight of {RadioPhrases.Count(count)}. I cannot see you. {own}";
+            text = $"{who}, flight of {RadioPhrases.Count(count)}. I cannot see you. {own}{square}";
             tokens.Add(new(SpeechWord.Group, count));
         }
         else
         {
-            text = $"{who}, I cannot see you. {own}";
+            text = $"{who}, I cannot see you. {own}{square}";
         }
 
         tokens.Add(new(SpeechWord.CannotSee));
         AddOwnState(tokens, group.Heading, group.Centre.Altitude);
+        if (grid is { } known)
+            tokens.Add(new(SpeechWord.Grid, known.Code, known.Ninth?.ToString()));
         return new RadioReply(speaker, group.Members.Select(m => m.Contact).ToList(), group.Relative, group.MaxAgeSeconds, text, tokens);
     }
 }

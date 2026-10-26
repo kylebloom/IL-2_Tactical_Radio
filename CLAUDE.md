@@ -14,6 +14,7 @@ Essentials:
 - **No game process access, injection or game-file changes.** `startup.cfg` only, with a backup and the user's consent. Never copy or commit IL-2's audio files.
 - `dotnet test` must stay green. If the user's `live` session or `Il2Radio.exe` holds `bin\Debug`, run `dotnet test tests/Il2Radio.Core.Tests` and build the programs into a scratch folder (`dotnet build src/Il2Radio.Diag -o <dir>`, same for `src/Il2Radio.App`).
 - Projects: `Il2Radio.App` is the player's program (`Il2Radio.exe`, `settings.json`); `Il2Radio.Diag` is the developer console; both use `Il2Radio.Windows` (I/O and `LiveSession`) and `Il2Radio.Core`.
+- The copy the user flies is outside this repo: `%USERPROFILE%\Desktop\IL2Radio\Il2Radio.exe`. `settings.json` is beside it. Session logs for troubleshooting are `%USERPROFILE%\Desktop\IL2Radio\logs\` (`evidence-*.md`, `udp-capture-*.bin`), written when that window closes. Diag, run from this repo, writes `diag-output\` instead. Repo `bin\` and `publish\` are build output, not the flying copy.
 - The user flies Luftwaffe in Battle of Stalingrad. Controls are on the numpad (F and Q are bound in IL-2). Live positions need administrator rights (`Il2Radio.exe` asks for them; Diag needs an administrator terminal).
 - Don't start the app or Diag `live`/`chat-test` while the user's session runs: they share the RTSS slot and the numpad.
 - When editing files from the shell, prefer the editor tools: heredoc/Python edits in this environment have mangled backslash escapes (`\n`, `\\`) in C# literals more than once.

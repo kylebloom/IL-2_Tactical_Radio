@@ -23,7 +23,7 @@ namespace Il2Radio.Core.Audio;
 /// <para>
 /// With a phrase synthesizer's word list (<see cref="SynthWords"/>), the tokens the game's recordings
 /// can't say at all (no contacts, with us / in formation, the aircraft type, the side, "possible",
-/// "a few kilometres", "a few" / "many", "on me", "I cannot see you", "last seen") are
+/// "a few kilometres", "a few" / "many", "on me", "I cannot see you", "last seen", a map square) are
 /// spoken by it instead, in place, so the rest of the reply keeps the game's own voice. Numbers the clips
 /// say coarsely (18 km as "long range", altitude) are never handed to the synthesizer.
 /// </para>
@@ -161,6 +161,9 @@ public static class ClipPhraser
                     break;
                 case SpeechWord.CannotSee:
                     _ = Optional("cannotsee") || Synth(t, required: false);
+                    break;
+                case SpeechWord.Grid:
+                    _ = Optional("grid") || Synth(t, required: false);
                     break;
                 case SpeechWord.LastSeen:
                     _ = Optional("lastseen") || Synth(t, required: false);

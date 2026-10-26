@@ -113,7 +113,7 @@ public class RadioChatTests
         var lines = RadioChat.Lines(RadioCommand.Rejoin, empty, player: null);
 
         Assert.Equal("You", lines[0].Speaker);
-        Assert.Equal("no reply", lines[1].Text);
+        Assert.Equal("no reply: nobody can answer", lines[1].Text);
     }
 }
 
@@ -147,9 +147,9 @@ public class RadioChatFeedbackTests
     }
 
     [Theory]
-    [InlineData(ReplyOutcome.PlayerPositionUnknown, null, "no reply: no live position for your aircraft (is a track recording?)")]
+    [InlineData(ReplyOutcome.PlayerPositionUnknown, null, "no reply: no live position for your aircraft")]
     [InlineData(ReplyOutcome.PlayerPositionUnknown, "position snapshot needs administrator rights", "no reply: position snapshot needs administrator rights")]
-    [InlineData(ReplyOutcome.NoReply, null, "no reply")]
+    [InlineData(ReplyOutcome.NoReply, null, "no reply: nobody can answer")]
     public void Silence_is_explained_with_the_failure_reason_when_known(ReplyOutcome outcome, string? problem, string expected)
     {
         var line = Assert.Single(RadioChat.Replies(new RadioResult(outcome, [], []), problem));

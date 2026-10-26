@@ -384,6 +384,125 @@ public class PilotRealismTests
             ClipPhraser.PhraseSegments(onMe.Tokens!, Has, SynthWords.German)!.Select(s => s.ToString()));
     }
 
+    [Fact]
+    public void A_pilot_on_his_route_who_cannot_see_the_player_names_his_map_square()
+    {
+        StartMission(RouteMission(offRoute: false));
+        var (latitude, longitude) = MapGrid.StalingradLatLon(135864, 215000);
+        FrameAt(10, latitude, longitude, shiftNorth: -15_000);
+
+        var reply = Assert.Single(FriendlyPositionsCommand.Execute(_tracker, Pilot).Replies);
+
+        Assert.Equal("Felix Knierim, I cannot see you. Heading east, altitude 1000 metres. Grid 1022-5.", reply.Text);
+        Assert.Contains(reply.Tokens!, t => t.Word == SpeechWord.Grid && t.Value == 1022 && t.Name == "5");
+        Assert.Contains("Planquadrat eins null zwo zwo fünf",
+            string.Join(" ", ClipPhraser.PhraseSegments(reply.Tokens!, _ => false, SynthWords.German)!));
+    }
+
+    [Fact]
+    public void A_pilot_off_his_route_or_on_another_map_does_not_name_a_square()
+    {
+        StartMission(RouteMission(offRoute: true));
+        var (latitude, longitude) = MapGrid.StalingradLatLon(135864, 215000);
+        FrameAt(10, latitude, longitude, shiftNorth: -15_000);
+        Assert.Equal("Felix Knierim, I cannot see you. Heading east, altitude 1000 metres.",
+            Assert.Single(FriendlyPositionsCommand.Execute(_tracker, Pilot).Replies).Text);
+
+        StartMission(RouteMission(offRoute: false).Replace("stalingrad-summer-1942", "moscow-summer", StringComparison.Ordinal));
+        FrameAt(10, latitude, longitude, shiftNorth: -15_000);
+        Assert.DoesNotContain("Grid", Assert.Single(FriendlyPositionsCommand.Execute(_tracker, Pilot).Replies).Text, StringComparison.Ordinal);
+    }
+
+    private void StartMission(string mission)
+    {
+        _tracker = new ContactTracker(_clock);
+        _tracker.SetPlan(MissionPlan.FromBlocks(MissionFileParser.Parse(new StringReader(mission))));
+        _acmi = new AcmiStream();
+        _acmi.Feed(Acmi.Header + "#0\n");
+        _nextId = 1000;
+        LogFlightMember(PlayerName, 4, isPlayer: true);
+    }
+
+    /// <summary>
+    /// Places Felix at an absolute lat/lon and the player <paramref name="shiftNorth"/> metres of Il2 north away,
+    /// so the two stay inside radio range without sharing a square.
+    /// </summary>
+    private void FrameAt(double time, double latitude, double longitude, double shiftNorth)
+    {
+        string felix = AtLatLon("f", "Felix Knierim", latitude, longitude);
+        var playerIl2 = MapGrid.ProjectStalingrad(latitude, longitude);
+        var (playerLat, playerLon) = MapGrid.StalingradLatLon(playerIl2.North + shiftNorth, playerIl2.East);
+        string player = AtLatLon("p", PlayerName, playerLat, playerLon, heading: 0);
+        _acmi.Feed($"#{time}\n" + player + felix);
+        _tracker.Apply(_acmi);
+    }
+
+    private static string AtLatLon(string id, string pilot, double latitude, double longitude, double heading = 90)
+    {
+        double northM = (latitude - Acmi.RefLat) * 111_320.0;
+        double eastM = (longitude - Acmi.RefLon) * 111_320.0 * Math.Cos(latitude * Math.PI / 180.0);
+        return Acmi.Object(id, northM, eastM, 1000, pilot, "Axis", heading: heading);
+    }
+
+    private static string RouteMission(bool offRoute) => $$"""
+        Options
+        {
+          GuiMap = "stalingrad-summer-1942";
+          Time = 12:0:0;
+          Countries
+          {
+            101 : 1;
+            201 : 2;
+          }
+        }
+        Plane
+        {
+          Name = "{{PlayerName}},201033,0";
+          Index = 1;
+          Country = 201;
+          AILevel = 0;
+        }
+        Plane
+        {
+          Name = "Felix Knierim";
+          Index = 10;
+          Country = 201;
+          Callsign = 3;
+          Callnum = 2;
+        }
+        Plane
+        {
+          Name = "Werner Hoffmann";
+          Index = 20;
+          Country = 201;
+          Callsign = 3;
+          Callnum = 1;
+        }
+        MCU_TR_Entity
+        {
+          Index = 21;
+          MisObjID = 20;
+        }
+        MCU_Waypoint
+        {
+          Index = 30;
+          Targets = [31];
+          Objects = [21];
+          XPos = 135864;
+          YPos = 60;
+          ZPos = {{(offRoute ? 100000 : 200000)}};
+        }
+        MCU_Waypoint
+        {
+          Index = 31;
+          Targets = [];
+          Objects = [21];
+          XPos = 135864;
+          YPos = 60;
+          ZPos = {{(offRoute ? 130000 : 230000)}};
+        }
+        """;
+
     private string Contacts(RadioSettings? settings = null) =>
         Assert.Single(EnemyCommands.EnemyContacts(_tracker, settings ?? See).Replies).Text;
 

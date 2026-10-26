@@ -167,7 +167,56 @@ public class RtssOsdTests
             Visible(ChatLineKind.System, "", "no reply", -1),
         ], tags: true);
 
-        Assert.Equal("<C=E0E0DC>Heinz Koelzig: Number one, you are with us.<C>\n<C=A8A8A4>no reply<C>", text);
+        string line = "Heinz Koelzig: Number one, you are with us.";
+        string note = "no reply";
+        Assert.Equal($"<C=6B000000><B={-line.Length},-1>\u0008<C=E0E0DC>{line}<C>\n<C=6B000000><B={-note.Length},-1>\u0008<C=A8A8A4>{note}<C>", text);
+        Assert.Contains("\u0008", text);
+        Assert.DoesNotContain("\u005Cb", text);
+        Assert.Equal((2, line.Length), RtssOsd.VisibleSize(text));
+        Assert.DoesNotContain("<B=0,0>", text);
+    }
+
+    [Fact]
+    public void Each_visible_row_gets_a_bar_exactly_as_wide_as_that_row()
+    {
+        var text = RtssOsd.Format(
+            [Visible(ChatLineKind.Reply, "Heinz Koelzig", "Number one, five aircraft together, bearing one-one-zero, approximately 18 kilometres.")],
+            tags: true, wrapColumns: 40);
+
+        Assert.Contains("\u0008", text);
+        Assert.DoesNotContain("\u005Cb", text);
+        Assert.DoesNotContain("<B=0,0>", text);
+        string plain = System.Text.RegularExpressions.Regex.Replace(text.Replace("\u0008", ""), "<[^>]*>", "");
+        var rows = plain.Split('\n');
+        var widths = System.Text.RegularExpressions.Regex.Matches(text, @"<B=-(\d+),-1>");
+        Assert.Equal(rows.Length, widths.Count);
+        Assert.True(rows.Length > 1);
+        for (int i = 0; i < rows.Length; i++)
+            Assert.Equal(rows[i].Length, int.Parse(widths[i].Groups[1].Value));
+    }
+
+    [Fact]
+    public void A_rows_bar_fades_with_that_row_and_is_omitted_when_fully_faded()
+    {
+        var mixed = RtssOsd.Format(
+        [
+            Visible(ChatLineKind.Reply, "A", "old", alpha: 0.2f),
+            Visible(ChatLineKind.Reply, "B", "new", alpha: 1f),
+        ], tags: true);
+        int dim = (int)Math.Round(Il2ChatStyle.BoxAlpha * 0.2f);
+        Assert.Contains("\u0008", mixed);
+        Assert.DoesNotContain("\u005Cb", mixed);
+        Assert.Contains($"<C={dim:X2}000000><B=-6,-1>\u0008", mixed); // "A: old"
+        Assert.Contains($"<C={Il2ChatStyle.BoxAlpha:X2}000000><B=-6,-1>\u0008", mixed); // "B: new"
+
+        int half = (int)Math.Round(Il2ChatStyle.BoxAlpha * 0.5f);
+        var fading = RtssOsd.Format([Visible(ChatLineKind.Reply, "A", "x", alpha: 0.5f)], tags: true);
+        Assert.StartsWith($"<C={half:X2}000000><B=-4,-1>\u0008", fading); // "A: x"
+        Assert.Contains("<C=8C8C89>", fading); // E0E0DC darkened to 62.5 %
+
+        var gone = RtssOsd.Format([Visible(ChatLineKind.Request, "Gert Knoll", "x", alpha: 0)], tags: true);
+        Assert.StartsWith("<C=", gone);
+        Assert.DoesNotContain("<B=", gone);
     }
 
     [Fact]
