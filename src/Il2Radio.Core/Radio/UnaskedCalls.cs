@@ -145,6 +145,11 @@ public sealed class UnaskedCalls
         if (candidate.Reply is not null && !threat && now - _lastPictureCall < PictureGapSeconds)
             return null; // too soon after the last one; the picture is kept as it was, so this is reconsidered
 
+        // Gained: in sight now, and neither in the last picture nor called in the last minute in any form.
+        bool gained = candidate.Reply is not null && !candidate.Mark.Held
+            && _picture.All(p => p.Targets != candidate.Mark.Targets)
+            && !(_saidAt.TryGetValue(candidate.Mark.Targets, out var before) && now - before.Time < RepeatSeconds);
+
         _picture.Clear();
         foreach (var m in marks)
             _picture.Add(m.Mark);
@@ -152,7 +157,16 @@ public sealed class UnaskedCalls
             return null;
         _saidAt[candidate.Mark.Targets] = (now, candidate.Mark.OnMe);
         _lastPictureCall = now;
-        return candidate.Reply;
+        return gained ? WithSpotted(candidate.Reply) : candidate.Reply;
+    }
+
+    /// <summary>The actors' "spotted" after the speaker's callsign and number. The chat sentence is unchanged.</summary>
+    private static RadioReply WithSpotted(RadioReply reply)
+    {
+        if (reply.Tokens is not { } tokens)
+            return reply;
+        int after = tokens.TakeWhile(t => t.Word is SpeechWord.Callsign or SpeechWord.Speaker).Count();
+        return reply with { Tokens = [.. tokens.Take(after), new SpeechToken(SpeechWord.Spotted), .. tokens.Skip(after)] };
     }
 
     private bool RecentlySaid(PictureMark mark, double now) =>

@@ -61,12 +61,14 @@ Every key is optional. A part of a reply the pack has no clip for is left out of
 | `information`, `withus` | "you are in formation with us" / "you are with us" (each falls back to the other, then to `ack`) | |
 | `nocontacts` | "no contacts" (falls back to `ack`) | |
 | `ack` | an acknowledgement ("Roger"): the placeholder for a whole message the pack has no recording of | |
+| `beside.left`, `beside.right`, `beside.behind` | "to the left" / "to the right" / "behind": where a mate in formation sits off your nose | said instead of `ack` for "in formation" / "with us"; ahead has none |
+| `spotted` | "spotted", after the callsign of an unasked call for a newly gained contact | |
 | `destroyed` | "target destroyed", for an enemy a mate saw go down | |
 | `class.fighter`, `class.fighters`, … `bomber(s)`, `attack(s)`, `recon(s)`, `transport` | contact class | also stands in for the type name |
 | `side.enemy`, `side.friendly`, `hedge` | "enemy" / "friendly", "possible" | |
 | `contact.type` | one generic clip for the aircraft type | the class word is dropped when this plays |
 | `few`, `many`, `onme`, `cannotsee`, `lastseen`, `grid` | pilot mode: "a few", "many", "on me", "I cannot see you", "last seen", "grid" | |
 
-The game packs map `ack` to `const\roger`, `turn.left`/`turn.right` to `const\trnleft`/`trnright` and `destroyed` to `const\rep_trgdestr`. Those meanings come from Windows speech recognition on the English actors, whose script matches the German and Russian file for file; the other languages have not been heard yet.
+The game packs map `ack` to `const\roger`, `turn.left`/`turn.right` to `const\trnleft`/`trnright`, `destroyed` to `const\rep_trgdestr`, `spotted` to `const\spt` and `beside.left`/`right`/`behind` to `varDir\toLeft`/`toRight`/`toBack`. Those meanings come from Windows speech recognition on the English actors, whose script matches the German and Russian file for file; the other languages have not been heard yet.
 
 Each clip is levelled to the same loudness and joined with a 25 ms crossfade. Clips with little silence at either end sound most natural.

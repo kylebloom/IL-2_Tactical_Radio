@@ -29,6 +29,7 @@ public static class FlightCommands
             {
                 text = $"{RadioPhrases.Who(speaker)}, you are in formation with us.";
                 tokens.Add(new(SpeechWord.InFormation));
+                tokens.Add(Beside(g.Speaker, picture.PlayerFix));
             }
             else if (settings.Realism == RadioRealism.Pilot
                      && !PilotReport.KnowsWhereYouAre(g, picture.Player, picture.PlayerFix, tracker, settings))
@@ -109,6 +110,7 @@ public static class FlightCommands
         {
             text = $"{RadioPhrases.Who(speaker)}, you are with us.";
             tokens.Add(new(SpeechWord.WithUs));
+            tokens.Add(Beside(main.Speaker, picture.PlayerFix));
         }
         else if (pilot && !knows)
         {
@@ -141,6 +143,10 @@ public static class FlightCommands
     }
 
     /// <summary>Largest group first (ties: nearest), then the remaining groups by range.</summary>
+    /// <summary>The speaker's side of the player's nose (-180..180, negative left), for the close-in words. North when the track has no heading.</summary>
+    private static SpeechToken Beside(LiveContact speaker, PositionFix player) =>
+        new(SpeechWord.Beside, ((speaker.Relative.BearingDegrees - (player.Heading ?? 0)) % 360 + 540) % 360 - 180);
+
     private static List<ContactGroup> MainGroupFirst(RadioPicture picture, RadioSettings settings)
     {
         var groups = picture.Groups(settings).ToList();

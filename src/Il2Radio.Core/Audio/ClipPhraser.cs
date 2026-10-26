@@ -20,11 +20,12 @@ namespace Il2Radio.Core.Audio;
 /// <c>class.fighter|fighters|attack|attacks|bomber|bombers|recon|recons|transport</c>,
 /// <c>nocontacts</c>, the optional <c>contact.type</c>, <c>side.enemy|friendly</c>, <c>hedge</c>,
 /// <c>few</c>, <c>many</c>, <c>onme</c>, <c>cannotsee</c>, <c>lastseen</c>, <c>grid</c>,
-/// <c>turn.left|right</c>, <c>destroyed</c> and <c>ack</c>.
+/// <c>turn.left|right</c>, <c>destroyed</c>, <c>ack</c>, <c>beside.left|right|behind</c> and <c>spotted</c>.
 /// <para>
 /// Placeholders: where a whole message has no recording of its own, a nearby game phrase stands in
 /// rather than leave the speaker saying only his callsign. "No contacts", "with us" and "in formation"
-/// fall back to the acknowledgement (<c>ack</c>, the actors' "Roger"); "a few" and "many" to
+/// fall back to the acknowledgement (<c>ack</c>, the actors' "Roger"), except that a mate in formation beside or
+/// behind the player says where he is ("to the left"); "a few" and "many" to
 /// <c>group</c>. A course is said as the eight-point compass clip, after "turning left/right" when the
 /// leader is about to turn. The three-figure course stays on the chat: the clips have 1–20 and no zero.
 /// </para>
@@ -54,6 +55,9 @@ public static class ClipPhraser
 
         // The class word stands in for the type unless the pack has a recording for the type itself.
         bool typeSpoken = tokens.Any(t => t.Word == SpeechWord.ContactType) && hasClip("contact.type");
+
+        // A mate in formation says where he sits ("to the left") rather than the acknowledgement.
+        bool besideSpoken = tokens.Any(t => t.Word == SpeechWord.Beside && BesideKey(t.Value) is { } k && hasClip(k));
 
         foreach (var t in tokens)
         {
@@ -108,10 +112,16 @@ public static class ClipPhraser
                     Say(t.Value < 0 ? "turn.left" : "turn.right");
                     break;
                 case SpeechWord.InFormation:
-                    Say("information", "withus", "ack");
+                    Say("information", "withus", besideSpoken ? null : "ack");
                     break;
                 case SpeechWord.WithUs:
-                    Say("withus", "information", "ack");
+                    Say("withus", "information", besideSpoken ? null : "ack");
+                    break;
+                case SpeechWord.Beside:
+                    Say(BesideKey(t.Value));
+                    break;
+                case SpeechWord.Spotted:
+                    Say("spotted");
                     break;
                 case SpeechWord.NoContacts:
                     Say("nocontacts", "ack");
@@ -175,6 +185,16 @@ public static class ClipPhraser
         };
         return name is null ? null : value < 0 && name != "transport" ? $"class.{name}s" : $"class.{name}";
     }
+
+    /// <summary>
+    /// The close-in word for a mate at this angle off the player's nose: "beside.left" from 30° to 120° left,
+    /// "beside.right" the same on the right, "beside.behind" beyond 120°. Ahead has no recording (null).
+    /// </summary>
+    public static string? BesideKey(double relativeDegrees) =>
+        Math.Abs(relativeDegrees) >= 120 ? "beside.behind"
+        : relativeDegrees <= -30 ? "beside.left"
+        : relativeDegrees >= 30 ? "beside.right"
+        : null;
 
     /// <summary>Eight-point compass key for a true bearing: 110° → "compass.e".</summary>
     public static string CompassKey(double degrees)

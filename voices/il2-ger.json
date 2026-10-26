@@ -133,7 +133,12 @@
     "ack": "{speaker}/const/roger.ogg",
     "turn.left": "{speaker}/const/trnleft.ogg",
     "turn.right": "{speaker}/const/trnright.ogg",
-    "destroyed": "{speaker}/const/rep_trgdestr.ogg"
+    "destroyed": "{speaker}/const/rep_trgdestr.ogg",
+    // spt "spotted" 0.78-0.85; toLeft "to the left" 0.68, toRight "to the right" 0.74, toBack "behind" 0.67 (English actors).
+    "spotted": "{speaker}/const/spt.ogg",
+    "beside.left": "{speaker}/varDir/toLeft.ogg",
+    "beside.right": "{speaker}/varDir/toRight.ogg",
+    "beside.behind": "{speaker}/varDir/toBack.ogg"
   },
   // What the callsign clips say, shown in the chat in place of the English table's word so text and voice agree.
   // The German actors say German words for the original Russian list (data\GUI\DefaultCallsigns.rus), not the

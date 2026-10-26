@@ -51,6 +51,16 @@ public enum SpeechWord
     /// <summary>"Target destroyed": an enemy aircraft the speaker saw go down.</summary>
     Destroyed,
 
+    /// <summary>
+    /// Where the speaker sits in formation with the player, relative to the player's nose, degrees (-180..180,
+    /// negative left). Said with the actors' close-in words ("to the left", "to the right", "behind"); the chat
+    /// keeps "in formation" / "with us".
+    /// </summary>
+    Beside,
+
+    /// <summary>"Spotted", in front of a contact the flight has just gained. A headset word; the chat sentence is unchanged.</summary>
+    Spotted,
+
     /// <summary>"You are in formation with us."</summary>
     InFormation,
 

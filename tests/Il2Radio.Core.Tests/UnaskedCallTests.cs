@@ -252,6 +252,26 @@ public class UnaskedCallTests
     }
 
     [Fact]
+    public void A_newly_gained_contact_is_spotted_and_a_change_to_the_same_aircraft_is_not()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1, grid: false, overcast: true);
+        _acmi.Feed("#10\n" + Acmi.Object("p", 0, 0, 1000, PlayerName, "Axis", heading: 0)
+            + Acmi.Object("w", 8_000, 0, 3000, LeaderName, "Axis", heading: 0)
+            + Acmi.Object("e", 8_000, 200, 3000, "Pilot e", "Allies", "Yak-1 ser.69", heading: 90));
+        _tracker.Apply(_acmi);
+        var gained = Say()!;
+        Assert.Equal(SpeechWord.Spotted, gained.Tokens![1].Word); // after "number one"
+        Assert.DoesNotContain("spotted", gained.Text, StringComparison.OrdinalIgnoreCase);
+
+        _acmi.Feed("#30\n" + Acmi.Object("p", 0, 0, 1000, PlayerName, "Axis", heading: 0)
+            + Acmi.Object("w", 8_000, 0, 3000, LeaderName, "Axis", heading: 0)
+            + Acmi.Object("e", 8_000, 5_000, 3000, "Pilot e", "Allies", "Yak-1 ser.69", heading: 90));
+        _tracker.Apply(_acmi);
+        var letGo = Say()!; // the same Yak, no longer on him
+        Assert.DoesNotContain(letGo.Tokens!, t => t.Word == SpeechWord.Spotted);
+    }
+
+    [Fact]
     public void An_aircraft_flickering_in_and_out_of_sight_is_called_once_a_minute()
     {
         OpenFlight(playerFormation: 2, leaderFormation: 1, grid: false);
@@ -259,7 +279,7 @@ public class UnaskedCallTests
         Assert.NotNull(Say());
 
         LoseEnemy(20);
-        Assert.Null(Say()); // "last seen" for the same aircraft is not news
+        Assert.Null(Say()); // gone from the track: nothing to call
 
         SeeEnemy(40, 0, 600);
         Assert.Null(Say()); // back in sight within the minute

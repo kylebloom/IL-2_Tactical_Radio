@@ -153,14 +153,16 @@ The game's fragments are coarser than the English text, which still appears on s
 
 | On screen | Spoken |
 |---|---|
-| "Lumme one, no contacts." / "you are with us" / "you are in formation with us" | *Lumme* · *one* · *Roger* |
+| "Lumme one, no contacts." | *Lumme* · *one* · *Roger* |
+| "Lumme one, you are in formation with us." / "you are with us" | *Lumme* · *one* · *to the left* / *to the right* / *behind*, where he sits off your nose; *Roger* when he is ahead |
+| "Lumme five, single unidentified aircraft, at my eleven o'clock, …" (unasked, a newly gained contact) | *Lumme* · *five* · *spotted* · … |
 | "Number one, turning to heading 205." | *one* · *turning left* · *southwest* |
 | "Number one, heading 180." | *one* · *south* |
 | "Lumme five, Hurricane down." | *Lumme* · *five* · *target destroyed* |
 | "a few Yaks" / "many" | *group* · *fighters* |
 | "Lumme six is down." | nothing: no recording says a mate is down, so it is text only |
 
-The placeholder meanings were read from the English actors' recordings of the same script with Windows speech recognition (Roger 0.70–0.90 confidence, turning left/right 0.61–0.74, target destroyed 0.61). The German and Russian files are assumed to say the same; listen with `voice-check --country 201 --play`.
+The placeholder meanings were read from the English actors' recordings of the same script with Windows speech recognition (Roger 0.70–0.90 confidence, turning left/right 0.61–0.74, target destroyed 0.61, spotted 0.78–0.85, to the left / to the right / behind 0.67–0.74). The German and Russian files are assumed to say the same; listen with `voice-check --country 201 --play`.
 
 Every transmission then goes through a radio effect:
 - squelch burst at the start, tail and click at the end

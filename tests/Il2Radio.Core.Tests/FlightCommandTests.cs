@@ -245,10 +245,28 @@ public class FlightCommandTests
     public void In_formation_tokens()
     {
         LogFlightMember("Heinz Koelzig", 1);
-        Frame(10, Player(), Mate("a", "Heinz Koelzig", 100, 150, alt: 1020));
+        Frame(10, Player(), Mate("a", "Heinz Koelzig", 0, 150, alt: 1020));
 
-        Assert.Equal("Speaker:1 InFormation:0", Spoken(Assert.Single(FlightCommands.FlightPosition(_tracker).Replies)));
-        Assert.Equal("Speaker:1 WithUs:0", Spoken(Assert.Single(FlightCommands.Rejoin(_tracker).Replies)));
+        // Beside: where he sits off the player's nose, for the actors' "to the right".
+        Assert.Equal("Speaker:1 InFormation:0 Beside:90", Spoken(Assert.Single(FlightCommands.FlightPosition(_tracker).Replies)));
+        Assert.Equal("Speaker:1 WithUs:0 Beside:90", Spoken(Assert.Single(FlightCommands.Rejoin(_tracker).Replies)));
+    }
+
+    [Theory]
+    [InlineData(0, -150, 0, "beside.left")]
+    [InlineData(-150, 0, 0, "beside.behind")]
+    [InlineData(0, -150, 180, "beside.right")] // flying south, a mate to the west is on the right
+    [InlineData(150, 0, 0, "ack")]            // ahead has no close-in recording
+    public void A_mate_in_formation_says_which_side_he_is_on(double north, double east, double heading, string spoken)
+    {
+        LogFlightMember("Heinz Koelzig", 1);
+        Frame(10, Player(heading), Mate("a", "Heinz Koelzig", north, east, alt: 1020));
+        string[] pack = ["number.1", "ack", "beside.left", "beside.right", "beside.behind"];
+
+        var reply = Assert.Single(FlightCommands.FlightPosition(_tracker).Replies);
+
+        Assert.Equal("Number one, you are in formation with us.", reply.Text);
+        Assert.Equal(["number.1", spoken], Audio.ClipPhraser.Phrase(reply.Tokens!, pack.Contains));
     }
 
     [Fact]
