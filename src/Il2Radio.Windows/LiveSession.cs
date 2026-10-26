@@ -40,6 +40,12 @@ internal sealed record LiveOptions
     /// <summary>How much a pilot is allowed to say. The player's program and Diag default to pilot.</summary>
     public RadioRealism Realism { get; init; } = RadioRealism.Pilot;
 
+    /// <summary>An AI leader calls a cruise heading, or the chat shows a route line when the player leads.</summary>
+    public bool UnaskedRoute { get; init; } = true;
+
+    /// <summary>One call when the flight's contact picture changes.</summary>
+    public bool UnaskedContacts { get; init; } = true;
+
     /// <summary>The app's start-up check lines, kept in the compact view (otherwise its alerts are listed).</summary>
     public IReadOnlyList<string> StartupResults { get; init; } = [];
 
@@ -79,6 +85,9 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     // Callsign words as the speaker's voice says them, so the chat names the callsign the voice does.
     private readonly ContactTracker _tracker = new() { CallsignWords = voice is null ? null : voice.Voices.CallsignWord };
     private readonly SightingMemory _sightings = new(); // what the flight has spotted, kept between calls
+    private readonly UnaskedCalls _unasked = new();
+    private DateTime _unaskedAttemptUtc = DateTime.MinValue;
+    private int _snapshotInFlight;
     private readonly DateTime _startedUtc = DateTime.UtcNow;
     private readonly object _gate = new();
     private readonly List<(string Text, bool MonitorOnly)> _notes = []; // MonitorOnly: kept out of the compact view (radio calls with their silences, which name unreported aircraft)
@@ -154,6 +163,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         while (!cts.IsCancellationRequested)
         {
             Poll();
+            if (options.UnaskedRoute || options.UnaskedContacts)
+                _ = PollUnaskedAsync();
             Render();
             for (int i = 0; i < 20 && !cts.IsCancellationRequested; i++)
             {
@@ -255,15 +266,10 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
 
     private string Describe(RadioCommand command, string? problem = null)
     {
-        var settings = new RadioSettings { Realism = options.Realism };
+        var settings = Radio();
         var result = RadioCommands.Execute(command, _tracker, settings, _sightings);
         Transmitted?.Invoke(command, result, _tracker.Player, problem);
-        voice?.Say(result.Replies.Select(r => new Transmission(
-            r.Text,
-            r.Contact.FormationIndex ?? Math.Abs(r.Contact.Key.GetHashCode()),
-            r.Relative.RangeMetres / settings.RadioRangeMetres,
-            r.Tokens,
-            r.Contact.Country > 0 ? r.Contact.Country : _tracker.Plan?.Player?.Country ?? -1)));
+        voice?.Say(result.Replies.Select(TransmissionOf));
         var sb = new StringBuilder($"[{DateTime.Now:HH:mm:ss}] {RadioCommands.Title(command)} → {result.Outcome}\n");
         foreach (var r in result.Replies)
             sb.AppendLine($"  RADIO: \"{r.Text}\" (fix age {r.FixAgeSeconds:F1} s)");
@@ -327,6 +333,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     {
         bool remind;
         var alerts = new List<string>();
+        RadioReply? unasked = null;
         lock (_gate)
         {
             try { PollMission(); } catch (Exception ex) { Note($"mission: {ex.Message}"); }
@@ -334,6 +341,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             try { PollTextLogs(); } catch (Exception ex) { Note($"text log: {ex.Message}"); }
             try { PollAcmi(); } catch (Exception ex) { Note($"acmi: {ex.Message}"); }
             try { PollRecording(); } catch (Exception ex) { Note($"recording: {ex.Message}"); }
+            if (!_acmiLocked && (options.UnaskedRoute || options.UnaskedContacts) && Volatile.Read(ref _requestInFlight) == 0)
+                unasked = _unasked.Consider(_tracker, Radio(), _sightings, CallSettings());
             var now = DateTime.UtcNow;
             var mission = RunningMissionStartUtc(now);
             remind = _recordingWatch.Update(now, mission, _recording);
@@ -354,6 +363,97 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         }
         foreach (string alert in alerts)
             Alert?.Invoke(alert);
+        if (unasked is not null)
+            DeliverUnasked(unasked);
+    }
+
+    /// <summary>
+    /// While IL-2 holds the track, read the new bytes about every 10 s so a cruise turn or a new
+    /// contact can be said without a numpad press. A shadow copy costs about a second, so this stays
+    /// off unless an unasked call is switched on. A numpad call already in flight keeps the channel.
+    /// </summary>
+    private async Task PollUnaskedAsync()
+    {
+        try
+        {
+            if (DateTime.UtcNow - _unaskedAttemptUtc < TimeSpan.FromSeconds(10))
+                return;
+            if (Volatile.Read(ref _requestInFlight) == 1 || Volatile.Read(ref _snapshotInFlight) == 1)
+                return;
+
+            string? path;
+            long offset;
+            bool locked;
+            long size;
+            lock (_gate)
+            {
+                path = _acmiPath;
+                offset = _acmiOffset;
+                locked = _acmiLocked;
+                size = _acmiSizeOnDisk;
+            }
+
+            if (!locked || path is null || size <= offset || !ShadowCopy.IsElevated())
+                return;
+            if (Interlocked.CompareExchange(ref _snapshotInFlight, 1, 0) != 0)
+                return;
+
+            _unaskedAttemptUtc = DateTime.UtcNow;
+            try
+            {
+                if (Volatile.Read(ref _requestInFlight) == 1)
+                    return;
+                var (bytes, timings) = await Task.Run(() => ShadowCopy.ReadFrom(path, offset));
+                RadioReply? reply = null;
+                lock (_gate)
+                {
+                    if (_acmiPath == path && _acmiOffset == offset)
+                        FeedAcmi(bytes);
+                    if (Volatile.Read(ref _requestInFlight) == 0)
+                        reply = _unasked.Consider(_tracker, Radio(), _sightings, CallSettings());
+                }
+
+                if (reply is not null)
+                    DeliverUnasked(reply);
+                Note($"acmi: unasked snapshot {bytes.Length / 1024} KB; {timings}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _snapshotInFlight, 0);
+            }
+        }
+        catch (Exception ex)
+        {
+            Note($"acmi: unasked snapshot failed: {ex.Message}");
+        }
+    }
+
+    private RadioSettings Radio() => new() { Realism = options.Realism };
+
+    private UnaskedCallSettings CallSettings() => new() { Route = options.UnaskedRoute, Contacts = options.UnaskedContacts };
+
+    private void DeliverUnasked(RadioReply reply)
+    {
+        // A course is chat text. Speak only when some other token has a clip, so a route line
+        // (course alone) is not read out by the phrase voice or by Windows text-to-speech.
+        bool speak = reply.Tokens?.Any(t => t.Word != SpeechWord.Course) == true;
+        if (speak)
+            voice?.Say([TransmissionOf(reply)], interrupt: false);
+        _chat?.Post([RadioChat.Line(reply)], syncToVoice: speak && voice is not null);
+        lock (_gate)
+            _lastExchange = $"[{DateTime.Now:HH:mm:ss}] {reply.Text}\n";
+        Note($"unasked: \"{reply.Text}\"", monitorOnly: true);
+    }
+
+    private Transmission TransmissionOf(RadioReply reply)
+    {
+        var settings = Radio();
+        return new Transmission(
+            reply.Text,
+            reply.Contact.FormationIndex ?? Math.Abs(reply.Contact.Key.GetHashCode()),
+            reply.Relative.RangeMetres / settings.RadioRangeMetres,
+            reply.Tokens,
+            reply.Contact.Country > 0 ? reply.Contact.Country : _tracker.Plan?.Player?.Country ?? -1);
     }
 
     /// <summary>Start of the mission whose log chunks are still arriving, or null (no mission, ended or paused). Caller holds _gate.</summary>
@@ -578,8 +678,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         }
         catch (IOException)
         {
-            // IL-2 opens the ACMI without read sharing while recording. It is read on demand
-            // through a shadow-copy snapshot when a radio request is made.
+            // IL-2 opens the ACMI without read sharing while recording. It is read through a
+            // shadow-copy snapshot: on a radio request, and about every 10 s while an unasked call is on.
             if (!_acmiLocked)
                 Note("acmi: locked by IL-2 while recording — positions will be read by snapshot on each radio call.");
             _acmiLocked = true;
@@ -652,30 +752,57 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             string? problem = path is null ? "no Tacview track is recording (LCtrl+R)" : null;
             if (path is not null && locked)
             {
-                if (!ShadowCopy.IsElevated())
+                // An unasked call may already be copying the tail. Wait for it, then read whatever it did not.
+                var waitStart = DateTime.UtcNow;
+                while (Volatile.Read(ref _snapshotInFlight) == 1 && DateTime.UtcNow - waitStart < TimeSpan.FromSeconds(4))
+                    await Task.Delay(40);
+
+                lock (_gate)
+                {
+                    if (_acmiPath == path)
+                        offset = _acmiOffset;
+                    locked = _acmiLocked;
+                }
+
+                long length = offset;
+                try { length = new FileInfo(path).Length; } catch (IOException) { }
+
+                if (locked && length > offset && !ShadowCopy.IsElevated())
                 {
                     refresh = "  (ACMI is locked and snapshots need administrator rights — restart the terminal as administrator)\n";
                     problem = "position snapshot needs administrator rights";
                 }
-                else
+                else if (locked && length > offset)
                 {
-                    try
+                    if (Interlocked.CompareExchange(ref _snapshotInFlight, 1, 0) != 0)
                     {
-                        var (bytes, timings) = await Task.Run(() => ShadowCopy.ReadFrom(path, offset));
-                        lock (_gate)
-                        {
-                            if (_acmiPath == path && _acmiOffset == offset)
-                                FeedAcmi(bytes);
-                        }
-
-                        refresh = $"  snapshot: {bytes.Length / 1024} KB new ACMI data; {timings}\n";
-                        Note($"acmi: {refresh.Trim()}");
-                    }
-                    catch (Exception ex)
-                    {
-                        refresh = $"  snapshot failed: {ex.Message}\n";
-                        Note($"acmi: {refresh.Trim()}");
+                        refresh = "  snapshot failed: another snapshot is still running\n";
                         problem = "position snapshot failed";
+                    }
+                    else
+                    {
+                        try
+                        {
+                            var (bytes, timings) = await Task.Run(() => ShadowCopy.ReadFrom(path, offset));
+                            lock (_gate)
+                            {
+                                if (_acmiPath == path && _acmiOffset == offset)
+                                    FeedAcmi(bytes);
+                            }
+
+                            refresh = $"  snapshot: {bytes.Length / 1024} KB new ACMI data; {timings}\n";
+                            Note($"acmi: {refresh.Trim()}");
+                        }
+                        catch (Exception ex)
+                        {
+                            refresh = $"  snapshot failed: {ex.Message}\n";
+                            Note($"acmi: {refresh.Trim()}");
+                            problem = "position snapshot failed";
+                        }
+                        finally
+                        {
+                            Interlocked.Exchange(ref _snapshotInFlight, 0);
+                        }
                     }
                 }
             }

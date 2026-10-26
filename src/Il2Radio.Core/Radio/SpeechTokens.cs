@@ -35,8 +35,15 @@ public enum SpeechWord
     /// <summary>Altitude, metres.</summary>
     Altitude,
 
-    /// <summary>The group's heading, degrees.</summary>
+    /// <summary>The group's heading, degrees. An eyeball report; a clip voice says the eight-point compass point.</summary>
     Heading,
+
+    /// <summary>
+    /// A course to fly, already rounded by <see cref="Geometry.Navigation.CourseDegrees"/> (5–360, north is 360).
+    /// The chat says it in three figures. It is not spoken: the pilot clips have 1–20 and no zero, the compass
+    /// clips are a different report, and the phrase voice is not used for this word.
+    /// </summary>
+    Course,
 
     /// <summary>"You are in formation with us."</summary>
     InFormation,

@@ -360,4 +360,20 @@ public class NavigationTests
     [InlineData(10, "north")]
     [InlineData(100, "east")]
     public void Compass_points(double bearing, string expected) => Assert.Equal(expected, Navigation.CompassPoint(bearing));
+
+    [Theory]
+    [InlineData(0, 360)]
+    [InlineData(360, 360)]
+    [InlineData(2, 360)]
+    [InlineData(2.5, 5)]
+    [InlineData(3, 5)]
+    [InlineData(92, 90)]
+    [InlineData(100, 100)]
+    [InlineData(180, 180)]
+    [InlineData(182.5, 185)]
+    [InlineData(357, 355)]
+    [InlineData(358, 360)]
+    [InlineData(-90, 270)]
+    public void A_radio_course_is_the_nearest_five_degrees_and_north_is_360(double bearing, int expected) =>
+        Assert.Equal(expected, Navigation.CourseDegrees(bearing));
 }

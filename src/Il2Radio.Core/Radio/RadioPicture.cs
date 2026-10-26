@@ -63,7 +63,14 @@ public enum ReplyOutcome
 /// <see cref="Text"/> is the English wording for display and TTS; <see cref="Tokens"/> says the same thing
 /// language-neutrally, for voices built from recorded clips.
 /// </summary>
-public sealed record RadioReply(Contact Contact, IReadOnlyList<Contact> Members, RelativePosition Relative, double FixAgeSeconds, string Text, IReadOnlyList<SpeechToken>? Tokens = null);
+public sealed record RadioReply(Contact Contact, IReadOnlyList<Contact> Members, RelativePosition Relative, double FixAgeSeconds, string Text, IReadOnlyList<SpeechToken>? Tokens = null)
+{
+    /// <summary>
+    /// Chat name when the line is not this pilot keying. Null uses his own name. The route prompt uses
+    /// "Route" so a wingman is not shown giving the leader an order.
+    /// </summary>
+    public string? SpeakerLabel { get; init; }
+}
 
 /// <summary>Contacts that were deliberately not reported, and why. Useful for diagnostics and tests.</summary>
 public sealed record SuppressedContact(Contact Contact, string Reason);

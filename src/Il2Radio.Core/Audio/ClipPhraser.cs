@@ -24,8 +24,10 @@ namespace Il2Radio.Core.Audio;
 /// With a phrase synthesizer's word list (<see cref="SynthWords"/>), the tokens the game's recordings
 /// can't say at all (no contacts, with us / in formation, the aircraft type, the side, "possible",
 /// "a few kilometres", "a few" / "many", "on me", "I cannot see you", "last seen", a map square) are
-/// spoken by it instead, in place, so the rest of the reply keeps the game's own voice. Numbers the clips
-/// say coarsely (18 km as "long range", altitude) are never handed to the synthesizer.
+/// spoken by it instead, in place, so the rest of the reply keeps the game's own voice. A course
+/// (<see cref="SpeechWord.Course"/>) is left out of the audio: the pilot recordings have the numbers 1–20 and
+/// no zero, so they cannot say 180, and the phrase voice is not asked to. The number stays in the chat.
+/// Numbers the clips say coarsely (18 km as "long range", altitude, an eyeball heading) are never handed to the synthesizer.
 /// </para>
 /// </remarks>
 public static class ClipPhraser
@@ -121,6 +123,8 @@ public static class ClipPhraser
                 case SpeechWord.Heading:
                     if (hasClip("heading") && hasClip(CompassKey(t.Value)))
                         segments.AddRange([PhraseSegment.Clip("heading"), PhraseSegment.Clip(CompassKey(t.Value))]);
+                    break;
+                case SpeechWord.Course:
                     break;
                 case SpeechWord.InFormation:
                     ok = Required("information", "withus") || Synth(t, required: true);

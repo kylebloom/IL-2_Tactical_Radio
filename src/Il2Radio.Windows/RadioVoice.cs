@@ -127,10 +127,13 @@ internal sealed class RadioVoice : IDisposable
         return samples;
     }
 
-    /// <summary>Replaces anything still waiting to be spoken with these transmissions.</summary>
-    public void Say(IEnumerable<Transmission> transmissions)
+    /// <summary>
+    /// Queues transmissions. <paramref name="interrupt"/> drops anything still waiting, which is what a
+    /// numpad call does. An unasked call passes false so it waits behind a call the player just made.
+    /// </summary>
+    public void Say(IEnumerable<Transmission> transmissions, bool interrupt = true)
     {
-        int generation = Interlocked.Increment(ref _generation);
+        int generation = interrupt ? Interlocked.Increment(ref _generation) : Volatile.Read(ref _generation);
         foreach (var t in transmissions)
         {
             _queue.Enqueue((generation, t));

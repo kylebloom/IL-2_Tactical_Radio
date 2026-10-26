@@ -5,11 +5,12 @@ using Il2Radio.Core.MissionFile;
 namespace Il2Radio.Core.Radio;
 
 /// <summary>
-/// The map square a pilot may name when he cannot see the player. The square is his live position.
-/// The mission route only decides whether he has been navigating: within one 10 km square of his
-/// flight's waypoint chain he still knows where he is, and the game's grid stands in for the
-/// plan-square on his knee board. No route, another map, or a fix within a kilometre of a grid
-/// line, and he says nothing about it.
+/// The map square a pilot may name when he cannot see the player. The square is always his live
+/// position. A member of the player's flight has been navigating on a waypoint chain, so he names
+/// the square only while he is still within one 10 km square of that chain. Another friendly flight
+/// usually has no chain to follow — Career briefs many of them with an attack area and a
+/// return-to-base point — so hearing the call is enough: he names the square he is in. Another map,
+/// or a fix within a kilometre of a grid line, and he says nothing about it.
 /// </summary>
 internal static class PlanSquare
 {
@@ -24,12 +25,14 @@ internal static class PlanSquare
             return null;
 
         var (north, east) = MapGrid.ProjectStalingrad(latitude, longitude);
-        if (DistanceToRoute(north, east, RoutesOf(plan, group.Speaker.Contact)) > OnRouteMetres)
+        if (group.Speaker.Contact.InPlayerFlight
+            && DistanceToRoute(north, east, Routes(plan, group.Speaker.Contact)) > OnRouteMetres)
             return null;
         return MapGrid.TryLabel(north, east);
     }
 
-    private static List<IReadOnlyList<WorldPoint>> RoutesOf(MissionPlan plan, Contact speaker)
+    /// <summary>Briefed waypoint chains for this pilot's flight (same callsign), in mission-file metres.</summary>
+    internal static List<IReadOnlyList<WorldPoint>> Routes(MissionPlan plan, Contact speaker)
     {
         var self = plan.AircraftOf(speaker.PilotName, speaker.Country);
         if (self is null)

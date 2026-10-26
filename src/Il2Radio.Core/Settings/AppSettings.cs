@@ -50,6 +50,9 @@ public sealed record AppSettings
 
     public PiperSettings Piper { get; init; } = new();
 
+    /// <summary>Calls the flight makes without a numpad request. Each one can be turned off on its own.</summary>
+    public UnaskedSettings Unasked { get; init; } = new();
+
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -138,6 +141,9 @@ public sealed record AppSettings
             problems.Add("piper: missing");
         else
             problems.AddRange(Piper.Validate());
+
+        if (Unasked is null)
+            problems.Add("unasked: missing");
         return problems;
     }
 }
@@ -174,6 +180,19 @@ public sealed record PiperSettings
         if (!(LengthScale is >= 0.5 and <= 2))
             yield return $"piper.lengthScale {LengthScale.ToString(CultureInfo.InvariantCulture)}: expected 0.5 to 2";
     }
+}
+
+/// <summary>
+/// Calls spoken without a numpad request. Both are on until turned off. Turning both off also stops
+/// the extra track snapshots those calls need while IL-2 is recording.
+/// </summary>
+public sealed record UnaskedSettings
+{
+    /// <summary>An AI leader calls the new cruise course in degrees. When you lead, the chat shows "Route, heading 185".</summary>
+    public bool Route { get; init; } = true;
+
+    /// <summary>One call when the contact picture changes: a group gained, lost, or "on me".</summary>
+    public bool Contacts { get; init; } = true;
 }
 
 /// <summary>Where the radio text goes and how it looks.</summary>

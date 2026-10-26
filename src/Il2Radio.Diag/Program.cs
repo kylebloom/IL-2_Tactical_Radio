@@ -37,7 +37,14 @@ switch (command)
         using (var meter = voice is null || Option("--radio-wait") == "off" ? null : new Il2AudioMeter(RadioWaitRatio()))
         using (var chat = ChatSinks.Start(ChatOptions.Parse(args).WithGameScreen(install).WithIl2Areas(install)))
         {
-            var session = new LiveSession(install, new LiveOptions { UdpPort = port, Duration = duration, Realism = ChosenRealism() }, voice);
+            var session = new LiveSession(install, new LiveOptions
+            {
+                UdpPort = port,
+                Duration = duration,
+                Realism = ChosenRealism(),
+                UnaskedRoute = FlagOn("--unasked-route"),
+                UnaskedContacts = FlagOn("--unasked-contacts"),
+            }, voice);
             session.Attach(meter, chat);
             return await session.RunAsync();
         }
@@ -63,7 +70,7 @@ switch (command)
                                   Summarise a Tacview ACMI file and replay every radio command (default: newest in data\Tracks).
                                   --realism pilot (default): a pilot says only what he could know. precise: bearings and ranges from the track
               live [--port N] [--seconds S] [--volume V] [--voice V] [--no-audio] [--radio-wait on|off] [--radio-wait-ratio R]
-                                  [--realism pilot|precise]
+                                  [--realism pilot|precise] [--unasked-route on|off] [--unasked-contacts on|off]
                                   Run during a mission: telemetry + log tail + ACMI tail + contact table + radio
                                   --radio-wait (default on): hold replies while IL-2's own audio peaks R x above its floor (1.8)
                                   Chat text: --chat overlay|window|rtss|off  --chat-screen N  --chat-pos L,T,W,H  --chat-font PX
@@ -511,6 +518,8 @@ bool RealismOk(out int code)
 
 RadioRealism ChosenRealism() =>
     string.Equals(Option("--realism"), "precise", StringComparison.OrdinalIgnoreCase) ? RadioRealism.Precise : RadioRealism.Pilot;
+
+bool FlagOn(string name) => !string.Equals(Option(name), "off", StringComparison.OrdinalIgnoreCase);
 
 string? Option(string name)
 {

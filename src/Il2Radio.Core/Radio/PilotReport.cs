@@ -7,8 +7,9 @@ namespace Il2Radio.Core.Radio;
 /// <summary>
 /// What a pilot can honestly say about a position he was not given. The numbers are a game-design
 /// choice (SPECULATIVE as 1942 procedure): close is under 2 km, a few kilometres up to 8 km, otherwise
-/// far; own altitude is to the nearest 500 m; a heading is an eight-point compass point. A pilot still
-/// on his briefed route may also name his map square. Nothing here invents a bearing. Whether he can
+/// far; own altitude is to the nearest 500 m; a heading is an eight-point compass point. The player's
+/// flight names its map square while still on the briefed route; another friendly who can hear the
+/// call names his. Nothing here invents a bearing. Whether he can
 /// see the player uses the same visibility model as spotting.
 /// </summary>
 internal static class PilotReport
@@ -107,7 +108,8 @@ internal static class PilotReport
 
     /// <summary>
     /// Own heading and altitude, and an admission that he cannot see the player. No clock and no steer.
-    /// <paramref name="grid"/> is the map square of his live position when he is still on his briefed route.
+    /// <paramref name="grid"/> is the map square of his live position: for the player's flight, only while
+    /// he is still on his briefed route; for another friendly flight, whenever the fix can be labeled.
     /// </summary>
     public static RadioReply Unseen(ContactGroup group, bool separated, GridSquare? grid = null)
     {

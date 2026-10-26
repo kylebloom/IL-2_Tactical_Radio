@@ -388,6 +388,22 @@ public class PilotRealismTests
     public void A_pilot_on_his_route_who_cannot_see_the_player_names_his_map_square()
     {
         StartMission(RouteMission(offRoute: false));
+        LogFlightMember("Felix Knierim", 2);
+        var (latitude, longitude) = MapGrid.StalingradLatLon(135864, 215000);
+        FrameAt(10, latitude, longitude, shiftNorth: -15_000);
+
+        var reply = Assert.Single(FriendlyPositionsCommand.Execute(_tracker, Pilot).Replies);
+
+        Assert.Equal("Number two, I cannot see you. Heading east, altitude 1000 metres. Grid 1022-5.", reply.Text);
+        Assert.Contains(reply.Tokens!, t => t.Word == SpeechWord.Grid && t.Value == 1022 && t.Name == "5");
+        Assert.Contains("Planquadrat eins null zwo zwo fünf",
+            string.Join(" ", ClipPhraser.PhraseSegments(reply.Tokens!, _ => false, SynthWords.German)!));
+    }
+
+    [Fact]
+    public void An_allied_flight_far_from_its_waypoint_still_names_its_square()
+    {
+        StartMission(RouteMission(offRoute: true));
         var (latitude, longitude) = MapGrid.StalingradLatLon(135864, 215000);
         FrameAt(10, latitude, longitude, shiftNorth: -15_000);
 
@@ -395,17 +411,16 @@ public class PilotRealismTests
 
         Assert.Equal("Felix Knierim, I cannot see you. Heading east, altitude 1000 metres. Grid 1022-5.", reply.Text);
         Assert.Contains(reply.Tokens!, t => t.Word == SpeechWord.Grid && t.Value == 1022 && t.Name == "5");
-        Assert.Contains("Planquadrat eins null zwo zwo fünf",
-            string.Join(" ", ClipPhraser.PhraseSegments(reply.Tokens!, _ => false, SynthWords.German)!));
     }
 
     [Fact]
-    public void A_pilot_off_his_route_or_on_another_map_does_not_name_a_square()
+    public void The_players_flight_off_its_route_or_on_another_map_does_not_name_a_square()
     {
         StartMission(RouteMission(offRoute: true));
+        LogFlightMember("Felix Knierim", 2);
         var (latitude, longitude) = MapGrid.StalingradLatLon(135864, 215000);
         FrameAt(10, latitude, longitude, shiftNorth: -15_000);
-        Assert.Equal("Felix Knierim, I cannot see you. Heading east, altitude 1000 metres.",
+        Assert.Equal("Number two, I cannot see you. Heading east, altitude 1000 metres.",
             Assert.Single(FriendlyPositionsCommand.Execute(_tracker, Pilot).Replies).Text);
 
         StartMission(RouteMission(offRoute: false).Replace("stalingrad-summer-1942", "moscow-summer", StringComparison.Ordinal));

@@ -86,6 +86,17 @@ public class PiperVoiceTests
     }
 
     [Fact]
+    public void A_course_stays_on_the_chat_and_is_not_spoken_by_the_phrase_voice()
+    {
+        Assert.Null(SynthWords.German(new(SpeechWord.Course, 185)));
+        Assert.Null(SynthWords.German(new(SpeechWord.Heading, 180)));
+
+        Assert.Equal(["number.1"],
+            Segments(SynthWords.German, new(SpeechWord.Speaker, 1), new(SpeechWord.Course, 185)));
+        Assert.Null(Segments(SynthWords.German, new SpeechToken(SpeechWord.Course, 180)));
+    }
+
+    [Fact]
     public void Contact_type_without_a_name_says_nothing()
     {
         Assert.Null(SynthWords.German(new(SpeechWord.ContactType, 2)));

@@ -51,4 +51,15 @@ public static class Navigation
         int index = (int)Math.Round(((bearingDegrees % 360) + 360) % 360 / 45.0) % 8;
         return names[index];
     }
+
+    /// <summary>
+    /// A course a pilot would pass on the radio: the bearing to the nearest 5°, as three figures, with north as 360.
+    /// A cockpit compass and a briefed leg are not flown to the degree, and this grid has no magnetic variation.
+    /// </summary>
+    public static int CourseDegrees(double bearingDegrees)
+    {
+        double wrapped = ((bearingDegrees % 360.0) + 360.0) % 360.0;
+        int rounded = (int)(Math.Round(wrapped / 5.0, MidpointRounding.AwayFromZero) * 5.0);
+        return rounded is <= 0 or >= 360 ? 360 : rounded;
+    }
 }

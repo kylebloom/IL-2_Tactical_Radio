@@ -46,6 +46,14 @@ public static class RadioChat
     public static IReadOnlyList<ChatLine> Lines(RadioCommand command, RadioResult result, Contact? player, string? problem = null) =>
         [RequestLine(command, player), .. Replies(result, problem, FirstReplyDelay)];
 
+    /// <summary>One reply as a chat line. <see cref="RadioReply.SpeakerLabel"/> overrides the pilot's name.</summary>
+    public static ChatLine Line(RadioReply reply, TimeSpan delay = default)
+    {
+        string name = reply.SpeakerLabel
+            ?? (reply.Contact.PilotName.Length > 0 ? reply.Contact.PilotName : reply.Contact.DisplayName);
+        return new ChatLine(ChatLineKind.Reply, name, reply.Text, reply.Contact.Coalition, delay);
+    }
+
     /// <summary>The player's call, shown the moment the key is pressed, before any answer is known.</summary>
     public static ChatLine RequestLine(RadioCommand command, Contact? player) =>
         new(ChatLineKind.Request, player?.PilotName is { Length: > 0 } name ? name : "You", RequestPhrase(command), player?.Coalition ?? -1, TimeSpan.Zero);
@@ -61,9 +69,7 @@ public static class RadioChat
         var at = start;
         foreach (var reply in result.Replies)
         {
-            var speaker = reply.Contact;
-            lines.Add(new ChatLine(ChatLineKind.Reply, speaker.PilotName.Length > 0 ? speaker.PilotName : speaker.DisplayName,
-                reply.Text, speaker.Coalition, at));
+            lines.Add(Line(reply, at));
             at += EstimatedAirtime(reply.Text);
         }
 

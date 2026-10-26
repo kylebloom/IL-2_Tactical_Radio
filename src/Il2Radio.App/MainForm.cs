@@ -55,6 +55,8 @@ internal sealed class MainForm : Form
     private readonly Label _volumeReadout = new() { AutoSize = true, Padding = new Padding(8, 8, 0, 0) };
     private readonly ComboBox _voice = new() { DropDownStyle = ComboBoxStyle.DropDown, Width = 280 };
     private readonly ComboBox _realism = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
+    private readonly CheckBox _unaskedRoute = new() { Text = "Call a new heading on a cruise leg", AutoSize = true, Checked = true };
+    private readonly CheckBox _unaskedContacts = new() { Text = "Call when the contact picture changes", AutoSize = true, Checked = true };
     private readonly CheckBox _radioWait = new() { Text = "Hold replies while IL-2's own radio is talking", AutoSize = true };
     private readonly NumericUpDown _radioWaitRatio = Number(1.1m, 10m, 1.8m, 0.1m, 1);
     private readonly NumericUpDown _reminder = Number(0, 600, 60, 5);
@@ -273,6 +275,9 @@ internal sealed class MainForm : Form
         _realism.Items.AddRange(AppSettings.RealismModes);
         Row("Realism", _realism, 160);
         Hint("pilot: he reports a position relative to you only when he can see you or is with you. Otherwise your flight gives its heading and altitude, and a pilot in a fight says the enemy is on him. precise: bearings and ranges from the track.", ref y);
+        Check(_unaskedRoute);
+        Check(_unaskedContacts);
+        Hint("Unasked calls. A cruise call names the new course in degrees, once per turn: your AI leader, or a \"Route\" line when you lead. A fight gives one line when a group is gained, lost, or on him. Turn both off to keep the radio answers-only.", ref y);
         Check(_radioWait);
         Row("Talking threshold", _radioWaitRatio, 80);
         Hint("How far above its engine IL-2's audio must peak to count as talking. More than 1.", ref y);
@@ -501,6 +506,9 @@ internal sealed class MainForm : Form
             _volumeReadout.Text = $"{_volume.Value} %";
             ReloadVoices(settings.Voice);
             Select(_realism, settings.Realism, AppSettings.RealismModes);
+            var unasked = settings.Unasked ?? new UnaskedSettings();
+            _unaskedRoute.Checked = unasked.Route;
+            _unaskedContacts.Checked = unasked.Contacts;
             _radioWait.Checked = settings.RadioWait;
             SetNumber(_radioWaitRatio, settings.RadioWaitRatio);
             SetNumber(_reminder, settings.RecordingReminderSeconds);
@@ -552,6 +560,7 @@ internal sealed class MainForm : Form
         Volume = _volume.Value / 100.0,
         Voice = string.IsNullOrWhiteSpace(_voice.Text) ? "auto" : _voice.Text.Trim(),
         Realism = string.IsNullOrWhiteSpace(_realism.Text) ? "pilot" : _realism.Text.Trim().ToLowerInvariant(),
+        Unasked = new UnaskedSettings { Route = _unaskedRoute.Checked, Contacts = _unaskedContacts.Checked },
         RadioWait = _radioWait.Checked,
         RadioWaitRatio = (double)_radioWaitRatio.Value,
         RecordingReminderSeconds = (int)_reminder.Value,

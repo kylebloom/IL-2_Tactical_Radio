@@ -9,7 +9,8 @@ namespace Il2Radio.Core.Radio;
 /// planned waypoints and stale event snapshots are never presented as current positions. In
 /// <see cref="RadioRealism.Pilot"/>, a pilot who can see the player gives a clock position. One who
 /// can hear the call but cannot see the player answers with his own heading and altitude, and with
-/// the map square when he is still on his briefed route.
+/// the map square of his live position. The player's own flight names that square only while it is
+/// still on its briefed route. Another friendly flight names it whenever the fix can be labeled.
 /// </summary>
 public static class FriendlyPositionsCommand
 {

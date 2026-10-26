@@ -31,6 +31,17 @@ public class AppSettingsTests
         Assert.Contains("\"rtssZoom\": null", json);
         Assert.Contains("\"recordingReminderSeconds\": 60", json);
         Assert.Contains("\"realism\": \"pilot\"", json);
+        Assert.Contains("\"unasked\"", json);
+    }
+
+    [Fact]
+    public void Unasked_calls_can_be_turned_off_separately()
+    {
+        var (parsed, problems) = AppSettings.Parse("""{ "unasked": { "route": false, "contacts": true } }""");
+
+        Assert.Empty(problems);
+        Assert.False(parsed.Unasked.Route);
+        Assert.True(parsed.Unasked.Contacts);
     }
 
     [Fact]

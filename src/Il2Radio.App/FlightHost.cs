@@ -99,6 +99,8 @@ internal sealed class FlightHost
                 OutputDir = Path.Combine(home, "logs"),
                 RecordingReminder = TimeSpan.FromSeconds(settings.RecordingReminderSeconds),
                 Realism = settings.RealismMode,
+                UnaskedRoute = settings.Unasked?.Route ?? true,
+                UnaskedContacts = settings.Unasked?.Contacts ?? true,
                 StartupResults = StartupChecks.Results.ToArray(),
                 Status = status,
             }, _voice);
