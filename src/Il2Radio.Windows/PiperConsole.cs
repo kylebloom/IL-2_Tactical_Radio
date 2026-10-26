@@ -19,7 +19,7 @@ internal static class PiperConsole
 
     /// <summary>The caller's question, progress and log. A null question means nobody can be asked, so nothing is downloaded.</summary>
     public static async Task<(PiperSetupResult Result, PiperSynthesizer? Synth)> StartAsync(PiperSettings settings, string? il2Root,
-        Func<IReadOnlyList<string>, bool>? ask, Action<PiperProgress>? progress, Action<string>? log, CancellationToken cancel = default)
+        Func<IReadOnlyList<string>, PiperAnswer>? ask, Action<PiperProgress>? progress, Action<string>? log, CancellationToken cancel = default)
     {
         string folder = settings.Folder ?? DefaultFolder;
         var result = await PiperSetup.PrepareAsync(settings, folder, il2Root, ask, OpenAsync, progress, log, cancel);
@@ -27,29 +27,21 @@ internal static class PiperConsole
             return (result, null);
 
         var synth = new PiperSynthesizer(install, settings.LengthScale);
-        synth.WarmUp();
+        _ = synth.WarmUp(); // loads the model in the background; the caller may await its own WarmUp for the outcome
         return (result, synth);
     }
 
-    private static bool Ask(IReadOnlyList<string> lines)
+    /// <summary>Yes / No / Later on the console; Enter alone or a closed console is later, never yes.</summary>
+    private static PiperAnswer Ask(IReadOnlyList<string> lines)
     {
         foreach (string line in lines)
             Console.WriteLine($"       {line}");
         while (true)
         {
-            Console.Write("       Download it now? Type y and Enter for yes, or n for no: ");
-            switch (Console.ReadLine()?.Trim().ToLowerInvariant())
-            {
-                case "y" or "yes":
-                    return true;
-                case "n" or "no":
-                    return false;
-                case null: // the console closed: never treat that as yes
-                    return false;
-                default:
-                    Console.WriteLine("       Please type y or n.");
-                    break;
-            }
+            Console.Write($"       {PiperSetup.Choices}: ");
+            if (PiperSetup.ParseAnswer(Console.ReadLine()) is { } answer)
+                return answer;
+            Console.WriteLine("       Please type Y, N or L and press Enter.");
         }
     }
 

@@ -82,7 +82,7 @@ switch (command)
                                   List the clips a voice pack resolves to; --play plays each, with its key, to check by ear
               piper-setup [--piper DIR] [--piper-voice NAME]
                                   Install the German phrase voice (Piper): shows what, from where and how big, and
-                                  downloads only after you type y. DIR defaults to "piper" beside this program
+                                  downloads only on Y (Yes / No / Later). DIR defaults to "piper" beside this program
 
               --piper DIR [--piper-voice NAME]  (say, live) fill the German recordings' gaps (type names,
                                   "nothing sighted") with an installed Piper voice. Never downloads
@@ -376,6 +376,7 @@ int AcmiCmd(string? path)
         return Fail("The ACMI is locked by IL-2 while a track is recording. Stop recording (LCtrl+R), or run as administrator to read it by snapshot.");
     }
 
+    string text;
     using (var stream = new MemoryStream(bytes))
     {
         Stream content = stream;
@@ -392,24 +393,15 @@ int AcmiCmd(string? path)
         }
 
         using var reader = new StreamReader(content);
-        acmi.Feed(reader.ReadToEnd() + "\n");
+        text = reader.ReadToEnd() + "\n";
         zip?.Dispose();
     }
 
-    var aircraft = acmi.Objects.Values.Where(o => o.IsAircraft).ToList();
-    Console.WriteLine($"ACMI: {path}\n{acmi.LinesParsed} lines, duration {acmi.CurrentTime:F0} s, {acmi.Objects.Count} objects, {aircraft.Count} aircraft. Reference {acmi.ReferenceLongitude}, {acmi.ReferenceLatitude}");
-    Console.WriteLine($"  {"id",-8} {"name",-22} {"pilot",-24} {"coalition",-10} {"updates",7} {"seen",12}");
-    foreach (var o in aircraft.OrderByDescending(o => o.PositionUpdates))
-        Console.WriteLine($"  {o.Id,-8} {Trunc(o.Name, 22),-22} {Trunc(o.Pilot, 24),-24} {Trunc(o.Coalition, 10),-10} {o.PositionUpdates,7} {o.FirstSeenTime,5:F0}-{(o.RemovedTime ?? o.LastPositionTime),5:F0} s");
-    Console.WriteLine("\nProperty keys seen: " + string.Join(", ", acmi.Objects.Values.SelectMany(o => o.Properties.Keys).Distinct().Order()));
-
-    // Replay: what would "Request friendly positions" have answered at the end of this recording?
-    // As in a live session with the default voices: callsign words in the text are the ones the voice says.
+    // Identities first, then the track, so a glimpse in an earlier frame is remembered before the replay.
     var replayVoices = install is null ? null : VoiceSelection.Create("auto", install.Root);
     var tracker = new ContactTracker { CallsignWords = replayVoices is null ? null : replayVoices.CallsignWord };
     if (install is not null && File.Exists(install.GeneratedMission))
         tracker.SetPlan(MissionPlan.Load(install.GeneratedMission));
-    // IL-2 keeps only the current mission's log chunks; use them only if they belong to this recording.
     List<string> chunks = install is null ? [] : LatestLogChunks(install.DataDir);
     if (chunks.Count > 0 && !SameMission(path, chunks[0]))
     {
@@ -419,12 +411,26 @@ int AcmiCmd(string? path)
     foreach (string chunk in chunks)
         foreach (var e in BinaryMissionLog.DecodeAll(File.ReadAllBytes(chunk)))
             tracker.Apply(e);
+    var realism = ChosenRealism();
+    var radio = new RadioSettings { Realism = realism };
+    var sightings = new SightingMemory();
+    acmi.FrameClosed = s =>
+    {
+        tracker.Apply(s);
+        EnemyCommands.Notice(tracker, radio, sightings);
+    };
+    acmi.Feed(text);
+
+    var aircraft = acmi.Objects.Values.Where(o => o.IsAircraft).ToList();
+    Console.WriteLine($"ACMI: {path}\n{acmi.LinesParsed} lines, duration {acmi.CurrentTime:F0} s, {acmi.Objects.Count} objects, {aircraft.Count} aircraft. Reference {acmi.ReferenceLongitude}, {acmi.ReferenceLatitude}");
+    Console.WriteLine($"  {"id",-8} {"name",-22} {"pilot",-24} {"coalition",-10} {"updates",7} {"seen",12}");
+    foreach (var o in aircraft.OrderByDescending(o => o.PositionUpdates))
+        Console.WriteLine($"  {o.Id,-8} {Trunc(o.Name, 22),-22} {Trunc(o.Pilot, 24),-24} {Trunc(o.Coalition, 10),-10} {o.PositionUpdates,7} {o.FirstSeenTime,5:F0}-{(o.RemovedTime ?? o.LastPositionTime),5:F0} s");
+    Console.WriteLine("\nProperty keys seen: " + string.Join(", ", acmi.Objects.Values.SelectMany(o => o.Properties.Keys).Distinct().Order()));
+
     tracker.Apply(acmi);
 
-    var realism = ChosenRealism();
     Console.WriteLine($"\nRadio checks replayed at end of recording (t={acmi.CurrentTime:F0} s, {chunks.Count} log chunks, author {acmi.Author}, realism {realism}); player: {tracker.Player?.DisplayName ?? "(not identified)"}");
-    var sightings = new SightingMemory();
-    var radio = new RadioSettings { Realism = realism };
     // How the German game pack would say each reply, with "quoted" parts for the Piper phrase voice (if installed).
     var germanPack = replayVoices?.For(201)?.Pack;
     foreach (var command in Enum.GetValues<RadioCommand>())

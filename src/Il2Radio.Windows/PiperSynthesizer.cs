@@ -46,8 +46,11 @@ internal sealed class PiperSynthesizer : IPhraseSynthesizer, IDisposable
     /// <summary>Gives up for the session after this many failures in a row, so a broken install can't stall every reply.</summary>
     private const int MaxFailures = 3;
 
-    /// <summary>Starts the process and loads the model in the background, so the first reply isn't delayed by it.</summary>
-    public void WarmUp() => ThreadPool.QueueUserWorkItem(_ => Synthesize(SynthWords.German(new(Core.Radio.SpeechWord.NoContacts))!));
+    /// <summary>
+    /// Starts the process and loads the model in the background, so the first reply isn't delayed by it.
+    /// The task tells whether Piper answered: false means it is installed but won't run (see <see cref="LastError"/>).
+    /// </summary>
+    public Task<bool> WarmUp() => Task.Run(() => Synthesize(SynthWords.German(new(Core.Radio.SpeechWord.NoContacts))!) is not null);
 
     public MonoAudio? Synthesize(string text)
     {

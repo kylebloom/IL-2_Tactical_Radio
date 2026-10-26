@@ -79,6 +79,23 @@ public sealed record AppSettings
         return (settings, settings.Validate());
     }
 
+    /// <summary>
+    /// The settings text with <c>piper.enabled</c> set and every other value kept, so the player's answer to the
+    /// German-voice question is remembered without him editing JSON (JSON comments are dropped). Blank text
+    /// starts from an empty object.
+    /// </summary>
+    public static string WithPiperEnabled(string json, bool enabled)
+    {
+        var options = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
+        var root = string.IsNullOrWhiteSpace(json)
+            ? new System.Text.Json.Nodes.JsonObject()
+            : System.Text.Json.Nodes.JsonNode.Parse(json, documentOptions: options)!.AsObject();
+        if (root["piper"] is not System.Text.Json.Nodes.JsonObject piper)
+            root["piper"] = piper = new System.Text.Json.Nodes.JsonObject();
+        piper["enabled"] = enabled;
+        return root.ToJsonString(JsonOptions);
+    }
+
     /// <summary>Loads the file, or creates it with the defaults when it doesn't exist.</summary>
     public static (AppSettings Settings, bool Created, IReadOnlyList<string> Problems) LoadOrCreate(string path)
     {
@@ -133,10 +150,11 @@ public sealed record AppSettings
 public sealed record PiperSettings
 {
     /// <summary>
-    /// false (the default): the game's recordings only, and no download question. true: use the German voice,
-    /// and ask — what, from where, and how big — before downloading it if it is not installed yet.
+    /// null (the default): not answered yet, so the radio asks once at start: Yes / No / Later, with what,
+    /// from where and how big. true: use it, and ask before downloading it again if it is missing. false: the
+    /// game's recordings only, never asked. The radio saves the player's yes or no here itself.
     /// </summary>
-    public bool Enabled { get; init; }
+    public bool? Enabled { get; init; }
 
     /// <summary>Which Piper voice: de_DE-thorsten-medium (default), de_DE-thorsten-high, de_DE-thorsten-low or de_DE-karlsson-low.</summary>
     public string Voice { get; init; } = Audio.PiperCatalog.DefaultVoice;

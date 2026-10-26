@@ -85,6 +85,10 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     private readonly string _outputDir = options.OutputDir;
     private readonly int? _udpPort = options.UdpPort;
     private readonly TrackRecordingWatch _recordingWatch = new(options.RecordingReminder);
+    private readonly MissionClock _missionClock = new();
+    private IChatSink? _chat;
+    private DateTime? _gameOrigin; // in-game date and time at tick 0, from the mission log
+    private TimeSpan _latestLogTime = TimeSpan.MinValue;
 
     // Telemetry
     private long _motionPackets, _statePackets, _otherPackets;
@@ -235,6 +239,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             AudioStatus = () => meter.Status;
         }
 
+        _chat = chat;
+        chat?.BindMissionClock(_missionClock);
         if (chat is null)
             return;
         // The call shows the moment the key is pressed; the answers follow once positions are refreshed.
@@ -362,18 +368,27 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     private void PollRecording()
     {
         _recording = false;
-        if (_acmiPath is null || !File.Exists(_acmiPath))
-            return;
-        if (_missionStartUtc is { } start && File.GetCreationTimeUtc(_acmiPath) < start.AddMinutes(-2))
-            return; // a track from an earlier mission
-        try
+        bool thisMission = _acmiPath is not null && File.Exists(_acmiPath)
+            && !(_missionStartUtc is { } start && File.GetCreationTimeUtc(_acmiPath) < start.AddMinutes(-2));
+        if (thisMission)
         {
-            using var fs = new FileStream(_acmiPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            try
+            {
+                using var fs = new FileStream(_acmiPath!, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            }
+            catch (IOException)
+            {
+                _recording = true; // IL-2 holds it without read sharing exactly while writing it
+            }
         }
-        catch (IOException)
-        {
-            _recording = true;
-        }
+
+        // The locked file's size is visible without reading it. Growth means the sim is writing;
+        // a few seconds without growth is a pause, and the clock stops with the watch. Once IL-2
+        // lets go of the file, a stall is just "not recording", and the clock runs on.
+        if (_recording)
+            _missionClock.ObserveRecording(_acmiSizeOnDisk, DateTime.UtcNow);
+        else
+            _missionClock.StopWatching(DateTime.UtcNow);
     }
 
     private void PollMission()
@@ -427,8 +442,36 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             _mlgEvents += events.Count;
             _mlgLastGrowthUtc = DateTime.UtcNow;
             _mlgGrowthCount++;
+            var previousLogTime = _latestLogTime;
+            bool sawStart = false;
             foreach (var e in events)
+            {
+                if (e is MissionStarted started)
+                {
+                    sawStart = true;
+                    _gameOrigin = started.GameDateTime;
+                    _latestLogTime = TimeSpan.MinValue;
+                }
+                if (e.GameTime > _latestLogTime)
+                    _latestLogTime = e.GameTime;
                 _tracker.Apply(e);
+            }
+            // The log's GTime is the cockpit clock at tick 0. A chunk's newest tick is up to ~33 s
+            // behind the watch; the track sample below replaces it once a frame has been read.
+            if (sawStart)
+            {
+                _chat?.FreezeMissionTime();
+                _missionClock.Reset(DateTime.UtcNow);
+            }
+            if ((sawStart || _latestLogTime > previousLogTime) && _gameOrigin is { } origin)
+            {
+                var sample = origin.Add(_latestLogTime);
+                var now = DateTime.UtcNow;
+                if (!_missionClock.Authoritative)
+                    _missionClock.Sync(sample, now, authoritative: false);
+                else if (_missionClock.At(now) is { } current && sample > current.AddSeconds(2))
+                    _missionClock.Sync(sample, now, authoritative: true); // the log is ahead of a stalled track; never pull the watch backwards
+            }
         }
     }
 
@@ -504,11 +547,14 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         var newest = NewestSince(install.TracksDir, "*.acmi");
         if (newest is not null && newest != _acmiPath)
         {
+            bool segment = _acmiPath is not null;
             _acmiPath = newest;
             _acmiLocked = false;
             _acmiOffset = 0;
             _acmiDecoder = new UTF8Encoding(false).GetDecoder();
-            _acmi = new AcmiStream();
+            _acmi = new AcmiStream { FrameClosed = NoticeFrame };
+            if (segment)
+                _missionClock.NewRecording(DateTime.UtcNow);
             Note($"acmi: found {Path.GetFileName(newest)}");
         }
 
@@ -543,6 +589,16 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         FeedAcmi(bytes);
     }
 
+    /// <summary>
+    /// A track frame has closed. Record what the flight could see there, so a glimpse between radio calls
+    /// is still mentioned for the next minute. Caller holds _gate, from inside <see cref="FeedAcmi"/>.
+    /// </summary>
+    private void NoticeFrame(AcmiStream stream)
+    {
+        _tracker.Apply(stream);
+        EnemyCommands.Notice(_tracker, new RadioSettings { Realism = options.Realism }, _sightings);
+    }
+
     /// <summary>Appends newly read ACMI bytes (from the file or a snapshot) and updates contacts. Caller holds _gate.</summary>
     private void FeedAcmi(byte[] bytes)
     {
@@ -563,6 +619,10 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         _acmiLastGrowthUtc = DateTime.UtcNow;
         _acmiGrowthCount++;
         _tracker.Apply(_acmi);
+        // ReferenceTime is the in-game clock at #0, and CurrentTime is seconds of simulation
+        // since then. That is the cockpit watch at the last frame in this read.
+        if (MissionClock.TryParseReference(_acmi.ReferenceTime, out var reference))
+            _missionClock.Sync(reference.AddSeconds(_acmi.CurrentTime), DateTime.UtcNow, authoritative: true);
     }
 
     /// <summary>Radio request: refresh positions (by snapshot if the ACMI is locked), then answer.</summary>

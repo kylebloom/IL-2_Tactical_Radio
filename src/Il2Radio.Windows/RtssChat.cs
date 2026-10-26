@@ -54,6 +54,10 @@ internal sealed class RtssChat : IChatSink
         ThreadPool.QueueUserWorkItem(_ => Update());
     }
 
+    public void BindMissionClock(MissionClock clock) => _timeline.MissionTime = clock;
+
+    public void FreezeMissionTime() => _timeline.FreezeMissionTime();
+
     private void Update()
     {
         lock (_gate)

@@ -5,18 +5,19 @@ using Il2Radio.Core.MissionFile;
 namespace Il2Radio.Core.Radio;
 
 /// <summary>
-/// What the flight has seen of other aircraft across requests: a spotted aircraft stays "tracked" for a
-/// while, and its identification only improves (or is corrected) instead of flickering between calls.
+/// What the flight has seen of other aircraft across requests: a spot is kept for
+/// <see cref="RetainSeconds"/> after the aircraft leaves sight, and its identification only improves
+/// (or is corrected) on a look that still sees it.
 /// One instance per live session; it resets itself when the mission restarts.
 /// </summary>
 public sealed class SightingMemory
 {
-    internal sealed record Sighting(double LastSeen, IdentificationLevel Level, AircraftType? CalledType, bool Hedged);
+    internal sealed record Sighting(double LastSeen, IdentificationLevel Level, AircraftType? CalledType, bool Hedged, WorldPoint Where, double? Heading);
 
     private readonly Dictionary<string, Sighting> _sightings = new(StringComparer.Ordinal);
     private int _missionStarts = -1;
 
-    /// <summary>How long a contact stays tracked without being re-spotted, seconds of track time.</summary>
+    /// <summary>How long a contact is still mentioned after the look that saw it, seconds of track time.</summary>
     public double RetainSeconds { get; init; } = 60;
 
     internal Sighting? Get(string key) => _sightings.GetValueOrDefault(key);
@@ -32,14 +33,23 @@ public sealed class SightingMemory
     }
 }
 
-/// <summary>An aircraft the flight currently knows about, and how well.</summary>
-internal sealed record SightedContact(LiveContact Target, AircraftType Type, IdentificationLevel Level, AircraftType? CalledType, bool Hedged, LiveContact Reporter);
+/// <summary>
+/// An aircraft the flight currently knows about, and how well. <see cref="Held"/> means nobody can see it
+/// on this look; <see cref="Where"/> is then the place it was last seen, and the reply must not use the
+/// live position.
+/// </summary>
+internal sealed record SightedContact(LiveContact Target, AircraftType Type, IdentificationLevel Level, AircraftType? CalledType, bool Hedged, LiveContact Reporter, bool Held, WorldPoint Where, double? SeenHeading)
+{
+    public WorldPoint Plot => Held ? Where : Target.Fix.Position;
+}
 
 /// <summary>
 /// Commands 2 and 4: "Request enemy contacts" and "Identify contact". Observers are the player's own
 /// flight (or, flying alone, any friendly within radio range). Only aircraft that exist in the live
 /// track can be reported, and only once the visibility model says an observer has spotted them; what is
-/// said about them is limited to what that observer could make out at that range. In
+/// said about them is limited to what that observer could make out at that range. A spot is kept for
+/// <see cref="SightingMemory.RetainSeconds"/> after the aircraft leaves sight, and is then reported as
+/// where it was seen. In
 /// <see cref="RadioRealism.Pilot"/> the position is the player's clock only when the spotter can see the
 /// player or is in formation; a spotter in the fight who cannot says "on me", and otherwise gives his own clock.
 /// </summary>
@@ -79,9 +89,12 @@ public static class EnemyCommands
             : groups.Select(g =>
         {
             var reporter = g.Reporter;
-            string text = $"{RadioPhrases.Who(reporter.Contact)}, {Describe(g, look.Player)}, at your {RadioPhrases.Clock(g.Relative.BearingDegrees, look.PlayerHeading)}, " +
+            string seen = g.Held ? "last seen " : "";
+            string text = $"{RadioPhrases.Who(reporter.Contact)}, {Describe(g, look.Player)}, {seen}at your {RadioPhrases.Clock(g.Relative.BearingDegrees, look.PlayerHeading)}, " +
                           $"{RadioPhrases.Range(g.Relative.RangeMetres)}, {HighLow(g.Relative.AltitudeDeltaMetres)}.";
             List<SpeechToken> tokens = [.. SpeechToken.Identify(reporter.Contact), new(SpeechWord.ContactCount, g.Members.Count)];
+            if (g.Held)
+                tokens.Add(new(SpeechWord.LastSeen));
             bool typed = g.Level >= IdentificationLevel.Type && g.CalledType is not null;
             // Mirrors Describe: the side is said only for a class-level call ("enemy fighters"), never with a type.
             if (!typed && g.Level >= IdentificationLevel.Side && g.Class != AircraftClass.Unknown)
@@ -128,9 +141,12 @@ public static class EnemyCommands
             return new RadioResult(ReplyOutcome.Position, [PilotIdentifyReply(g, look, tracker, settings)], suppressed);
 
         string heading = g.Heading is double h ? $", heading {Navigation.CompassPoint(h)}" : "";
-        string text = $"{RadioPhrases.Who(g.Reporter.Contact)}, contact at your {RadioPhrases.Clock(g.Relative.BearingDegrees, look.PlayerHeading)}, " +
+        string seen = g.Held ? "last seen " : "";
+        string text = $"{RadioPhrases.Who(g.Reporter.Contact)}, contact {seen}at your {RadioPhrases.Clock(g.Relative.BearingDegrees, look.PlayerHeading)}, " +
                       $"{RadioPhrases.Range(g.Relative.RangeMetres)}: {Identification(g, look.Player)}{heading}.";
         List<SpeechToken> tokens = [.. SpeechToken.Identify(g.Reporter.Contact), new(SpeechWord.ContactCount, g.Members.Count)];
+        if (g.Held)
+            tokens.Add(new(SpeechWord.LastSeen));
         if (g.Level >= IdentificationLevel.Class && g.Class != AircraftClass.Unknown)
             tokens.Add(new(SpeechWord.ContactClass, (int)g.Class * (g.Members.Count > 1 ? -1 : 1)));
         // Mirrors Identification: a hedged type carries no side; a sure type or a side-level look does.
@@ -169,7 +185,17 @@ public static class EnemyCommands
             : null;
         /// <summary>Hedged only if every type-identified member is; one clear look settles the call for the group.</summary>
         public bool Hedged => Members.Where(m => m.Level >= IdentificationLevel.Type).All(m => m.Hedged);
+
+        /// <summary>Every member is being reported from memory: nobody has them in sight on this look.</summary>
+        public bool Held => Members.All(m => m.Held);
     }
+
+    /// <summary>
+    /// One look at the current picture, recorded into <paramref name="memory"/> and not spoken. The live
+    /// session calls this as each track frame closes, so a glimpse between radio calls is not discarded.
+    /// </summary>
+    public static void Notice(ContactTracker tracker, RadioSettings? settings, SightingMemory memory) =>
+        Look(tracker, settings ?? new RadioSettings(), memory, []);
 
     /// <summary>Everything the observers can see right now, merged with what they saw recently.</summary>
     private static LookResult? Look(ContactTracker tracker, RadioSettings settings, SightingMemory memory, List<SuppressedContact> suppressed)
@@ -209,21 +235,22 @@ public static class EnemyCommands
             }
 
             var previous = memory.Get(target.Contact.Key);
-            bool remembered = previous is not null && now - previous.LastSeen <= memory.RetainSeconds
-                              && observers.Any(o => visibility.DetectionProbability(o.Fix.Position, target.Fix.Position, type, timeOfDay) > 0.02);
+            bool remembered = previous is not null && now - previous.LastSeen <= memory.RetainSeconds;
             if (spotter is null && !remembered)
             {
                 suppressed.Add(new(target.Contact, "not spotted by any observer"));
                 continue;
             }
 
+            bool held = spotter is null;
             spotter ??= observers.MinBy(o => Distance(o, target))!;
             var known = (IdentificationLevel)Math.Max((int)level, (int)(previous?.Level ?? IdentificationLevel.None));
 
             // The type actually called: correct when close, possibly a hedged look-alike near the limit.
+            // A held contact keeps the call from the look that saw it; the aircraft's present position is not a new look.
             AircraftType? called = previous?.CalledType;
             bool hedged = previous?.Hedged ?? false;
-            if (known >= IdentificationLevel.Type)
+            if (!held && known >= IdentificationLevel.Type)
             {
                 double confidence = visibility.TypeConfidence(spotter.Fix.Position, target.Fix.Position, type, timeOfDay);
                 if (called is null)
@@ -239,8 +266,11 @@ public static class EnemyCommands
                 }
             }
 
-            memory.Set(target.Contact.Key, new SightingMemory.Sighting(level > IdentificationLevel.None ? now : previous?.LastSeen ?? now, known, called, hedged));
-            sighted.Add(new SightedContact(target, type, known, called, hedged, spotter));
+            var where = held ? previous!.Where : target.Fix.Position;
+            double? heading = held ? previous!.Heading : target.Fix.Heading;
+            memory.Set(target.Contact.Key, new SightingMemory.Sighting(
+                level > IdentificationLevel.None ? now : previous?.LastSeen ?? now, known, called, hedged, where, heading));
+            sighted.Add(new SightedContact(target, type, known, called, hedged, spotter, held, where, heading));
         }
 
         return new LookResult(friendly.Player, friendly.PlayerFix, friendly.PlayerFix.Heading ?? 0, observers, sighted);
@@ -257,7 +287,7 @@ public static class EnemyCommands
             {
                 for (int j = remaining.Count - 1; j >= 0; j--)
                 {
-                    if (Navigation.Relative(members[i].Target.Fix.Position, remaining[j].Target.Fix.Position) is not { } r
+                    if (Navigation.Relative(members[i].Plot, remaining[j].Plot) is not { } r
                         || r.RangeMetres > ContactGroupRadiusMetres || Math.Abs(r.AltitudeDeltaMetres) > ContactGroupAltitudeBandMetres
                         || SameSideKnown(members[i], remaining[j], look.Player) is false)
                         continue;
@@ -266,10 +296,10 @@ public static class EnemyCommands
                 }
             }
 
-            var p = members[0].Target.Fix.Position;
-            var centre = new WorldPoint(members.Average(m => m.Target.Fix.Position.North), members.Average(m => m.Target.Fix.Position.East),
-                members.Average(m => m.Target.Fix.Position.Altitude), p.Frame);
-            var headings = members.Select(m => m.Target.Fix.Heading).OfType<double>().ToList();
+            var p = members[0].Plot;
+            var centre = new WorldPoint(members.Average(m => m.Plot.North), members.Average(m => m.Plot.East),
+                members.Average(m => m.Plot.Altitude), p.Frame);
+            var headings = members.Select(m => m.Held ? m.SeenHeading : m.Target.Fix.Heading).OfType<double>().ToList();
             double? heading = headings.Count == 0 ? null
                 : (Math.Atan2(headings.Sum(x => Math.Sin(x * Math.PI / 180)), headings.Sum(x => Math.Cos(x * Math.PI / 180))) * 180 / Math.PI + 360) % 360;
             var reporting = members.MinBy(m => Distance(m.Reporter, m.Target))!;
@@ -365,9 +395,12 @@ public static class EnemyCommands
         AddSightingTokens(tokens, g, look.Player, includeCount: true, fuzzy: fuzzy);
 
         string text;
+        string seen = g.Held ? "last seen " : "";
+        if (g.Held)
+            tokens.Add(new(SpeechWord.LastSeen));
         if (WithPlayer(reporter, look, tracker, settings))
         {
-            text = ContactFrom(who, what, tokens, g.Relative, look.PlayerFix.Heading, mine: false);
+            text = ContactFrom(who, what, tokens, g.Relative, look.PlayerFix.Heading, mine: false, seen);
         }
         else
         {
@@ -375,14 +408,14 @@ public static class EnemyCommands
             if (Engaged(g) || fromHim is null)
             {
                 string band = fromHim is { } r && Math.Abs(r.AltitudeDeltaMetres) >= PilotReport.LevelMetres ? $", {HighLow(r.AltitudeDeltaMetres)}" : "";
-                text = $"{who}, {what}, on me{band}.";
+                text = $"{who}, {what}, {seen}on me{band}.";
                 tokens.Add(new(SpeechWord.OnMe));
                 if (fromHim is { } height && Math.Abs(height.AltitudeDeltaMetres) >= PilotReport.LevelMetres)
                     tokens.Add(new(SpeechWord.Vertical, height.AltitudeDeltaMetres));
             }
             else
             {
-                text = ContactFrom(who, what, tokens, fromHim.Value, reporter.Fix.Heading, mine: true);
+                text = ContactFrom(who, what, tokens, fromHim.Value, reporter.Fix.Heading, mine: true, seen);
             }
         }
 
@@ -403,11 +436,14 @@ public static class EnemyCommands
         if (g.Level >= IdentificationLevel.Type && g.CalledType is not null && !g.Hedged)
             tokens.Add(new(SpeechWord.ContactSide, g.Members.All(m => IsFriendly(look.Player, m.Target.Contact)) ? 1 : -1));
 
+        string seen = g.Held ? "last seen " : "";
+        if (g.Held)
+            tokens.Add(new(SpeechWord.LastSeen));
         string text;
         if (WithPlayer(reporter, look, tracker, settings))
         {
             var where = PilotReport.Direction(g.Relative.BearingDegrees, look.PlayerFix.Heading, mine: false);
-            text = $"{who}, contact {where.Text}, {PilotReport.Range(g.Relative.RangeMetres)}: {id}{heading}.";
+            text = $"{who}, contact {seen}{where.Text}, {PilotReport.Range(g.Relative.RangeMetres)}: {id}{heading}.";
             tokens.Add(where.Token);
             tokens.Add(new(SpeechWord.RangeBand, PilotReport.RangeBand(g.Relative.RangeMetres)));
         }
@@ -416,13 +452,13 @@ public static class EnemyCommands
             var fromHim = RelativeTo(reporter, g.Members);
             if (Engaged(g) || fromHim is null)
             {
-                text = $"{who}, on me: {id}{heading}.";
+                text = $"{who}, {seen}on me: {id}{heading}.";
                 tokens.Add(new(SpeechWord.OnMe));
             }
             else
             {
                 var where = PilotReport.Direction(fromHim.Value.BearingDegrees, reporter.Fix.Heading, mine: true);
-                text = $"{who}, contact {where.Text}, {PilotReport.Range(fromHim.Value.RangeMetres)}: {id}{heading}.";
+                text = $"{who}, contact {seen}{where.Text}, {PilotReport.Range(fromHim.Value.RangeMetres)}: {id}{heading}.";
                 tokens.Add(where.Token);
                 tokens.Add(new(SpeechWord.RangeBand, PilotReport.RangeBand(fromHim.Value.RangeMetres)));
             }
@@ -452,13 +488,13 @@ public static class EnemyCommands
     }
 
     /// <summary>Clock, coarse range and high/low. Contact calls say "high", not "above you".</summary>
-    private static string ContactFrom(string who, string what, List<SpeechToken> tokens, RelativePosition relative, double? noseDegrees, bool mine)
+    private static string ContactFrom(string who, string what, List<SpeechToken> tokens, RelativePosition relative, double? noseDegrees, bool mine, string seen = "")
     {
         var where = PilotReport.Direction(relative.BearingDegrees, noseDegrees, mine);
         tokens.Add(where.Token);
         tokens.Add(new(SpeechWord.RangeBand, PilotReport.RangeBand(relative.RangeMetres)));
         tokens.Add(new(SpeechWord.Vertical, relative.AltitudeDeltaMetres));
-        return $"{who}, {what}, {where.Text}, {PilotReport.Range(relative.RangeMetres)}, {HighLow(relative.AltitudeDeltaMetres)}.";
+        return $"{who}, {what}, {seen}{where.Text}, {PilotReport.Range(relative.RangeMetres)}, {HighLow(relative.AltitudeDeltaMetres)}.";
     }
 
     private static bool WithPlayer(LiveContact reporter, LookResult look, ContactTracker tracker, RadioSettings settings) =>
@@ -466,15 +502,15 @@ public static class EnemyCommands
         || PilotReport.CanSeePlayer(reporter, look.Player, look.PlayerFix, tracker, settings);
 
     private static bool Engaged(SightedGroup g) =>
-        g.Members.Any(m => Distance(g.Reporter, m.Target) <= PilotReport.EngagedMetres);
+        g.Members.Any(m => (Navigation.Relative(g.Reporter.Fix.Position, m.Plot)?.RangeMetres ?? double.MaxValue) <= PilotReport.EngagedMetres);
 
     private static RelativePosition? RelativeTo(LiveContact origin, IReadOnlyList<SightedContact> members)
     {
-        var p = members[0].Target.Fix.Position;
+        var p = members[0].Plot;
         var centre = new WorldPoint(
-            members.Average(m => m.Target.Fix.Position.North),
-            members.Average(m => m.Target.Fix.Position.East),
-            members.Average(m => m.Target.Fix.Position.Altitude),
+            members.Average(m => m.Plot.North),
+            members.Average(m => m.Plot.East),
+            members.Average(m => m.Plot.Altitude),
             p.Frame);
         return Navigation.Relative(origin.Fix.Position, centre);
     }

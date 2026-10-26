@@ -440,4 +440,31 @@ public class ChatTimelineTests
         timeline.ToggleMenu(menu, T0.AddSeconds(7));
         Assert.Equal(["call", "one", "two"], Texts(timeline, 7));
     }
+
+    [Fact]
+    public void History_stamps_the_mission_clock_and_keeps_it_when_the_mission_changes()
+    {
+        var timeline = new ChatTimeline(holdSeconds: 30, fadeSeconds: 2, maxLines: 4);
+        var clock = new MissionClock();
+        timeline.MissionTime = clock;
+        timeline.Post([Line(ChatLineKind.Request, "call", 0)], T0);
+        timeline.Scroll(+1, T0.AddSeconds(1));
+
+        // The line was shown at T0, before this sample. 14:12:00 at T0+2s puts it at 14:11:58.
+        clock.Sync(new DateTime(1942, 8, 26, 14, 12, 0), T0.AddSeconds(2), authoritative: true);
+        var page = timeline.Snapshot(T0.AddSeconds(3));
+        Assert.Equal("14:11:58 x", page[0].Line.Speaker);
+
+        timeline.Post([new ChatLine(ChatLineKind.System, "", "no reply", -1, TimeSpan.Zero)], T0.AddSeconds(3));
+        timeline.Scroll(+1, T0.AddSeconds(4));
+        page = timeline.Snapshot(T0.AddSeconds(4));
+        Assert.Equal("14:12:01 no reply", page[^2].Line.Text);
+
+        timeline.FreezeMissionTime();
+        clock.Reset(T0.AddSeconds(10));
+        clock.Sync(new DateTime(1942, 8, 26, 18, 0, 0), T0.AddSeconds(10), authoritative: true);
+        page = timeline.Snapshot(T0.AddSeconds(11));
+        Assert.Equal("14:11:58 x", page[0].Line.Speaker);
+        Assert.Equal("14:12:01 no reply", page[1].Line.Text);
+    }
 }

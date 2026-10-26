@@ -79,6 +79,13 @@ internal sealed class MainForm : Form
     private readonly ComboBox _piperVoice = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
     private readonly TextBox _piperFolder = new();
     private readonly NumericUpDown _piperPace = Number(0.5m, 2m, 0.9m, 0.05m, 2);
+    private readonly Button _piperRemove = new() { Text = "Remove the German voice", AutoSize = true, MinimumSize = new Size(180, 26) };
+
+    /// <summary>piper.enabled as loaded or last answered: null until the player has answered the question.</summary>
+    private bool? _piperAnswer;
+
+    /// <summary>The player changed the checkbox himself; an unanswered question then becomes his answer.</summary>
+    private bool _piperTouched;
 
     private readonly Button _apply = new() { Text = "Save and apply", Width = 120, Height = 28 };
     private readonly Button _reset = new() { Text = "Reset to defaults", Width = 140, Height = 28 };
@@ -320,7 +327,16 @@ internal sealed class MainForm : Form
         foreach (var voice in PiperCatalog.Voices)
             _piperVoice.Items.Add(voice.Name);
         Check(_piperEnabled);
-        Hint("Off unless you turn it on. The first time, you are asked what would be downloaded, from where and how big. Nothing is downloaded on No.", ref y);
+        _piperEnabled.CheckedChanged += (_, _) =>
+        {
+            if (!_filling)
+                _piperTouched = true;
+        };
+        Hint("Says aircraft names and \"nothing sighted\" in German, which the game's pilots have no recordings for. "
+             + "The radio asks once before downloading it (about 86 MB). Tick it and choose Save and apply to be asked again; "
+             + "untick it to stop using it.", ref y);
+        _piperRemove.Click += async (_, _) => await RemovePiperAsync();
+        Row("", _piperRemove, 200, 26);
         Row("Voice", _piperVoice, 280);
         var piperPath = new FlowLayoutPanel { Height = 28, WrapContents = false };
         _piperFolder.Width = 340;
@@ -417,7 +433,7 @@ internal sealed class MainForm : Form
         try
         {
             string? blocked = await _host.StartAsync(settings, AppContext.BaseDirectory, ShowStatus,
-                ConfirmOutputs, ConfirmPiper, OnPiperProgress, OnPiperLog, _startup.Token);
+                ConfirmOutputs, ConfirmPiper, OnPiperProgress, OnPiperLog, RememberPiper, _startup.Token);
             if (_closing || IsDisposed)
                 return;
             ShowNotices(StartupChecks.Results);
@@ -517,7 +533,9 @@ internal sealed class MainForm : Form
             foreach (var (action, key) in keys.All())
                 if (_keyBoxes.TryGetValue(action, out var box))
                     box.Text = key ?? "";
-            _piperEnabled.Checked = piper.Enabled;
+            _piperEnabled.Checked = piper.Enabled == true;
+            _piperAnswer = piper.Enabled;
+            _piperTouched = false;
             Select(_piperVoice, piper.Voice, PiperCatalog.Voices.Select(v => v.Name).ToArray());
             _piperFolder.Text = piper.Folder ?? "";
             SetNumber(_piperPace, piper.LengthScale);
@@ -564,7 +582,8 @@ internal sealed class MainForm : Form
         },
         Piper = new PiperSettings
         {
-            Enabled = _piperEnabled.Checked,
+            // Unticked and never answered stays unanswered, so saving other settings doesn't count as "no".
+            Enabled = _piperEnabled.Checked ? true : _piperAnswer is null && !_piperTouched ? null : false,
             Voice = _piperVoice.Text,
             Folder = Blank(_piperFolder.Text),
             LengthScale = (double)_piperPace.Value,
@@ -606,14 +625,77 @@ internal sealed class MainForm : Form
 
     private bool ConfirmOutputs(string question) => AskOnUi(() => PlayerDialogs.YesNo(this, "IL-2 exports", question));
 
-    private bool ConfirmPiper(IReadOnlyList<string> lines) =>
-        AskOnUi(() => PlayerDialogs.YesNo(this, "German phrase voice", string.Join(Environment.NewLine, lines)));
+    private PiperAnswer ConfirmPiper(IReadOnlyList<string> lines) =>
+        AskOnUi(() => PlayerDialogs.YesNoLater(this, "German phrase voice", string.Join(Environment.NewLine, lines)));
 
-    private bool AskOnUi(Func<bool> ask)
+    private T AskOnUi<T>(Func<T> ask)
     {
         if (!InvokeRequired)
             return ask();
-        return (bool)Invoke(ask)!;
+        return (T)Invoke(ask)!;
+    }
+
+    /// <summary>
+    /// Saves the player's yes or no to the German-voice question as piper.enabled, keeping every other value in
+    /// settings.json as it is on disk, and shows it in the Settings tab. A failure only means he is asked again.
+    /// </summary>
+    private void RememberPiper(bool enabled)
+    {
+        if (IsDisposed)
+            return;
+        if (InvokeRequired)
+        {
+            Invoke(() => RememberPiper(enabled));
+            return;
+        }
+
+        _filling = true;
+        _piperEnabled.Checked = enabled;
+        _filling = false;
+        _piperAnswer = enabled;
+        _piperTouched = false;
+        try
+        {
+            string current = File.Exists(_settingsPath) ? File.ReadAllText(_settingsPath) : "";
+            File.WriteAllText(_settingsPath, AppSettings.WithPiperEnabled(current, enabled) + Environment.NewLine);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+        {
+            StartupChecks.Warn($"Couldn't save your answer in {_settingsPath} ({ex.Message}); you'll be asked again next time.");
+        }
+    }
+
+    /// <summary>
+    /// Settings, "Remove the German voice": stops the radio (Piper holds its files open), deletes what the installer
+    /// put in the voice's folder, saves piper.enabled = false and starts the radio again without it.
+    /// </summary>
+    private async Task RemovePiperAsync()
+    {
+        string folder = Path.GetFullPath(Blank(_piperFolder.Text) ?? PiperConsole.DefaultFolder);
+        if (!PlayerDialogs.YesNo(this, "Remove the German voice",
+                $"Stop using the German phrase voice and delete its files from {folder}?{Environment.NewLine}{Environment.NewLine}"
+                + "The radio restarts without it. You can add it again later by ticking it here and choosing Save and apply."))
+            return;
+
+        _apply.Enabled = false;
+        _reset.Enabled = false;
+        _piperRemove.Enabled = false;
+        await _host.StopAsync();
+        string outcome;
+        try
+        {
+            outcome = PiperInstaller.Remove(folder) ? "The German voice was removed." : "There were no German voice files to remove.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            outcome = $"Some files couldn't be deleted ({ex.Message}). The voice is turned off; you can delete {folder} yourself.";
+        }
+
+        _piperEnabled.Checked = false;
+        _piperTouched = true;
+        _piperRemove.Enabled = true;
+        MessageBox.Show(this, outcome, "IL-2 Tactical Radio", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        await SaveAndStartAsync(writeFile: true);
     }
 
     private void OnPiperProgress(PiperProgress progress)

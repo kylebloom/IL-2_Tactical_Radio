@@ -138,14 +138,15 @@ public class PilotRealismTests
     }
 
     [Fact]
-    public void Another_unit_that_cannot_see_the_player_stays_silent()
+    public void Another_unit_that_cannot_see_the_player_still_answers_the_call()
     {
-        Frame(10, Acmi.Object("f", 0, 20_000, 1000, "Felix Knierim", "Axis"));
+        Frame(10, Acmi.Object("f", 0, 20_000, 1000, "Felix Knierim", "Axis", heading: 90));
 
-        var result = FriendlyPositionsCommand.Execute(_tracker, Pilot);
+        var reply = Assert.Single(FriendlyPositionsCommand.Execute(_tracker, Pilot).Replies);
 
-        Assert.Equal(ReplyOutcome.NoReply, result.Outcome);
-        Assert.Contains("cannot see the player", Assert.Single(result.Suppressed).Reason);
+        Assert.Equal("Felix Knierim, I cannot see you. Heading east, altitude 1000 metres.", reply.Text);
+        Assert.Contains(reply.Tokens!, t => t.Word == SpeechWord.CannotSee);
+        Assert.DoesNotContain(reply.Tokens!, t => t.Word is SpeechWord.Clock or SpeechWord.Bearing or SpeechWord.Range or SpeechWord.RangeBand);
     }
 
     [Fact]
@@ -153,10 +154,10 @@ public class PilotRealismTests
     {
         Frame(10, Acmi.Object("f", 0, 400, 1000, "Felix Knierim", "Axis"));
 
-        var result = FriendlyPositionsCommand.Execute(_tracker, Blind);
+        var reply = Assert.Single(FriendlyPositionsCommand.Execute(_tracker, Blind).Replies);
 
-        Assert.Empty(result.Replies);
-        Assert.Contains("cannot see the player", Assert.Single(result.Suppressed).Reason);
+        Assert.Equal("Felix Knierim, I cannot see you. Altitude 1000 metres.", reply.Text);
+        Assert.DoesNotContain(reply.Text, "o'clock", StringComparison.Ordinal);
     }
 
     [Fact]

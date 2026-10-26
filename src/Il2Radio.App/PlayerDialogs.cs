@@ -10,6 +10,21 @@ internal static class PlayerDialogs
         using var dialog = new ConsentDialog(title, text);
         return dialog.ShowDialog(owner) == DialogResult.Yes;
     }
+
+    /// <summary>
+    /// The German-voice question: Yes (download now), No (don't ask again), Later (ask next start).
+    /// Closing the window or pressing Esc is Later, so nothing is downloaded and nothing is decided.
+    /// </summary>
+    public static PiperAnswer YesNoLater(IWin32Window owner, string title, string text)
+    {
+        using var dialog = new ConsentDialog(title, text, offerLater: true);
+        return dialog.ShowDialog(owner) switch
+        {
+            DialogResult.Yes => PiperAnswer.Yes,
+            DialogResult.No => PiperAnswer.No,
+            _ => PiperAnswer.Later,
+        };
+    }
 }
 
 /// <summary>
@@ -18,7 +33,7 @@ internal static class PlayerDialogs
 /// </summary>
 internal sealed class ConsentDialog : Form
 {
-    public ConsentDialog(string title, string text)
+    public ConsentDialog(string title, string text, bool offerLater = false)
     {
         Text = title;
         Font = new Font("Segoe UI", 9f);
@@ -39,8 +54,9 @@ internal sealed class ConsentDialog : Form
             BorderStyle = BorderStyle.None,
             BackColor = SystemColors.Window,
         };
-        var no = new Button { Text = "No", DialogResult = DialogResult.No, Width = 88, Height = 28 };
-        var yes = new Button { Text = "Yes", DialogResult = DialogResult.Yes, Width = 88, Height = 28 };
+        var no = new Button { Text = offerLater ? "No, don't ask again" : "No", DialogResult = DialogResult.No, AutoSize = true, MinimumSize = new Size(88, 28) };
+        var yes = new Button { Text = offerLater ? "Yes, download" : "Yes", DialogResult = DialogResult.Yes, AutoSize = true, MinimumSize = new Size(88, 28) };
+        var later = new Button { Text = "Ask me later", DialogResult = DialogResult.Cancel, AutoSize = true, MinimumSize = new Size(88, 28) };
         var buttons = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
@@ -48,11 +64,16 @@ internal sealed class ConsentDialog : Form
             Height = 44,
             Padding = new Padding(8),
         };
+        if (offerLater)
+        {
+            buttons.Controls.Add(later);
+            ClientSize = new Size(600, 260);
+        }
         buttons.Controls.Add(no);
         buttons.Controls.Add(yes);
         Controls.Add(box);
         Controls.Add(buttons);
-        CancelButton = no;
+        CancelButton = offerLater ? later : no;
     }
 }
 

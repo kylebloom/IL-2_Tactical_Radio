@@ -32,11 +32,11 @@ internal sealed class FlightHost
     /// <summary>
     /// Stops any current session, runs the checks and starts again. Returns a reason when it did not
     /// start (IL-2 or the voice); the check lines are still in <see cref="StartupChecks.Results"/>.
-    /// Saying no to a download leaves <c>piper.enabled</c> as it was, which is how the console behaved.
+    /// The answer to the German-voice question (yes or no; not later) goes to <paramref name="rememberPiper"/> to be saved.
     /// </summary>
     public async Task<string?> StartAsync(AppSettings settings, string home, Action<CompactStatus> status,
-        Func<string, bool> confirmOutputs, Func<IReadOnlyList<string>, bool> confirmPiper,
-        Action<PiperProgress> piperProgress, Action<string> piperLog, CancellationToken cancel = default)
+        Func<string, bool> confirmOutputs, Func<IReadOnlyList<string>, PiperAnswer> confirmPiper,
+        Action<PiperProgress> piperProgress, Action<string> piperLog, Action<bool> rememberPiper, CancellationToken cancel = default)
     {
         await StopAsync();
         int generation = Interlocked.Increment(ref _generation);
@@ -74,7 +74,7 @@ internal sealed class FlightHost
 
         try
         {
-            _piper = await StartupChecks.PhraseVoice(settings, voices, install, confirmPiper, piperProgress, piperLog, cancel);
+            _piper = await StartupChecks.PhraseVoice(settings, voices, install, confirmPiper, piperProgress, piperLog, rememberPiper, cancel);
             if (cancel.IsCancellationRequested)
             {
                 ReleaseOutputs();

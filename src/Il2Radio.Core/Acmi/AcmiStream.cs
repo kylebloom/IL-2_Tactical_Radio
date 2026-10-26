@@ -63,6 +63,7 @@ public sealed class AcmiStream
     private const double MetresPerDegree = 111_320.0;
     private readonly StringBuilder _pending = new();
     private readonly Dictionary<string, AcmiObject> _objects = new(StringComparer.Ordinal);
+    private bool _frameOpen;
 
     public double ReferenceLongitude { get; private set; }
     public double ReferenceLatitude { get; private set; }
@@ -73,6 +74,12 @@ public sealed class AcmiStream
 
     /// <summary>Current stream time in seconds relative to ReferenceTime (last "#t" frame marker).</summary>
     public double CurrentTime { get; private set; }
+
+    /// <summary>
+    /// Called when a <c>#</c> time marker closes the previous frame, before that frame's positions are overwritten.
+    /// The last frame of a read stays open until the next marker; the caller applies that tail itself.
+    /// </summary>
+    public Action<AcmiStream>? FrameClosed { get; set; }
 
     public IReadOnlyDictionary<string, AcmiObject> Objects => _objects;
 
@@ -155,6 +162,9 @@ public sealed class AcmiStream
         if (line[0] == '#')
         {
             ApplyPendingRemovals(); // the frame they belong to is complete
+            if (_frameOpen)
+                FrameClosed?.Invoke(this);
+            _frameOpen = true;
             if (double.TryParse(line.AsSpan(1), NumberStyles.Float, CultureInfo.InvariantCulture, out double t))
                 CurrentTime = t;
             return;

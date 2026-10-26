@@ -62,7 +62,7 @@ Required keys must exist for a reply to be spoken from clips. Optional keys are 
 | `side.enemy`, `side.friendly`, `hedge` | "enemy" / "friendly", "possible" | optional |
 | `contact.type` | one generic clip for the aircraft type | optional |
 | `nocontacts` | "no contacts" | **required** for that reply |
-| `few`, `many`, `onme`, `cannotsee` | pilot mode: "a few", "many", "on me", "I cannot see you" | optional. The German phrase voice can say them; a missing clip leaves them on screen |
+| `few`, `many`, `onme`, `cannotsee`, `lastseen` | pilot mode: "a few", "many", "on me", "I cannot see you", "last seen" | optional. The German phrase voice can say them; a missing clip leaves them on screen |
 
 A pack whose `language` is `de` can have its gaps (type names, side, "possible", "no contacts", "with us", and in pilot mode "a few kilometres", "a few", "many", "on me", "I cannot see you") filled by the optional German phrase voice (Piper); see the main README. A clip in the pack always wins over it.
 

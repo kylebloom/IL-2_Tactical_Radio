@@ -40,6 +40,10 @@ internal sealed class ChatOverlay : IChatSink
 
     public void Scroll(int pages) => _timeline.Scroll(pages, DateTime.UtcNow);
 
+    public void BindMissionClock(MissionClock clock) => _timeline.MissionTime = clock;
+
+    public void FreezeMissionTime() => _timeline.FreezeMissionTime();
+
     /// <summary>Says when the window was narrowed to stay out of IL-2's own text.</summary>
     public string? Status { get; private set; }
 

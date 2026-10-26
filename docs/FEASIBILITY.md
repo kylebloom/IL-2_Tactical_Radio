@@ -362,18 +362,34 @@ Not pinned: pavoque (card links [CC BY-NC-SA 4.0](http://creativecommons.org/lic
 - Runtime: one `piper.exe` child process for the session, one stdin line per phrase, WAV path back on stdout; phrases cached by text; model loaded in the background at start. Any failure means the radio speaks as before (class word, or TTS for "no contacts").
 - Honesty: Piper says only what the reply's tokens say, and the tokens mirror the English text (type only when identified, side only when the markings were seen).
 
+## Cockpit clock (verified 2026-10-25)
+
+The radio log used to stamp each line with the PC's clock. The cockpit watch runs on the mission clock instead, and IL-2 already writes that clock down.
+
+Checked against this machine's Career files:
+
+| Source | What it is | Evidence |
+|---|---|---|
+| `_gen.Mission` `Time` / `Date` | Clock at mission start | `14:11:57`, `26.8.1942`, the sortie that was running while this was checked |
+| Log AType 0 `GTime` / `GDate` | The same instant, at tick 0 | Text chunk `missionReport(2026-10-25_22-42-19)[0].txt`: `GDate:1942.8.26 GTime:14:11:57`. Ticks are 50 per simulation second |
+| ACMI `ReferenceTime` | That clock at the first recorded frame | `1942-08-26T14:12:55Z` on the 20:38 track. The `Z` is not a zone: `RecordingTime` is local wall time with the same suffix (`2026-10-25T20:40:21Z` equals the file's local creation time) |
+| ACMI `#t` | Simulation seconds since `ReferenceTime`, **not** wall seconds | The 20:06 track's file spans 874 s and its last `#t` is 658 s. `ReferenceTime` 17:20:08 minus log `GTime` 17:18:59 is 69 s; the wall gap from the log name `20:07:37` to the file's creation `20:08:43` is 66 s |
+| End of the 15:58 sortie | The two clocks meet | Log `GTime` 13:38:50 plus max tick 30120 (602.4 s) is 13:48:52. Segment `_01`'s `ReferenceTime` 13:46:06 plus last `#t` 168.84 is 13:48:55. Within 3 s |
+
+So `ReferenceTime + #t` is the watch, and it stops while the sim is paused. The log's newest tick is the same clock but only as fresh as the last event in the latest ~33 s chunk. The radio log uses the track once a frame has been read, and the log until then. Between reads, file growth (visible even while IL-2 locks the ACMI) says whether the sim is still running; three seconds without growth is treated as a pause. Visibility's time of day is still mission start plus recording time, not this clock.
+
 ## Enemy contacts and identification (built 2026-10-25)
 
 The ACMI stream gives every aircraft on the map. Reporting all of it would be radar, so commands 2 and 4 pass it through a visibility model ([Visibility.cs](../src/Il2Radio.Core/Radio/Visibility.cs), [EnemyCommands.cs](../src/Il2Radio.Core/Radio/EnemyCommands.cs)). Everything below is a **game-design model (SPECULATIVE as physiology)**, tuned to feel plausible, not measured.
 
 - **Observers:** the player's own flight, with live fixes and within radio range. Flying alone, any friendly in radio range observes instead. The player is not an observer; he has his own eyes.
-- **Spotting:** each observer gets one look per request.
+- **Spotting:** each observer gets one look per 15 s of track time. As the recording is read, every closed frame is looked at, so a pass between radio calls is not thrown away. The chance used for that slot is the best look in it: a ten-second close pass counts the same as a long one.
   - Probability is `1 / (1 + (r / r50)^4)`, with `r50` = 400 m per metre of wingspan (fighter ≈ 4 km, Ju 88 ≈ 8 km). Nothing is spotted beyond 2.2 × `r50`.
   - Ranges shrink with haze (`Options.Haze`), darkness (crude clock-based curve; no sun position yet) and a target below the observer against the ground (× 0.75).
   - Looks that cross the mission's cloud layer (`CloudLevel` to `CloudLevel + CloudHeight`) get through only a `1 − coverage` share. Coverage comes from the `CloudConfig` preset number: 00 clear to 04 overcast. That naming is community knowledge and UNVERIFIED for every preset.
   - The dice are deterministic per observer, target and 15 s slot, so repeating a call quickly gives the same answer.
 - **Identification ranges** (per metre of wingspan): class 400 m, side 300 m, type 180 m. That gives a fighter about 4 km for its shape, 3 km for its markings and 1.8 km for its type. Near the edge of type range a call may be hedged ("possible Yaks"), and with a 12 % chance names a classic look-alike (Yak ↔ Bf 109, Fw 190 ↔ La-5, Il-2 ↔ Hs 129). A closer look corrects it.
-- **Memory:** a spotted aircraft stays tracked for 60 s while it remains within reach. Its identification level only rises, so calls don't flicker.
+- **Memory:** a spotted aircraft is still mentioned for 60 s after it leaves sight (changed 2026-10-25, after a Career sortie in which a pass between calls came back as "no contacts"). The reply gives the place of that look ("last seen"), not the track position since. Its identification level only rises while someone can still see it, so calls don't flicker and a lost look does not grow sharper.
 - **Honesty:** only aircraft present in the live track can be reported, and destroyed or despawned ones never are. Friendlies count as "unidentified" until their markings are made out, and are left out of enemy reports once identified. With no live player position, there is no reply.
 - **Replay check (VERIFIED, Career recording 2026-10-25 15:58, ACMI only):** "four Yaks, at your four o'clock, approximately 8 kilometres, high" was reported by a friendly fighter dogfighting them at 350–700 m, with the player 7–9 km away. That sentence is `realism: precise`. The default `pilot` does not put those Yaks in the player's clock: the spotter was the one in the fight, kilometres from the player, so he says they are on him.
 - **Pilot realism (built 2026-10-25, SPECULATIVE as radio procedure).** Same visibility model for "can this pilot see the player", including the 15 s dice. What he is then allowed to say is a design choice, not a transcript of Luftwaffe R/T: close under 2 km, a few kilometres up to 8 km, otherwise far; own altitude to 500 m; heading as an eight-point compass point. No landmark calls, because the mission data has no verified place names. A flight mate inside 1.5 km reports as in formation even when the look fails. `precise` keeps the track's bearings and kilometre ranges.

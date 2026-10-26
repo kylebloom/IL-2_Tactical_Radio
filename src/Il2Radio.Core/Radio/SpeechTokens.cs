@@ -79,6 +79,9 @@ public enum SpeechWord
     /// <summary>The speaker cannot see the player, so he gives no position relative to him.</summary>
     CannotSee,
 
+    /// <summary>The place that follows is where the contact was last seen, not a look he still holds.</summary>
+    LastSeen,
+
     /// <summary>
     /// A count the pilot could not separate into aircraft: 3 = "a few", 4 = "many".
     /// Used instead of <see cref="ContactCount"/> when the text says those words.

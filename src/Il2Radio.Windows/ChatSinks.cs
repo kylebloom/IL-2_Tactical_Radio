@@ -147,6 +147,12 @@ internal interface IChatSink : IDisposable
     /// <summary>Pages through the radio log: positive is older, negative newer.</summary>
     void Scroll(int pages);
 
+    /// <summary>The radio log stamps lines with this mission clock instead of the wall clock.</summary>
+    void BindMissionClock(MissionClock clock);
+
+    /// <summary>Keeps the stamps already shown, so the next mission does not rewrite them.</summary>
+    void FreezeMissionTime();
+
     /// <summary>One-line state for the console (e.g. "RTSS not running"), or null.</summary>
     string? Status => null;
 }

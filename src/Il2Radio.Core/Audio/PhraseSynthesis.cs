@@ -74,6 +74,7 @@ public static class SynthWords
         SpeechWord.RangeBand when t.Value > 0 && t.Value < 2 => "ein paar Kilometer",
         SpeechWord.OnMe => "bei mir",
         SpeechWord.CannotSee => "ich sehe dich nicht",
+        SpeechWord.LastSeen => "zuletzt gesehen",
         SpeechWord.ContactAmount when t.Value >= 4 => "viele",
         SpeechWord.ContactAmount when t.Value >= 3 => "einige",
         _ => null,

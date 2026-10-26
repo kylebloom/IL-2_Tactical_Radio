@@ -244,6 +244,18 @@ public static class PiperInstaller
     }
 }
 
+/// <summary>The player's answer to the download question.</summary>
+public enum PiperAnswer
+{
+    Yes,
+
+    /// <summary>Remembered (<c>piper.enabled</c> false): not asked again until the player turns it on in Settings.</summary>
+    No,
+
+    /// <summary>Not remembered: asked again at the next start. Closing the question counts as this, never as yes.</summary>
+    Later,
+}
+
 public enum PiperSetupStatus
 {
     /// <summary>Turned off (<c>piper.enabled</c> is false): nothing checked, nothing downloaded.</summary>
@@ -252,30 +264,39 @@ public enum PiperSetupStatus
     /// <summary>Installed and ready.</summary>
     Ready,
 
-    /// <summary>Not installed: the player said no, or nobody could be asked.</summary>
+    /// <summary>Not installed: the player said no or later, or nobody could be asked.</summary>
     NotInstalled,
 
     /// <summary>The download or install failed, or the settings point somewhere they mustn't.</summary>
     Failed,
 }
 
-public sealed record PiperSetupResult(PiperSetupStatus Status, PiperInstallation? Installation, string Message);
+/// <param name="Remember">The answer to save as <c>piper.enabled</c> in settings.json, or null to leave the file as it is.</param>
+public sealed record PiperSetupResult(PiperSetupStatus Status, PiperInstallation? Installation, string Message, bool? Remember = null);
 
 /// <summary>
-/// Start-up decision for the German phrase voice. It is off unless <c>piper.enabled</c> is true. When it is
-/// on and the files are missing, the player is shown what would be downloaded, from where and how big;
-/// only an explicit yes reaches the network. Every path without the voice leaves the radio as it was:
-/// the game's recordings, the class word for types, and the full text on screen.
+/// Start-up decision for the German phrase voice. While <c>piper.enabled</c> is unanswered (null) or true and
+/// the files are missing, the player is asked once, in plain words, with what would be downloaded, from where
+/// and how big: Yes / No / Later. Only yes reaches the network. Yes and no are returned in
+/// <see cref="PiperSetupResult.Remember"/> for the caller to save; later is not saved, so the question comes back
+/// next start. Every path without the voice leaves the radio as it was: the game's recordings, the class word
+/// for types, and the full text on screen.
 /// </summary>
 public static class PiperSetup
 {
-    /// <param name="askConsent">Shows the lines and returns true only for an explicit yes. Null when nobody can be asked (no console): then nothing is downloaded.</param>
+    /// <summary>How to change one's mind, in the player's words.</summary>
+    public const string HowToChange = "You can change this any time under Settings, German phrase voice.";
+
+    /// <summary>The console's choices (Diag); the player's window has a button for each.</summary>
+    public const string Choices = "[Y]es / [N]o / [L]ater";
+
+    /// <param name="ask">Shows the lines and returns the answer. Null when nobody can be asked (no console or window): then nothing is downloaded.</param>
     public static async Task<PiperSetupResult> PrepareAsync(PiperSettings settings, string folder, string? il2Root,
-        Func<IReadOnlyList<string>, bool>? askConsent, Func<Uri, CancellationToken, Task<Stream>> open,
+        Func<IReadOnlyList<string>, PiperAnswer>? ask, Func<Uri, CancellationToken, Task<Stream>> open,
         Action<PiperProgress>? progress = null, Action<string>? log = null, CancellationToken cancel = default)
     {
-        if (!settings.Enabled)
-            return new(PiperSetupStatus.Off, null, "German voice: off. To add it, set \"piper.enabled\" to true in settings.json.");
+        if (settings.Enabled == false)
+            return new(PiperSetupStatus.Off, null, $"German phrase voice: off. {HowToChange}");
         if (PiperCatalog.Find(settings.Voice) is not { } voice)
             return new(PiperSetupStatus.Failed, null, $"Unknown German voice \"{settings.Voice}\" in settings.json (piper.voice).");
 
@@ -284,41 +305,62 @@ public static class PiperSetup
             return new(PiperSetupStatus.Failed, null, $"The German voice can't be stored in {folder}, because that is inside the IL-2 folder. Change piper.folder in settings.json.");
 
         if (PiperInstaller.Find(folder, voice) is { } ready)
-            return new(PiperSetupStatus.Ready, ready, "German voice: ready");
+            return new(PiperSetupStatus.Ready, ready, "German phrase voice: ready", Remember: settings.Enabled == true ? null : true);
 
-        if (askConsent is null)
-            return new(PiperSetupStatus.NotInstalled, null, "German voice not installed. Start Il2Radio.exe by double-clicking it to be asked about the download.");
+        if (ask is null)
+            return new(PiperSetupStatus.NotInstalled, null, "German phrase voice not installed. Start Il2Radio.exe by double-clicking it to be asked about the download.");
 
         var missing = PiperInstaller.Missing(folder, voice);
         var lines = PiperInstaller.ConsentLines(folder, voice, missing).ToList();
         if (PiperInstaller.EngineVanished(folder, voice))
             lines.Add("(The engine file piper.exe has disappeared; an antivirus program may have removed it.)");
-        if (!askConsent(lines))
-            return new(PiperSetupStatus.NotInstalled, null, "Not downloaded. The radio works without it. You'll be asked again next time, or set \"piper.enabled\" to false in settings.json.");
+        switch (ask(lines))
+        {
+            case PiperAnswer.No:
+                return new(PiperSetupStatus.NotInstalled, null, $"No German phrase voice; you won't be asked again. {HowToChange}", Remember: false);
+            case PiperAnswer.Later:
+                return new(PiperSetupStatus.NotInstalled, null, "German phrase voice not downloaded. You'll be asked again next time the radio starts.");
+        }
 
         try
         {
             var installed = await PiperInstaller.InstallAsync(folder, voice, missing, open, progress, log, cancel);
-            return new(PiperSetupStatus.Ready, installed, "German voice: installed");
+            return new(PiperSetupStatus.Ready, installed, "German phrase voice: installed", Remember: true);
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or HttpRequestException or TaskCanceledException)
         {
+            // Yes is remembered even though it failed: the next start offers the download again.
             log?.Invoke($"German voice download failed: {ex.Message}");
-            return new(PiperSetupStatus.Failed, null, FriendlyError(ex, folder));
+            return new(PiperSetupStatus.Failed, null, FriendlyError(ex, folder), Remember: true);
         }
     }
 
-    /// <summary>One or two plain sentences for a failed download, ending with what happens next. The cause is included so the log and the player see the same fact.</summary>
+    /// <summary>
+    /// A typed console answer (Diag): y/yes, n/no, l/later. Just Enter, or the input closing, counts as later,
+    /// never as yes. Anything else is null, so the question is asked again.
+    /// </summary>
+    public static PiperAnswer? ParseAnswer(string? input) => input?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "l" or "later" => PiperAnswer.Later,
+        "y" or "yes" => PiperAnswer.Yes,
+        "n" or "no" => PiperAnswer.No,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Two plain sentences for a failed download: what went wrong, and what happens next. The technical cause
+    /// (HTTP status, hash) goes to the log, not here.
+    /// </summary>
     public static string FriendlyError(Exception ex, string folder)
     {
         string what = ex switch
         {
-            HttpRequestException or TaskCanceledException => $"The German voice couldn't be downloaded ({ex.Message}).",
-            InvalidDataException => $"The German voice download arrived damaged or different from what was expected, so it was thrown away ({ex.Message}).",
-            UnauthorizedAccessException => $"The German voice couldn't be saved in {folder} (no permission to write there).",
-            _ => $"The German voice couldn't be saved in {folder} ({ex.Message}).",
+            HttpRequestException or TaskCanceledException => "The German phrase voice couldn't be downloaded (no internet connection, or the website didn't answer).",
+            InvalidDataException => "The German phrase voice download arrived damaged or different from what was expected, so it was thrown away.",
+            UnauthorizedAccessException => $"The German phrase voice couldn't be saved in {folder} (no permission to write there).",
+            _ => $"The German phrase voice couldn't be saved in {folder} ({ex.Message}).",
         };
-        return $"{what} The radio works without it, and will offer the download again next time it starts.";
+        return $"{what} The radio works without it and will offer the download again next time it starts (or choose Save and apply in Settings to try now).";
     }
 
     private static bool IsInside(string path, string root)

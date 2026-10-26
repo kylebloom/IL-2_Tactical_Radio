@@ -234,6 +234,28 @@ public class EnemyCommandTests
     }
 
     [Fact]
+    public void A_glimpse_is_reported_as_last_seen_until_the_minute_is_up()
+    {
+        var memory = new SightingMemory();
+        var settings = new RadioSettings { Realism = RadioRealism.Pilot };
+        // The close pass is only in an earlier frame. Nothing asks the radio while it is happening.
+        _acmi.FrameClosed = stream =>
+        {
+            _tracker.Apply(stream);
+            EnemyCommands.Notice(_tracker, settings, memory);
+        };
+
+        Frame(10, Enemy("e1", 0, 600));
+        Frame(25, Enemy("e1", 0, 30_000));
+
+        Assert.Equal("Number one, single Yak, last seen at your three o'clock, close, level.", Contacts(settings, memory));
+        Assert.Equal("Number one, contact last seen at your three o'clock, close: a Yak, enemy, heading east.", Identify(settings, memory));
+
+        Frame(80, Enemy("e1", 0, 30_000));
+        Assert.Equal("Number one, no contacts.", Contacts(settings, memory));
+    }
+
+    [Fact]
     public void Removed_aircraft_are_not_reported()
     {
         Frame(10, Enemy("e1", 0, 600));

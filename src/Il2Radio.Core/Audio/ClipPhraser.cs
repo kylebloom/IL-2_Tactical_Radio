@@ -19,11 +19,11 @@ namespace Il2Radio.Core.Audio;
 /// <c>heading</c>, <c>information</c>, <c>withus</c>,
 /// <c>class.fighter|fighters|attack|attacks|bomber|bombers|recon|recons|transport</c>,
 /// <c>nocontacts</c> (no game clip), the optional <c>contact.type</c>, <c>side.enemy|friendly</c>, <c>hedge</c>,
-/// <c>few</c>, <c>many</c>, <c>onme</c> and <c>cannotsee</c>.
+/// <c>few</c>, <c>many</c>, <c>onme</c>, <c>cannotsee</c> and <c>lastseen</c>.
 /// <para>
 /// With a phrase synthesizer's word list (<see cref="SynthWords"/>), the tokens the game's recordings
 /// can't say at all (no contacts, with us / in formation, the aircraft type, the side, "possible",
-/// "a few kilometres", "a few" / "many", "on me", "I cannot see you") are
+/// "a few kilometres", "a few" / "many", "on me", "I cannot see you", "last seen") are
 /// spoken by it instead, in place, so the rest of the reply keeps the game's own voice. Numbers the clips
 /// say coarsely (18 km as "long range", altitude) are never handed to the synthesizer.
 /// </para>
@@ -161,6 +161,9 @@ public static class ClipPhraser
                     break;
                 case SpeechWord.CannotSee:
                     _ = Optional("cannotsee") || Synth(t, required: false);
+                    break;
+                case SpeechWord.LastSeen:
+                    _ = Optional("lastseen") || Synth(t, required: false);
                     break;
                 case SpeechWord.ContactAmount:
                     if (t.Value >= 4)

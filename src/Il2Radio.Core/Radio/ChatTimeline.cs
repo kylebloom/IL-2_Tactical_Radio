@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Il2Radio.Core.Radio;
 
 /// <summary>A chat line currently on screen; <see cref="Alpha"/> falls from 1 to 0 over the fade after the hold.</summary>
@@ -20,7 +22,7 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
     private readonly object _gate = new();
     private readonly List<(ChatLine Line, DateTime DueUtc, bool AwaitVoice)> _pending = [];
     private readonly List<(ChatLine Line, DateTime ShownUtc)> _shown = [];
-    private readonly List<(ChatLine Line, DateTime ShownUtc)> _history = [];
+    private readonly List<LoggedLine> _history = [];
     private View _view;
     private IReadOnlyList<ChatLine> _menu = [];
     private int _historyPage; // pages back from the newest; 0 is the newest page
@@ -30,6 +32,13 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
 
     /// <summary>Appended to the history footer, e.g. which keys page it.</summary>
     public string HistoryHint { get; init; } = "";
+
+    /// <summary>
+    /// When set, the radio log stamps each line with this clock instead of the wall clock.
+    /// A line keeps the time it was given once <see cref="FreezeMissionTime"/> runs, so the
+    /// next mission does not rewrite it. Until then, opening the log again picks up a better sample.
+    /// </summary>
+    public MissionClock? MissionTime { get; set; }
 
     /// <summary>History lines per page: the line limit, less one for the footer.</summary>
     public int PageSize => Math.Max(1, maxLines - 1);
@@ -139,7 +148,7 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
         {
             var shown = (_pending[0].Line, _pending[0].DueUtc);
             _shown.Add(shown);
-            _history.Add(shown);
+            _history.Add(new LoggedLine(shown.Line, shown.DueUtc));
             _pending.RemoveAt(0);
         }
         if (_history.Count > historySize)
@@ -153,14 +162,30 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
     /// <summary>The index of the oldest page (0 when the whole log fits on one page).</summary>
     private int OldestPage => Math.Max(0, (_history.Count - PageSize + PageSize - 1) / PageSize);
 
-    /// <summary>One page of past lines, each stamped with its local time, and a footer saying where in the log it is.</summary>
+    /// <summary>
+    /// Remembers the mission time of every line so far. Call this before resetting
+    /// <see cref="MissionTime"/> for a new mission.
+    /// </summary>
+    public void FreezeMissionTime()
+    {
+        lock (_gate)
+        {
+            foreach (var line in _history)
+                Place(line, freeze: true);
+        }
+    }
+
+    /// <summary>One page of past lines, each stamped with the mission clock (or the wall clock, before one is known), and a footer saying where in the log it is.</summary>
     private List<VisibleChatLine> HistoryPage(DateTime nowUtc, float alpha)
     {
         int offset = Math.Min(Math.Min(_historyPage, OldestPage) * PageSize, Math.Max(0, _history.Count - PageSize));
         int end = _history.Count - offset, start = Math.Max(0, end - PageSize);
         var page = _history.Skip(start).Take(end - start).Select(h =>
         {
-            string time = h.ShownUtc.ToLocalTime().ToString("HH:mm:ss");
+            Place(h, freeze: false);
+            string time = h.GameTime is { } game
+                ? game.ToString("HH:mm:ss", CultureInfo.InvariantCulture)
+                : h.ShownUtc.ToLocalTime().ToString("HH:mm:ss");
             var line = h.Line.Speaker.Length > 0 ? h.Line with { Speaker = $"{time} {h.Line.Speaker}" } : h.Line with { Text = $"{time} {h.Line.Text}" };
             return new VisibleChatLine(line, h.ShownUtc, alpha);
         }).ToList();
@@ -168,5 +193,22 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
         string where = _history.Count == 0 ? "Radio log is empty" : $"Radio log {start + 1}-{end} of {_history.Count}";
         page.Add(new VisibleChatLine(new ChatLine(ChatLineKind.System, "", where + HistoryHint, -1, TimeSpan.Zero), nowUtc, alpha));
         return page;
+    }
+
+    /// <summary>Fills in the mission time. Frozen lines keep whatever they already have, including none.</summary>
+    private void Place(LoggedLine line, bool freeze)
+    {
+        if (!line.Frozen && MissionTime?.At(line.ShownUtc) is { } game)
+            line.GameTime = game;
+        if (freeze)
+            line.Frozen = true;
+    }
+
+    private sealed class LoggedLine(ChatLine line, DateTime shownUtc)
+    {
+        public ChatLine Line { get; } = line;
+        public DateTime ShownUtc { get; } = shownUtc;
+        public DateTime? GameTime { get; set; }
+        public bool Frozen { get; set; }
     }
 }

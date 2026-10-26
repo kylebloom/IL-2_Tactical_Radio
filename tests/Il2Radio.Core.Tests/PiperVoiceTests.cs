@@ -238,16 +238,19 @@ public class PiperVoiceTests
     // ---- Settings ----
 
     [Fact]
-    public void Piper_is_off_by_default_and_its_settings_are_validated_by_name()
+    public void Piper_is_unanswered_by_default_and_its_settings_are_validated_by_name()
     {
         var defaults = new AppSettings();
-        Assert.False(defaults.Piper.Enabled);
+        Assert.Null(defaults.Piper.Enabled);
         Assert.Equal("de_DE-thorsten-medium", defaults.Piper.Voice);
-        Assert.Contains("\"piper\"", defaults.ToJson());
+        Assert.Contains("\"enabled\": null", defaults.ToJson());
+        Assert.Null(AppSettings.Parse(defaults.ToJson()).Settings.Piper.Enabled); // the default round-trips as "not answered"
+        Assert.Null(AppSettings.Parse("{}").Settings.Piper.Enabled); // an older settings.json without "piper"
 
         var (settings, problems) = AppSettings.Parse("""{ "piper": { "enabled": true, "voice": "de_DE-karlsson-low", "lengthScale": 1.1 } }""");
         Assert.Empty(problems);
         Assert.True(settings.Piper.Enabled);
+        Assert.False(AppSettings.Parse("""{ "piper": { "enabled": false } }""").Settings.Piper.Enabled);
 
         Assert.Contains(AppSettings.Parse("""{ "piper": { "voice": "en_US-lessac-medium" } }""").Problems, p => p.StartsWith("piper.voice"));
         Assert.Contains(AppSettings.Parse("""{ "piper": { "lengthScale": 5 } }""").Problems, p => p.StartsWith("piper.lengthScale"));
@@ -263,46 +266,99 @@ public class PiperVoiceTests
         throw new InvalidOperationException("the network must not be reached");
     };
 
-    [Fact]
-    public async Task Off_means_no_question_and_no_download()
+    /// <summary>A question that records how often it was asked and gives a fixed answer.</summary>
+    private sealed class Asker(PiperAnswer answer)
     {
-        var opened = new List<Uri>();
-        bool asked = false;
-        var result = await PiperSetup.PrepareAsync(new PiperSettings(), TempFolder(), null, _ => asked = true, NoNetwork(opened));
+        public int Times { get; private set; }
+        public IReadOnlyList<string> Shown { get; private set; } = [];
 
-        Assert.Equal(PiperSetupStatus.Off, result.Status);
-        Assert.False(asked);
+        public PiperAnswer Ask(IReadOnlyList<string> lines)
+        {
+            Times++;
+            Shown = lines;
+            return answer;
+        }
+    }
+
+    [Fact]
+    public async Task No_is_remembered_and_never_asked_again()
+    {
+        string folder = TempFolder();
+        var opened = new List<Uri>();
+        var ask = new Asker(PiperAnswer.No);
+
+        var first = await PiperSetup.PrepareAsync(new PiperSettings(), folder, null, ask.Ask, NoNetwork(opened));
+        Assert.Equal(PiperSetupStatus.NotInstalled, first.Status);
+        Assert.False(first.Remember); // saved as piper.enabled = false
+        Assert.Contains("Settings", first.Message); // how to change his mind
+
+        // Next start, with the saved answer: no question at all.
+        var second = await PiperSetup.PrepareAsync(new PiperSettings { Enabled = first.Remember }, folder, null, ask.Ask, NoNetwork(opened));
+        Assert.Equal(PiperSetupStatus.Off, second.Status);
+        Assert.Null(second.Remember);
+        Assert.Equal(1, ask.Times);
+        Assert.Empty(opened);
+        Assert.False(Directory.Exists(folder)); // nothing created either
+    }
+
+    [Fact]
+    public async Task Later_is_not_remembered_so_the_question_comes_back()
+    {
+        string folder = TempFolder();
+        var opened = new List<Uri>();
+        var ask = new Asker(PiperAnswer.Later);
+
+        var first = await PiperSetup.PrepareAsync(new PiperSettings(), folder, null, ask.Ask, NoNetwork(opened));
+        var second = await PiperSetup.PrepareAsync(new PiperSettings(), folder, null, ask.Ask, NoNetwork(opened));
+
+        Assert.Equal(PiperSetupStatus.NotInstalled, first.Status);
+        Assert.Null(first.Remember);
+        Assert.Contains("asked again", first.Message);
+        Assert.Equal(2, ask.Times);
         Assert.Empty(opened);
     }
 
     [Fact]
-    public async Task Declining_downloads_nothing_and_says_what_was_offered()
+    public async Task The_question_is_short_and_says_what_from_where_and_how_big()
     {
         string folder = TempFolder();
-        var opened = new List<Uri>();
-        IReadOnlyList<string> shown = [];
-        var result = await PiperSetup.PrepareAsync(new PiperSettings { Enabled = true, Folder = folder }, folder, null, lines => { shown = lines; return false; }, NoNetwork(opened));
+        var ask = new Asker(PiperAnswer.Later);
+        await PiperSetup.PrepareAsync(new PiperSettings(), folder, null, ask.Ask, NoNetwork([]));
 
-        Assert.Equal(PiperSetupStatus.NotInstalled, result.Status);
-        Assert.Null(result.Installation);
-        Assert.Empty(opened);
-        Assert.False(Directory.Exists(folder)); // nothing created either
-
-        string text = string.Join("\n", shown);
+        string text = string.Join("\n", ask.Shown);
+        Assert.InRange(ask.Shown.Count, 3, 7);
+        Assert.Contains("aircraft names", text);
         Assert.Contains("85.7 MB", text); // 22.5 MB engine + 63.2 MB voice + 4.8 KB settings
-        Assert.Contains("https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip", text);
-        Assert.Contains("https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/de/de_DE/thorsten/medium/de_DE-thorsten-medium.onnx", text);
+        Assert.Contains("github.com", text);
+        Assert.Contains("huggingface.co", text);
+        Assert.Contains("MIT", text);
         Assert.Contains("CC0", text);
         Assert.Contains(folder, text);
     }
 
     [Fact]
-    public async Task Without_a_console_nobody_is_asked_and_nothing_is_downloaded()
+    public async Task Turned_on_but_missing_still_asks_before_downloading()
+    {
+        var ask = new Asker(PiperAnswer.Later);
+        var opened = new List<Uri>();
+        var result = await PiperSetup.PrepareAsync(new PiperSettings { Enabled = true }, TempFolder(), null, ask.Ask, NoNetwork(opened));
+
+        Assert.Equal(1, ask.Times);
+        Assert.Equal(PiperSetupStatus.NotInstalled, result.Status);
+        Assert.Null(result.Remember); // still on; asked again next start
+        Assert.Empty(opened);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(true)]
+    public async Task Without_a_console_or_window_nobody_is_asked_and_nothing_is_downloaded(bool? enabled)
     {
         var opened = new List<Uri>();
-        var result = await PiperSetup.PrepareAsync(new PiperSettings { Enabled = true }, TempFolder(), null, askConsent: null, NoNetwork(opened));
+        var result = await PiperSetup.PrepareAsync(new PiperSettings { Enabled = enabled }, TempFolder(), null, ask: null, NoNetwork(opened));
 
         Assert.Equal(PiperSetupStatus.NotInstalled, result.Status);
+        Assert.Null(result.Remember);
         Assert.Empty(opened);
     }
 
@@ -311,28 +367,120 @@ public class PiperVoiceTests
     {
         string il2 = TempFolder();
         var opened = new List<Uri>();
-        var result = await PiperSetup.PrepareAsync(new PiperSettings { Enabled = true }, Path.Combine(il2, "data", "piper"), il2, _ => true, NoNetwork(opened));
+        var ask = new Asker(PiperAnswer.Yes);
+        var result = await PiperSetup.PrepareAsync(new PiperSettings { Enabled = true }, Path.Combine(il2, "data", "piper"), il2, ask.Ask, NoNetwork(opened));
 
         Assert.Equal(PiperSetupStatus.Failed, result.Status);
+        Assert.Equal(0, ask.Times);
         Assert.Empty(opened);
     }
 
     [Fact]
-    public async Task A_network_failure_after_yes_leaves_the_radio_without_piper()
+    public async Task A_network_failure_after_yes_is_explained_plainly_and_offered_again()
     {
         string folder = TempFolder();
+        var log = new List<string>();
         try
         {
-            var result = await PiperSetup.PrepareAsync(new PiperSettings { Enabled = true }, folder, null, _ => true,
-                (_, _) => throw new HttpRequestException("no route to host"));
+            var result = await PiperSetup.PrepareAsync(new PiperSettings(), folder, null, new Asker(PiperAnswer.Yes).Ask,
+                (_, _) => throw new HttpRequestException("No such host is known. (github.com:443)"), log: log.Add);
 
             Assert.Equal(PiperSetupStatus.Failed, result.Status);
-            Assert.Contains("no route to host", result.Message);
+            Assert.True(result.Remember); // the yes stands: the next start offers the download again
+            Assert.Contains("no internet connection", result.Message);
+            Assert.Contains("works without it", result.Message);
+            Assert.Contains("again", result.Message);
+            Assert.DoesNotContain("github.com:443", result.Message); // the technical detail goes to the log
+            Assert.Contains(log, l => l.Contains("github.com:443"));
             Assert.Null(PiperInstaller.Find(folder, PiperCatalog.Find(PiperCatalog.DefaultVoice)!));
         }
         finally
         {
-            Directory.Delete(folder, recursive: true);
+            if (Directory.Exists(folder))
+                Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void A_damaged_download_is_explained_without_jargon()
+    {
+        string message = PiperSetup.FriendlyError(new InvalidDataException("x.onnx: SHA-256 abc doesn't match the published def"), @"C:\Radio\piper");
+
+        Assert.Contains("damaged", message);
+        Assert.DoesNotContain("SHA-256", message);
+        Assert.Contains("works without it", message);
+    }
+
+    [Theory]
+    [InlineData("y", PiperAnswer.Yes)]
+    [InlineData(" YES ", PiperAnswer.Yes)]
+    [InlineData("n", PiperAnswer.No)]
+    [InlineData("No", PiperAnswer.No)]
+    [InlineData("l", PiperAnswer.Later)]
+    [InlineData("later", PiperAnswer.Later)]
+    [InlineData("", PiperAnswer.Later)]   // just Enter
+    [InlineData(null, PiperAnswer.Later)] // the console closed: never yes
+    [InlineData("maybe", null)]           // asked again
+    public void Typed_answers(string? input, PiperAnswer? expected) => Assert.Equal(expected, PiperSetup.ParseAnswer(input));
+
+    [Fact]
+    public void The_answer_is_saved_into_settings_json_keeping_everything_else()
+    {
+        string json = new AppSettings { Volume = 0.55, Chat = new ChatSettings { Output = "window" } }.ToJson();
+
+        string saved = AppSettings.WithPiperEnabled(json, false);
+        var (settings, problems) = AppSettings.Parse(saved);
+
+        Assert.Empty(problems);
+        Assert.False(settings.Piper.Enabled);
+        Assert.Equal(0.55, settings.Volume);
+        Assert.Equal("window", settings.Chat.Output);
+        Assert.Equal("de_DE-thorsten-medium", settings.Piper.Voice);
+
+        Assert.True(AppSettings.Parse(AppSettings.WithPiperEnabled(saved, true)).Settings.Piper.Enabled);
+    }
+
+    [Fact]
+    public void Saving_the_answer_works_on_an_older_file_without_piper_and_with_comments()
+    {
+        string old = """
+            // written by hand
+            { "volume": 0.7, "chat": { "output": "rtss", }, }
+            """;
+
+        var (settings, problems) = AppSettings.Parse(AppSettings.WithPiperEnabled(old, true));
+
+        Assert.Empty(problems);
+        Assert.True(settings.Piper.Enabled);
+        Assert.Equal(0.7, settings.Volume);
+        Assert.True(AppSettings.Parse(AppSettings.WithPiperEnabled("", false)).Settings.Piper.Enabled is false);
+    }
+
+    [Fact]
+    public async Task Remove_deletes_what_the_installer_made_and_nothing_else()
+    {
+        string folder = TempFolder();
+        try
+        {
+            var f = Files();
+            await PiperInstaller.InstallAsync(folder, f.Voice, PiperInstaller.Missing(folder, f.Voice, f.Runtime), Serve(f.Served));
+            Assert.NotNull(PiperInstaller.Find(folder, f.Voice));
+
+            File.WriteAllText(Path.Combine(folder, "my notes.txt"), "keep me");
+
+            Assert.True(PiperInstaller.Remove(folder));
+            Assert.Null(PiperInstaller.Find(folder, f.Voice));
+            Assert.True(File.Exists(Path.Combine(folder, "my notes.txt"))); // not the installer's, so kept (and the folder with it)
+            Assert.False(Directory.Exists(PiperInstaller.RuntimeFolder(folder)));
+
+            File.Delete(Path.Combine(folder, "my notes.txt"));
+            Assert.False(PiperInstaller.Remove(folder));
+            Assert.False(Directory.Exists(folder)); // an empty folder goes too
+        }
+        finally
+        {
+            if (Directory.Exists(folder))
+                Directory.Delete(folder, recursive: true);
         }
     }
 

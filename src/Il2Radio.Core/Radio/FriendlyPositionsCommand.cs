@@ -5,10 +5,10 @@ namespace Il2Radio.Core.Radio;
 /// <summary>
 /// Radio command 1, "Request positions of nearby friendly aircraft". Friendlies flying together
 /// answer as one group through their senior member; stragglers answer for themselves. A friendly
-/// answers only when the integration has a fresh live track of it; planned waypoints and stale
-/// event snapshots are never presented as current positions. In <see cref="RadioRealism.Pilot"/>,
-/// another unit answers only when someone in it can see the player; the player's own flight that
-/// cannot see him reports its heading and altitude instead of a vector.
+/// answers only when the integration has a fresh live track of it and he is inside radio range;
+/// planned waypoints and stale event snapshots are never presented as current positions. In
+/// <see cref="RadioRealism.Pilot"/>, a pilot who can see the player gives a clock position. One who
+/// can hear the call but cannot see the player answers with his own heading and altitude.
 /// </summary>
 public static class FriendlyPositionsCommand
 {
@@ -49,17 +49,10 @@ public static class FriendlyPositionsCommand
         var replies = new List<RadioReply>();
         foreach (var g in picture.Groups(settings).OrderBy(g => g.Relative.RangeMetres))
         {
-            bool ownFlight = g.Members.Any(m => m.Contact.InPlayerFlight);
             bool knows = PilotReport.KnowsWhereYouAre(g, picture.Player, picture.PlayerFix, tracker, settings);
-            if (!knows && !ownFlight)
-            {
-                foreach (var m in g.Members)
-                    suppressed.Add(new(m.Contact, "cannot see the player"));
-                continue;
-            }
-
             if (!knows)
             {
+                // He heard the call (he is inside radio range) but cannot put the player on a clock.
                 replies.Add(PilotReport.Unseen(g, separated: false));
                 continue;
             }
