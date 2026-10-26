@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Il2Radio.Core.Input;
 using Il2Radio.Core.Osd;
+using Il2Radio.Core.Radio;
 
 namespace Il2Radio.Core.Settings;
 
@@ -22,6 +23,18 @@ public sealed record AppSettings
     /// <summary>auto (the game's pilot voices by nation, else Windows TTS), tts, or a voice pack's name or folder.</summary>
     public string Voice { get; init; } = "auto";
 
+    /// <summary>
+    /// pilot (the default): a friendly says only what that pilot could know. precise: bearings, ranges
+    /// and counts from the live track. See <see cref="RadioRealism"/>.
+    /// </summary>
+    public string Realism { get; init; } = "pilot";
+
+    public static readonly string[] RealismModes = ["pilot", "precise"];
+
+    /// <summary>The radio's <see cref="RadioRealism"/> for this file. Call after <see cref="Validate"/>.</summary>
+    public RadioRealism RealismMode =>
+        string.Equals(Realism, "precise", StringComparison.OrdinalIgnoreCase) ? RadioRealism.Precise : RadioRealism.Pilot;
+
     /// <summary>Hold replies while IL-2's own radio is talking (its audio peaks above the engine).</summary>
     public bool RadioWait { get; init; } = true;
 
@@ -34,6 +47,8 @@ public sealed record AppSettings
     public ChatSettings Chat { get; init; } = new();
 
     public KeySettings Keys { get; init; } = new();
+
+    public PiperSettings Piper { get; init; } = new();
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -89,6 +104,8 @@ public sealed record AppSettings
             problems.Add($"recordingReminderSeconds {RecordingReminderSeconds}: expected 0 (off) or more");
         if (string.IsNullOrWhiteSpace(Voice))
             problems.Add("voice: expected auto, tts or a voice pack's name");
+        if (Realism is null || !RealismModes.Contains(Realism.ToLowerInvariant()))
+            problems.Add($"realism \"{Realism}\": expected {string.Join(" or ", RealismModes)}");
 
         if (Chat is null)
             problems.Add("chat: missing");
@@ -99,7 +116,45 @@ public sealed record AppSettings
             problems.Add("keys: missing");
         else
             problems.AddRange(Keys.Validate());
+
+        if (Piper is null)
+            problems.Add("piper: missing");
+        else
+            problems.AddRange(Piper.Validate());
         return problems;
+    }
+}
+
+/// <summary>
+/// The optional German phrase voice (Piper, a local neural text-to-speech engine). It speaks only what the
+/// game's German recordings can't: aircraft type names, the side, "possible", "nothing sighted", "with us".
+/// Everything else keeps the game's own pilot voices. Nothing is downloaded without the player's yes.
+/// </summary>
+public sealed record PiperSettings
+{
+    /// <summary>
+    /// false (the default): the game's recordings only, and no download question. true: use the German voice,
+    /// and ask — what, from where, and how big — before downloading it if it is not installed yet.
+    /// </summary>
+    public bool Enabled { get; init; }
+
+    /// <summary>Which Piper voice: de_DE-thorsten-medium (default), de_DE-thorsten-high, de_DE-thorsten-low or de_DE-karlsson-low.</summary>
+    public string Voice { get; init; } = Audio.PiperCatalog.DefaultVoice;
+
+    /// <summary>Where Piper and the voice are stored; null = a "piper" folder beside the program. Never inside the IL-2 folder.</summary>
+    public string? Folder { get; init; }
+
+    /// <summary>Piper's speaking pace: below 1 is faster, above 1 slower. Radio calls are brisk.</summary>
+    public double LengthScale { get; init; } = 0.9;
+
+    public IEnumerable<string> Validate()
+    {
+        if (Audio.PiperCatalog.Find(Voice ?? "") is null)
+            yield return $"piper.voice \"{Voice}\": expected one of {string.Join(", ", Audio.PiperCatalog.Voices.Select(v => v.Name))}";
+        if (Folder is not null && string.IsNullOrWhiteSpace(Folder))
+            yield return "piper.folder: expected null (beside the program) or a folder path";
+        if (!(LengthScale is >= 0.5 and <= 2))
+            yield return $"piper.lengthScale {LengthScale.ToString(CultureInfo.InvariantCulture)}: expected 0.5 to 2";
     }
 }
 

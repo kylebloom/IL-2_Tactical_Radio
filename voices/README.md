@@ -31,9 +31,14 @@ Put your recordings (WAV 8/16/24/32-bit or float, or Ogg Vorbis; any rate; mono 
     "number.1": "{speaker}/eins.wav",
     "clock.3": "{speaker}/drei_uhr.wav",
     "range.far": "{speaker}/weit.wav"
+  },
+  "words": {                   // optional: what a callsign clip says, shown in the chat instead of the English word
+    "callsign.8": "Pirol"
   }
 }
 ```
+`words` keeps the chat and the voice naming the same callsign: without it, the chat shows the English word from `data\GUI\DefaultCallsigns.eng` ("Oriole"), whatever the clip says. `il2-ger.json` has one for every callsign clip (only `callsign.9` = "Lumme" has been heard; the rest are inferred, so correct them by ear).
+
 Your own packs take precedence over the game's for the same country. To use one pack for every speaker, pass `--voice voices/my-voice` (or part of its name).
 
 ## Keys
@@ -48,10 +53,17 @@ Required keys must exist for a reply to be spoken from clips. Optional keys are 
 | `clock.1` … `clock.12` | "three o'clock" | **required** for flight position |
 | `compass.n`, `.ne`, `.e`, `.se`, `.s`, `.sw`, `.w`, `.nw` | direction (bearing, steer) | **required** for friendly positions and rejoin |
 | `steer` | "steer" (before the direction) | optional |
-| `range.close` (under 1.5 km), `range.1`, `range.2`, … (whole km), `range.far` (beyond 10 km when no exact clip) | range | **required** |
+| `range.close` (under 1.5 km, and pilot "close"), `range.1`, `range.2`, … (whole km), `range.far` (beyond 10 km, and pilot "far"), `range.few` | range. Pilot "a few kilometres" uses `range.few` only; it is not required | **required** when the reply states a range the pack must say (`range.close` / `range.far` in pilot mode) |
 | `vertical.above`, `vertical.below`, `vertical.level` | height relative to you (level = within 300 m) | optional |
 | `altitude` + `altitude.<metres to nearest 100>` (e.g. `altitude.2700`) | "altitude 2700 metres" | optional |
 | `heading` | "heading" (followed by the compass clip) | optional |
 | `information`, `withus` | "you are in formation with us" / "you are with us" (each falls back to the other) | **required** for those replies |
+| `class.fighter`, `class.fighters`, … `bomber(s)`, `attack(s)`, `recon(s)`, `transport` | contact class | optional (dropped when the type is spoken) |
+| `side.enemy`, `side.friendly`, `hedge` | "enemy" / "friendly", "possible" | optional |
+| `contact.type` | one generic clip for the aircraft type | optional |
+| `nocontacts` | "no contacts" | **required** for that reply |
+| `few`, `many`, `onme`, `cannotsee` | pilot mode: "a few", "many", "on me", "I cannot see you" | optional. The German phrase voice can say them; a missing clip leaves them on screen |
+
+A pack whose `language` is `de` can have its gaps (type names, side, "possible", "no contacts", "with us", and in pilot mode "a few kilometres", "a few", "many", "on me", "I cannot see you") filled by the optional German phrase voice (Piper); see the main README. A clip in the pack always wins over it.
 
 Each clip is levelled to the same loudness and joined with a 25 ms crossfade. Clips with little silence at either end sound most natural.

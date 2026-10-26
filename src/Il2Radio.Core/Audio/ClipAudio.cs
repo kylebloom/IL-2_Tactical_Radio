@@ -169,6 +169,34 @@ public static class ClipAudio
         return pcm;
     }
 
+    /// <summary>
+    /// Cuts leading and trailing silence (below <paramref name="threshold"/> of the peak), keeping
+    /// <paramref name="padMs"/> either side. Synthesized phrases come with pauses that would sound like gaps
+    /// between the recorded words.
+    /// </summary>
+    public static MonoAudio TrimSilence(MonoAudio audio, double threshold = 0.02, double padMs = 20)
+    {
+        var s = audio.Samples;
+        float peak = s.Length == 0 ? 0 : s.Max(x => Math.Abs(x));
+        if (peak <= 0)
+            return audio with { Samples = [] };
+        float limit = (float)(peak * threshold);
+        int first = Array.FindIndex(s, x => Math.Abs(x) > limit);
+        int last = Array.FindLastIndex(s, x => Math.Abs(x) > limit);
+        int pad = (int)(audio.SampleRate * padMs / 1000);
+        int start = Math.Max(0, first - pad), end = Math.Min(s.Length - 1, last + pad);
+        return audio with { Samples = s[start..(end + 1)] };
+    }
+
+    /// <summary>16-bit PCM to −1..1 samples.</summary>
+    public static MonoAudio FromPcm(ReadOnlySpan<short> pcm, int sampleRate)
+    {
+        var samples = new float[pcm.Length];
+        for (int i = 0; i < samples.Length; i++)
+            samples[i] = pcm[i] / 32768f;
+        return new MonoAudio(samples, sampleRate);
+    }
+
     private static float[] Normalise(float[] samples, double targetRms)
     {
         if (samples.Length == 0)

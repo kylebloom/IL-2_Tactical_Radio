@@ -1,37 +1,33 @@
 using System.Diagnostics;
 using Il2Radio.Core;
+using Il2Radio.Core.Audio;
 using Il2Radio.Core.Settings;
 using Il2Radio.Windows;
 
 namespace Il2Radio.App;
 
 /// <summary>
-/// The checks made before a flight, each printed as one [ok] or [!!] line with what to do about it.
+/// The checks made before a flight, each kept as one [ok] or [!!] line with what to do about it.
 /// A check that fails returns a short warning for the chat output as well, so it is seen in game.
+/// The window shows <see cref="Results"/>; nothing is written to a console.
 /// </summary>
 internal static class StartupChecks
 {
-    /// <summary>Every result line so far, kept on screen once the live view takes over the console.</summary>
+    /// <summary>Every result line so far, shown on the Status tab and kept in the live view.</summary>
     public static List<string> Results { get; } = [];
 
-    public static void Ok(string text) => Print($"  [ok] {text}");
+    /// <summary>Drops the previous session's lines before the checks run again.</summary>
+    public static void Reset() => Results.Clear();
 
-    public static void Info(string text) => Print($"  [..] {text}");
+    public static void Ok(string text) => Results.Add($"  [ok] {text}");
 
-    private static void Print(string line)
-    {
-        Results.Add(line);
-        Console.WriteLine(line);
-    }
+    public static void Info(string text) => Results.Add($"  [..] {text}");
 
     public static void Warn(string text, params string[] details)
     {
         Results.Add($"  [!!] {text}");
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine($"  [!!] {text}");
-        Console.ResetColor();
         foreach (string detail in details)
-            Console.WriteLine($"       {detail}");
+            Results.Add($"       {detail}");
     }
 
     public static bool Il2Running => Process.GetProcessesByName("Il-2").Length > 0;
@@ -52,9 +48,10 @@ internal static class StartupChecks
 
     /// <summary>
     /// The mission log and Tacview track outputs in startup.cfg. When they are off and IL-2 is closed,
-    /// offers to switch them on (with a backup); IL-2 rewrites the file on exit, so not while it runs.
+    /// <paramref name="confirm"/> asks whether to switch them on (with a backup). IL-2 rewrites the file
+    /// on exit, so not while it runs. True from <paramref name="confirm"/> is the only yes.
     /// </summary>
-    public static string? Outputs(Il2Install install)
+    public static string? Outputs(Il2Install install, Func<string, bool> confirm)
     {
         var cfg = StartupConfig.Load(install.StartupCfg);
         var missing = Il2Outputs.Missing(cfg, Il2Outputs.Required);
@@ -64,31 +61,69 @@ internal static class StartupChecks
             return null;
         }
 
-        Warn($"IL-2 isn't set to export what the radio reads ({install.StartupCfg}):",
-            missing.Select(o => $"{o.Section}.{o.Key} is {cfg.Get(o.Section, o.Key) ?? "missing"}, needs {o.Value}: {o.Why}").ToArray());
+        string[] details = missing.Select(o => $"{o.Section}.{o.Key} is {cfg.Get(o.Section, o.Key) ?? "missing"}, needs {o.Value}: {o.Why}").ToArray();
+        Warn($"IL-2 isn't set to export what the radio reads ({install.StartupCfg}):", details);
         const string chatWarning = "IL-2 isn't exporting tracks or the mission log, so the radio has little to report. Close IL-2 and restart the radio to set it up.";
         if (Il2Running)
         {
-            Console.WriteLine("       Close IL-2 and start the radio again to switch them on (IL-2 rewrites startup.cfg when it exits).");
+            Info("Close IL-2 and start the radio again to switch them on (IL-2 rewrites startup.cfg when it exits).");
             return chatWarning;
         }
 
-        Console.Write("       Switch them on now? startup.cfg is backed up first. Type y and Enter for yes: ");
-        if (Console.ReadLine()?.Trim().ToLowerInvariant() is not ("y" or "yes"))
+        string question = "Switch on the mission log and Tacview tracks in startup.cfg? The file is backed up first."
+            + Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, details);
+        if (!confirm(question))
         {
-            Console.WriteLine("       Left unchanged.");
+            Info("startup.cfg left unchanged.");
             return chatWarning;
         }
 
         if (Il2Running)
         {
-            Console.WriteLine("       IL-2 has started meanwhile; left unchanged. Close it and start the radio again.");
+            Info("IL-2 has started meanwhile; startup.cfg left unchanged. Close it and start the radio again.");
             return chatWarning;
         }
 
         string? backup = Il2Outputs.Enable(install, missing);
         Ok($"startup.cfg updated{(backup is null ? "" : $" (backup: {backup})")}");
         return null;
+    }
+
+    /// <summary>
+    /// The optional German phrase voice (Piper). Off: one line saying how to get it. On and installed: started.
+    /// On and missing: <paramref name="ask"/> is shown the consent text and the download runs only on true.
+    /// Any other outcome leaves the radio as it was: game recordings, class words, full text on screen.
+    /// A null <paramref name="ask"/> uses the console question (Diag). The player's window always passes one.
+    /// </summary>
+    public static async Task<PiperSynthesizer?> PhraseVoice(AppSettings settings, VoiceSelection voices, Il2Install install,
+        Func<IReadOnlyList<string>, bool>? ask = null, Action<PiperProgress>? progress = null, Action<string>? log = null,
+        CancellationToken cancel = default)
+    {
+        if (settings.Piper.Enabled && voices.Mode == "tts")
+        {
+            Info("German phrase voice not used: voice is \"tts\", and it only fills gaps in the game's recordings");
+            return null;
+        }
+
+        var (result, synth) = ask is null && progress is null && log is null
+            ? await PiperConsole.StartAsync(settings.Piper, install.Root, cancel)
+            : await PiperConsole.StartAsync(settings.Piper, install.Root, ask, progress, log, cancel);
+        switch (result.Status)
+        {
+            case PiperSetupStatus.Off:
+                long size = PiperCatalog.Runtime.Size + PiperCatalog.Find(settings.Piper.Voice)!.Size;
+                Info($"German phrase voice for aircraft types and \"nothing sighted\": off (optional {PiperInstaller.Size(size)} download; turn it on in Settings)");
+                break;
+            case PiperSetupStatus.Ready:
+                Ok($"German phrase voice: {result.Message}");
+                break;
+            default:
+                Warn(result.Message);
+                break;
+        }
+
+        voices.Synth = synth;
+        return synth;
     }
 
     /// <summary>Whether the chosen chat output can be seen: RTSS must run; the overlay is hidden by exclusive fullscreen.</summary>
@@ -105,10 +140,10 @@ internal static class StartupChecks
                 break;
             case "overlay" when StartupConfig.Load(install.StartupCfg).Get("graphics", "fullscreen") == "1":
                 Warn("IL-2 runs in exclusive fullscreen, which hides the overlay window.",
-                    "Set \"chat\": { \"output\": \"rtss\" } in settings.json, or play IL-2 windowed.");
+                    "Choose RTSS for the radio text, or play IL-2 windowed.");
                 break;
             case "off":
-                Ok("Radio text is off (chat.output)");
+                Ok("Radio text is off");
                 break;
             default:
                 Ok($"Radio text in a {chat.Output} window");

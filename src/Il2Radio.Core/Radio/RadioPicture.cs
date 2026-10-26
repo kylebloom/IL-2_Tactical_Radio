@@ -3,8 +3,29 @@ using Il2Radio.Core.Geometry;
 
 namespace Il2Radio.Core.Radio;
 
+/// <summary>How closely a reply may follow the live track.</summary>
+public enum RadioRealism
+{
+    /// <summary>Bearings, ranges, altitudes and counts as precisely as the track supports.</summary>
+    Precise,
+
+    /// <summary>
+    /// A pilot gives a position relative to the player only when he can see the player or is in formation.
+    /// Otherwise he reports his own heading and altitude. An enemy he cannot place relative to the player
+    /// is described from his own cockpit, or as "on me" when he is in the fight.
+    /// </summary>
+    Pilot,
+}
+
 public sealed record RadioSettings
 {
+    /// <summary>
+    /// How much of the live picture a pilot is allowed to say. The player's program and Diag default to
+    /// <see cref="RadioRealism.Pilot"/>. Left unset here, replies stay <see cref="RadioRealism.Precise"/>,
+    /// which is what the command tests lock in.
+    /// </summary>
+    public RadioRealism Realism { get; init; } = RadioRealism.Precise;
+
     /// <summary>Beyond this range a friendly cannot hear the request or answer it.</summary>
     public double RadioRangeMetres { get; init; } = 40_000;
 

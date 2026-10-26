@@ -51,7 +51,10 @@ public sealed class Contact(string key)
     /// <summary>Callsign number from the mission plan (8 = "Oriole"); 0 when the plan has none for this pilot.</summary>
     public int Callsign { get; internal set; }
 
-    /// <summary>Callsign word in English ("Oriole"), when the install's callsign table knows it.</summary>
+    /// <summary>
+    /// Callsign word as his voice says it ("Lumme" for a German pilot's 9), else in English from the install's
+    /// callsign table ("Canary"); null when neither knows it.
+    /// </summary>
     public string? CallsignName { get; internal set; }
 
     /// <summary>Number within the callsign ("Oriole <b>two</b>") from the mission plan.</summary>
@@ -91,6 +94,24 @@ public sealed class ContactTracker(TimeProvider? time = null)
         foreach (var c in _contacts.Values)
             ResolveCallsign(c);
     }
+
+    /// <summary>
+    /// The callsign word a speaker's voice says, by (IL-2 country, callsign number), or null to keep the
+    /// install's English word. The game's German recordings don't say the English table's words (callsign 9
+    /// is "Lumme", not "Canary"), so the on-screen text takes the voice's word and both name the same callsign.
+    /// </summary>
+    public Func<int, int, string?>? CallsignWords
+    {
+        get => _callsignWords;
+        set
+        {
+            _callsignWords = value;
+            foreach (var c in _contacts.Values)
+                ResolveCallsign(c);
+        }
+    }
+
+    private Func<int, int, string?>? _callsignWords;
 
     /// <summary>
     /// Age of a fix in seconds: how far the source clock has advanced since the fix, plus how long
@@ -266,13 +287,17 @@ public sealed class ContactTracker(TimeProvider? time = null)
         ResolveCallsign(c);
     }
 
-    /// <summary>Takes the pilot's callsign from the mission plan, matched by pilot name and country.</summary>
+    /// <summary>
+    /// Takes the pilot's callsign from the mission plan, matched by pilot name and country. The word is the
+    /// one his voice says (<see cref="CallsignWords"/>, for the same country the voice is chosen by), else the install's.
+    /// </summary>
     private void ResolveCallsign(Contact c)
     {
         if (Plan?.AircraftOf(c.PilotName, c.Country) is not { Callsign: > 0 } planned)
             return;
         c.Callsign = planned.Callsign;
-        c.CallsignName = Plan.CallsignName(planned);
+        int country = c.Country > 0 ? c.Country : planned.Country;
+        c.CallsignName = CallsignWords?.Invoke(country, planned.Callsign) ?? Plan.CallsignName(planned);
         c.Callnum = planned.Callnum > 0 ? planned.Callnum : null;
     }
 

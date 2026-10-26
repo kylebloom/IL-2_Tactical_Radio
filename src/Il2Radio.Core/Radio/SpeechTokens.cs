@@ -50,19 +50,49 @@ public enum SpeechWord
     /// <summary>Contact class as <see cref="AircraftClass"/>; negative when plural ("fighters").</summary>
     ContactClass,
 
-    /// <summary>A named aircraft type or identification verdict; recorded voices have no clips for it.</summary>
+    /// <summary>
+    /// A named aircraft type: <see cref="SpeechToken.Name"/> is the <see cref="AircraftType.Family"/> called
+    /// (null when no type was made out), Value the number of aircraft. The game's recordings have no type names;
+    /// a phrase synthesizer (Piper) can say it.
+    /// </summary>
     ContactType,
 
     /// <summary>"No contacts."</summary>
     NoContacts,
+
+    /// <summary>The contact's side, as far as the observer made out its markings: positive friendly, negative enemy.</summary>
+    ContactSide,
+
+    /// <summary>"Possible": the type call that follows is not certain.</summary>
+    Hedge,
+
+    /// <summary>
+    /// Coarse range, because an eyeball does not count kilometres. 0 = "close" (under 2 km),
+    /// 1 = "a few kilometres", 2 = "far". The recordings can say close and far; "a few kilometres"
+    /// is text, or a phrase synthesizer when one is installed.
+    /// </summary>
+    RangeBand,
+
+    /// <summary>The contact is on the speaker, not at a plotted position from the player.</summary>
+    OnMe,
+
+    /// <summary>The speaker cannot see the player, so he gives no position relative to him.</summary>
+    CannotSee,
+
+    /// <summary>
+    /// A count the pilot could not separate into aircraft: 3 = "a few", 4 = "many".
+    /// Used instead of <see cref="ContactCount"/> when the text says those words.
+    /// </summary>
+    ContactAmount,
 }
 
 /// <summary>
 /// One language-neutral element of a radio reply. Tokens carry exact values; each voice decides how
 /// precisely it can say them (Windows TTS speaks the English text; a clip voice may say "long range"
-/// for 18 km because the recordings stop at 10 km).
+/// for 18 km because the recordings stop at 10 km). <see cref="Name"/> carries a word that is not a
+/// number, such as the aircraft type called.
 /// </summary>
-public readonly record struct SpeechToken(SpeechWord Word, double Value = 0)
+public readonly record struct SpeechToken(SpeechWord Word, double Value = 0, string? Name = null)
 {
     /// <summary>How the speaker identifies himself, matching <c>RadioPhrases.Who</c>: callsign (if used) and number.</summary>
     public static IEnumerable<SpeechToken> Identify(Contact c)
@@ -74,5 +104,11 @@ public readonly record struct SpeechToken(SpeechWord Word, double Value = 0)
         yield return new(SpeechWord.Speaker, number ?? 0);
     }
 
-    public override string ToString() => Value == 0 ? Word.ToString() : $"{Word}({Value:0.#})";
+    public override string ToString() =>
+        (Value, Name) switch
+        {
+            (0, null) => Word.ToString(),
+            (_, null) => $"{Word}({Value:0.#})",
+            _ => $"{Word}({Value:0.#}, {Name})",
+        };
 }

@@ -35,7 +35,7 @@ internal sealed class RadioVoice : IDisposable
     private readonly SemaphoreSlim _signal = new(0);
     private readonly CancellationTokenSource _stop = new();
     private readonly Thread _worker;
-    private readonly RadioEffectSettings _effect;
+    private RadioEffectSettings _effect; // replaced when the volume changes, read afresh for each transmission
     private readonly VoiceSelection _voices;
     private readonly ManualResetEventSlim _ready = new();
     private int _generation;
@@ -46,6 +46,19 @@ internal sealed class RadioVoice : IDisposable
         _voices = voices ?? VoiceSelection.TtsOnly;
         _worker = new Thread(Run) { IsBackground = true, Name = "radio-voice" };
         _worker.Start();
+    }
+
+    /// <summary>Which voice speaks each nation's transmissions.</summary>
+    public VoiceSelection Voices => _voices;
+
+    /// <summary>
+    /// Radio volume, 0 to 1. The next transmission and the next key click use it; a click already
+    /// built at the old volume is rebuilt.
+    /// </summary>
+    public double Volume
+    {
+        get => _effect.Volume;
+        set => _effect = _effect with { Volume = Math.Clamp(value, 0, 1) };
     }
 
     /// <summary>The Windows TTS voice used when no clip voice can speak a transmission (null: none installed).</summary>
@@ -90,11 +103,17 @@ internal sealed class RadioVoice : IDisposable
     public void PlayKeyClick()
     {
         Interlocked.Increment(ref _generation);
-        _keyClick ??= RadioEffect.ToWav(KeyClick(SampleRate, _effect), SampleRate);
+        var effect = _effect;
+        if (_keyClick is null || _keyClickVolume != effect.Volume)
+        {
+            _keyClick = RadioEffect.ToWav(KeyClick(SampleRate, effect), SampleRate);
+            _keyClickVolume = effect.Volume;
+        }
         PlaySound(_keyClick, IntPtr.Zero, SND_MEMORY | SND_NODEFAULT | SND_ASYNC);
     }
 
     private byte[]? _keyClick;
+    private double _keyClickVolume = double.NaN;
 
     /// <summary>~3 ms decaying mechanical click, then ~200 ms of carrier hiss ending in the squelch click.</summary>
     internal static short[] KeyClick(int sampleRate, RadioEffectSettings effect)
@@ -142,7 +161,8 @@ internal sealed class RadioVoice : IDisposable
             Volatile.Write(ref _playing, 1);
             try
             {
-                var (wav, description) = Render(synth, entry.Item, _effect, _voices);
+                var effect = _effect;
+                var (wav, description) = Render(synth, entry.Item, effect, _voices);
                 if (entry.Generation != Volatile.Read(ref _generation))
                     continue; // superseded (e.g. by a key click) while rendering
                 WaitForClearChannel(entry.Generation);
@@ -204,7 +224,7 @@ internal sealed class RadioVoice : IDisposable
     {
         short[] speech;
         string description;
-        if (t.Tokens is { } tokens && voices.For(t.Country) is { } clips && clips.Render(tokens, t.SpeakerId, SampleRate) is { } utterance)
+        if (t.Tokens is { } tokens && voices.For(t.Country) is { } clips && clips.Render(tokens, t.SpeakerId, SampleRate, voices.Synth) is { } utterance)
         {
             speech = utterance.Samples;
             if (clips.Pack.PreProcessed)

@@ -39,7 +39,9 @@ internal sealed record SightedContact(LiveContact Target, AircraftType Type, Ide
 /// Commands 2 and 4: "Request enemy contacts" and "Identify contact". Observers are the player's own
 /// flight (or, flying alone, any friendly within radio range). Only aircraft that exist in the live
 /// track can be reported, and only once the visibility model says an observer has spotted them; what is
-/// said about them is limited to what that observer could make out at that range.
+/// said about them is limited to what that observer could make out at that range. In
+/// <see cref="RadioRealism.Pilot"/> the position is the player's clock only when the spotter can see the
+/// player or is in formation; a spotter in the fight who cannot says "on me", and otherwise gives his own clock.
 /// </summary>
 public static class EnemyCommands
 {
@@ -72,16 +74,26 @@ public static class EnemyCommands
                 suppressed);
         }
 
-        var replies = groups.Select(g =>
+        var replies = settings.Realism == RadioRealism.Pilot
+            ? groups.Select(g => PilotEnemyReply(g, look, tracker, settings)).ToList()
+            : groups.Select(g =>
         {
             var reporter = g.Reporter;
             string text = $"{RadioPhrases.Who(reporter.Contact)}, {Describe(g, look.Player)}, at your {RadioPhrases.Clock(g.Relative.BearingDegrees, look.PlayerHeading)}, " +
                           $"{RadioPhrases.Range(g.Relative.RangeMetres)}, {HighLow(g.Relative.AltitudeDeltaMetres)}.";
             List<SpeechToken> tokens = [.. SpeechToken.Identify(reporter.Contact), new(SpeechWord.ContactCount, g.Members.Count)];
+            bool typed = g.Level >= IdentificationLevel.Type && g.CalledType is not null;
+            // Mirrors Describe: the side is said only for a class-level call ("enemy fighters"), never with a type.
+            if (!typed && g.Level >= IdentificationLevel.Side && g.Class != AircraftClass.Unknown)
+                tokens.Add(new(SpeechWord.ContactSide, IsEnemyCall(g, look.Player) ? -1 : 1));
             if (g.Level >= IdentificationLevel.Class && g.Class != AircraftClass.Unknown)
                 tokens.Add(new(SpeechWord.ContactClass, (int)g.Class * (g.Members.Count > 1 ? -1 : 1)));
-            if (g.Level >= IdentificationLevel.Type && g.CalledType is not null)
-                tokens.Add(new(SpeechWord.ContactType)); // spoken only by packs that have "contact.type"
+            if (typed)
+            {
+                if (g.Hedged)
+                    tokens.Add(new(SpeechWord.Hedge));
+                tokens.Add(new(SpeechWord.ContactType, g.Members.Count, g.CalledType!.Family));
+            }
             tokens.Add(new(SpeechWord.Clock, RadioPhrases.ClockHour(g.Relative.BearingDegrees, look.PlayerHeading)));
             tokens.Add(new(SpeechWord.Range, g.Relative.RangeMetres));
             tokens.Add(new(SpeechWord.Vertical, g.Relative.AltitudeDeltaMetres));
@@ -112,13 +124,32 @@ public static class EnemyCommands
         }
 
         var g = nearest;
+        if (settings.Realism == RadioRealism.Pilot)
+            return new RadioResult(ReplyOutcome.Position, [PilotIdentifyReply(g, look, tracker, settings)], suppressed);
+
         string heading = g.Heading is double h ? $", heading {Navigation.CompassPoint(h)}" : "";
         string text = $"{RadioPhrases.Who(g.Reporter.Contact)}, contact at your {RadioPhrases.Clock(g.Relative.BearingDegrees, look.PlayerHeading)}, " +
                       $"{RadioPhrases.Range(g.Relative.RangeMetres)}: {Identification(g, look.Player)}{heading}.";
         List<SpeechToken> tokens = [.. SpeechToken.Identify(g.Reporter.Contact), new(SpeechWord.ContactCount, g.Members.Count)];
         if (g.Level >= IdentificationLevel.Class && g.Class != AircraftClass.Unknown)
             tokens.Add(new(SpeechWord.ContactClass, (int)g.Class * (g.Members.Count > 1 ? -1 : 1)));
-        tokens.AddRange([new(SpeechWord.ContactType), new(SpeechWord.Clock, RadioPhrases.ClockHour(g.Relative.BearingDegrees, look.PlayerHeading)),
+        // Mirrors Identification: a hedged type carries no side; a sure type or a side-level look does.
+        int side = g.Members.All(m => IsFriendly(look.Player, m.Target.Contact)) ? 1 : -1;
+        if (g.Level >= IdentificationLevel.Type && g.CalledType is { } called)
+        {
+            if (g.Hedged)
+                tokens.Add(new(SpeechWord.Hedge));
+            tokens.Add(new(SpeechWord.ContactType, g.Members.Count, called.Family));
+            if (!g.Hedged)
+                tokens.Add(new(SpeechWord.ContactSide, side));
+        }
+        else
+        {
+            tokens.Add(new(SpeechWord.ContactType, g.Members.Count)); // no type made out: nothing to name
+            if (g.Level >= IdentificationLevel.Side)
+                tokens.Add(new(SpeechWord.ContactSide, side));
+        }
+        tokens.AddRange([new(SpeechWord.Clock, RadioPhrases.ClockHour(g.Relative.BearingDegrees, look.PlayerHeading)),
             new(SpeechWord.Range, g.Relative.RangeMetres), new(SpeechWord.Vertical, g.Relative.AltitudeDeltaMetres)]);
         var reply = new RadioReply(g.Reporter.Contact, g.Members.Select(m => m.Target.Contact).ToList(), g.Relative, g.Members.Max(m => m.Target.AgeSeconds), text, tokens);
         return new RadioResult(ReplyOutcome.Position, [reply], suppressed);
@@ -208,7 +239,7 @@ public static class EnemyCommands
                 }
             }
 
-            memory.Set(target.Contact.Key, new SightingMemory.Sighting(spotter is not null && level > IdentificationLevel.None ? now : previous?.LastSeen ?? now, known, called, hedged));
+            memory.Set(target.Contact.Key, new SightingMemory.Sighting(level > IdentificationLevel.None ? now : previous?.LastSeen ?? now, known, called, hedged));
             sighted.Add(new SightedContact(target, type, known, called, hedged, spotter));
         }
 
@@ -252,11 +283,16 @@ public static class EnemyCommands
             ? IsFriendly(player, a.Target.Contact) == IsFriendly(player, b.Target.Contact)
             : null;
 
-    private static string Describe(SightedGroup g, Contact player)
+    /// <summary>A pair or a flight of four, once their shapes can be separated. Farther out, or a bigger formation, is "a few" or "many".</summary>
+    private static bool ExactCount(SightedGroup g) =>
+        g.Members.Count == 1 || (g.Members.Count <= 4 && g.Level >= IdentificationLevel.Class);
+
+    private static string Strength(SightedGroup g, bool coarse)
     {
         int n = g.Members.Count;
-        bool plural = n > 1;
-        string count = n switch
+        if (coarse && !ExactCount(g))
+            return n >= 7 ? "many" : "a few";
+        return n switch
         {
             1 => "single",
             2 => "pair of",
@@ -265,7 +301,14 @@ public static class EnemyCommands
             < 10 => "group of",
             _ => "large formation of",
         };
-        bool enemy = g.Level >= IdentificationLevel.Side && !g.Members.All(m => m.Level >= IdentificationLevel.Side && IsFriendly(player, m.Target.Contact));
+    }
+
+    private static string Describe(SightedGroup g, Contact player, bool coarse = false)
+    {
+        int n = g.Members.Count;
+        bool plural = n > 1;
+        string count = Strength(g, coarse);
+        bool enemy = IsEnemyCall(g, player);
 
         if (g.Level >= IdentificationLevel.Type && g.CalledType is { } t)
             return $"{count} {(g.Hedged ? "possible " : "")}{(plural ? t.Plural : t.Family)}";
@@ -276,7 +319,11 @@ public static class EnemyCommands
         return $"{count} unidentified aircraft";
     }
 
-    private static string Identification(SightedGroup g, Contact player)
+    /// <summary>A side-level group is called "enemy" unless every member's markings were seen and are friendly.</summary>
+    private static bool IsEnemyCall(SightedGroup g, Contact player) =>
+        g.Level >= IdentificationLevel.Side && !g.Members.All(m => m.Level >= IdentificationLevel.Side && IsFriendly(player, m.Target.Contact));
+
+    private static string Identification(SightedGroup g, Contact player, bool coarse = false)
     {
         bool plural = g.Members.Count > 1;
         bool friendly = g.Members.All(m => IsFriendly(player, m.Target.Contact));
@@ -284,7 +331,9 @@ public static class EnemyCommands
 
         if (g.Level >= IdentificationLevel.Type && g.CalledType is { } t)
         {
-            string name = plural ? $"{RadioPhrases.Count(g.Members.Count)} {t.Plural}" : $"a {t.Family}";
+            string name = coarse && !ExactCount(g)
+                ? g.Members.Count >= 7 ? $"many {t.Plural}" : $"a few {t.Plural}"
+                : plural ? $"{RadioPhrases.Count(g.Members.Count)} {t.Plural}" : $"a {t.Family}";
             return g.Hedged ? $"looks like {name}, can't be sure" : $"{name}, {side}";
         }
 
@@ -305,4 +354,128 @@ public static class EnemyCommands
 
     private static double Distance(LiveContact a, LiveContact b) =>
         Navigation.Relative(a.Fix.Position, b.Fix.Position)?.RangeMetres ?? double.MaxValue;
+
+    private static RadioReply PilotEnemyReply(SightedGroup g, LookResult look, ContactTracker tracker, RadioSettings settings)
+    {
+        var reporter = g.Reporter;
+        bool fuzzy = !ExactCount(g);
+        string what = Describe(g, look.Player, coarse: true);
+        string who = RadioPhrases.Who(reporter.Contact);
+        List<SpeechToken> tokens = [.. SpeechToken.Identify(reporter.Contact)];
+        AddSightingTokens(tokens, g, look.Player, includeCount: true, fuzzy: fuzzy);
+
+        string text;
+        if (WithPlayer(reporter, look, tracker, settings))
+        {
+            text = ContactFrom(who, what, tokens, g.Relative, look.PlayerFix.Heading, mine: false);
+        }
+        else
+        {
+            var fromHim = RelativeTo(reporter, g.Members);
+            if (Engaged(g) || fromHim is null)
+            {
+                string band = fromHim is { } r && Math.Abs(r.AltitudeDeltaMetres) >= PilotReport.LevelMetres ? $", {HighLow(r.AltitudeDeltaMetres)}" : "";
+                text = $"{who}, {what}, on me{band}.";
+                tokens.Add(new(SpeechWord.OnMe));
+                if (fromHim is { } height && Math.Abs(height.AltitudeDeltaMetres) >= PilotReport.LevelMetres)
+                    tokens.Add(new(SpeechWord.Vertical, height.AltitudeDeltaMetres));
+            }
+            else
+            {
+                text = ContactFrom(who, what, tokens, fromHim.Value, reporter.Fix.Heading, mine: true);
+            }
+        }
+
+        return new RadioReply(reporter.Contact, g.Members.Select(m => m.Target.Contact).ToList(), g.Relative, g.Members.Max(m => m.Target.AgeSeconds), text, tokens);
+    }
+
+    private static RadioReply PilotIdentifyReply(SightedGroup g, LookResult look, ContactTracker tracker, RadioSettings settings)
+    {
+        var reporter = g.Reporter;
+        bool fuzzy = !ExactCount(g);
+        bool countInText = !fuzzy || g.Level >= IdentificationLevel.Type;
+        string who = RadioPhrases.Who(reporter.Contact);
+        string id = Identification(g, look.Player, coarse: true);
+        string heading = g.Level >= IdentificationLevel.Type && g.Heading is double h ? $", heading {Navigation.CompassPoint(h)}" : "";
+        List<SpeechToken> tokens = [.. SpeechToken.Identify(reporter.Contact)];
+        AddSightingTokens(tokens, g, look.Player, includeCount: countInText, fuzzy: fuzzy);
+        // A sure type call says the side ("a Yak, enemy"); a hedge does not. Class-level calls already got it above.
+        if (g.Level >= IdentificationLevel.Type && g.CalledType is not null && !g.Hedged)
+            tokens.Add(new(SpeechWord.ContactSide, g.Members.All(m => IsFriendly(look.Player, m.Target.Contact)) ? 1 : -1));
+
+        string text;
+        if (WithPlayer(reporter, look, tracker, settings))
+        {
+            var where = PilotReport.Direction(g.Relative.BearingDegrees, look.PlayerFix.Heading, mine: false);
+            text = $"{who}, contact {where.Text}, {PilotReport.Range(g.Relative.RangeMetres)}: {id}{heading}.";
+            tokens.Add(where.Token);
+            tokens.Add(new(SpeechWord.RangeBand, PilotReport.RangeBand(g.Relative.RangeMetres)));
+        }
+        else
+        {
+            var fromHim = RelativeTo(reporter, g.Members);
+            if (Engaged(g) || fromHim is null)
+            {
+                text = $"{who}, on me: {id}{heading}.";
+                tokens.Add(new(SpeechWord.OnMe));
+            }
+            else
+            {
+                var where = PilotReport.Direction(fromHim.Value.BearingDegrees, reporter.Fix.Heading, mine: true);
+                text = $"{who}, contact {where.Text}, {PilotReport.Range(fromHim.Value.RangeMetres)}: {id}{heading}.";
+                tokens.Add(where.Token);
+                tokens.Add(new(SpeechWord.RangeBand, PilotReport.RangeBand(fromHim.Value.RangeMetres)));
+            }
+        }
+
+        return new RadioReply(reporter.Contact, g.Members.Select(m => m.Target.Contact).ToList(), g.Relative, g.Members.Max(m => m.Target.AgeSeconds), text, tokens);
+    }
+
+    /// <summary>The class, side and type tokens, in the same order as a precise call. A fuzzy count is "a few" or "many".</summary>
+    private static void AddSightingTokens(List<SpeechToken> tokens, SightedGroup g, Contact player, bool includeCount, bool fuzzy)
+    {
+        if (includeCount)
+            tokens.Add(fuzzy
+                ? new(SpeechWord.ContactAmount, g.Members.Count >= 7 ? 4 : 3)
+                : new(SpeechWord.ContactCount, g.Members.Count));
+        bool typed = g.Level >= IdentificationLevel.Type && g.CalledType is not null;
+        if (!typed && g.Level >= IdentificationLevel.Side && g.Class != AircraftClass.Unknown)
+            tokens.Add(new(SpeechWord.ContactSide, IsEnemyCall(g, player) ? -1 : 1));
+        if (g.Level >= IdentificationLevel.Class && g.Class != AircraftClass.Unknown)
+            tokens.Add(new(SpeechWord.ContactClass, (int)g.Class * (g.Members.Count > 1 ? -1 : 1)));
+        if (typed)
+        {
+            if (g.Hedged)
+                tokens.Add(new(SpeechWord.Hedge));
+            tokens.Add(new(SpeechWord.ContactType, g.Members.Count, g.CalledType!.Family));
+        }
+    }
+
+    /// <summary>Clock, coarse range and high/low. Contact calls say "high", not "above you".</summary>
+    private static string ContactFrom(string who, string what, List<SpeechToken> tokens, RelativePosition relative, double? noseDegrees, bool mine)
+    {
+        var where = PilotReport.Direction(relative.BearingDegrees, noseDegrees, mine);
+        tokens.Add(where.Token);
+        tokens.Add(new(SpeechWord.RangeBand, PilotReport.RangeBand(relative.RangeMetres)));
+        tokens.Add(new(SpeechWord.Vertical, relative.AltitudeDeltaMetres));
+        return $"{who}, {what}, {where.Text}, {PilotReport.Range(relative.RangeMetres)}, {HighLow(relative.AltitudeDeltaMetres)}.";
+    }
+
+    private static bool WithPlayer(LiveContact reporter, LookResult look, ContactTracker tracker, RadioSettings settings) =>
+        reporter.Relative.RangeMetres <= settings.InFormationMetres
+        || PilotReport.CanSeePlayer(reporter, look.Player, look.PlayerFix, tracker, settings);
+
+    private static bool Engaged(SightedGroup g) =>
+        g.Members.Any(m => Distance(g.Reporter, m.Target) <= PilotReport.EngagedMetres);
+
+    private static RelativePosition? RelativeTo(LiveContact origin, IReadOnlyList<SightedContact> members)
+    {
+        var p = members[0].Target.Fix.Position;
+        var centre = new WorldPoint(
+            members.Average(m => m.Target.Fix.Position.North),
+            members.Average(m => m.Target.Fix.Position.East),
+            members.Average(m => m.Target.Fix.Position.Altitude),
+            p.Frame);
+        return Navigation.Relative(origin.Fix.Position, centre);
+    }
 }

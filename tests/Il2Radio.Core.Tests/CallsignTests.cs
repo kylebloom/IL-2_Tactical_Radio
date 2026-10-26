@@ -206,6 +206,76 @@ public class CallsignTests
         }
     }
 
+    // Reported in a flight: the German voice said cs_bird_09 ("Lumme", heard as "Luma") while the chat showed
+    // the English table's "Canary". The text must name the word the speaker's voice says.
+    [Fact]
+    public void Text_uses_the_callsign_word_the_speakers_voice_says()
+    {
+        _tracker.CallsignWords = (country, callsign) => country == 201 && callsign == 9 ? "Lumme" : null;
+        _tracker.SetPlan(MissionPlan.FromBlocks(MissionFileParser.Parse(new StringReader(Plan.Replace("Callsign = 8;", "Callsign = 9;"))))
+            with { CallsignNames = new Dictionary<int, string> { [9] = "Canary", [12] = "Eagle" } });
+        _acmi.Feed(Acmi.Header + "#0\n");
+        LogFlightMember(PlayerName, 4, isPlayer: true);
+        LogFlightMember("Heinz Koelzig", 1);
+        Frame(Player(), Mate("a", "Heinz Koelzig", 0, 17_000), Acmi.Object("x", 0, -3000, 1000, "Bert Lange", "Axis"));
+
+        var mate = Assert.Single(FlightCommands.FlightPosition(_tracker).Replies);
+        Assert.StartsWith("Lumme one, I am at your three o'clock", mate.Text);
+        Assert.Equal([new(SpeechWord.Callsign, 9), new SpeechToken(SpeechWord.Speaker, 1)], mate.Tokens!.Take(2));
+
+        // No word from the voice for callsign 12: the install's English word stays.
+        Assert.Contains(FriendlyPositionsCommand.Execute(_tracker).Replies, r => r.Text.StartsWith("Eagle one,", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Callsign_words_set_after_the_contacts_rename_them()
+    {
+        Start(Names);
+        LogFlightMember("Heinz Koelzig", 1);
+        Frame(Player(), Mate("a", "Heinz Koelzig", 0, 17_000));
+        Assert.StartsWith("Oriole one,", Assert.Single(FlightCommands.FlightPosition(_tracker).Replies).Text);
+
+        _tracker.CallsignWords = (country, callsign) => callsign == 8 ? "Pirol" : null;
+
+        Assert.StartsWith("Pirol one,", Assert.Single(FlightCommands.FlightPosition(_tracker).Replies).Text);
+    }
+
+    [Fact]
+    public void Voice_pack_manifest_names_what_its_callsign_clips_say()
+    {
+        var pack = VoicePack.Parse("""
+            { "name": "test", "clips": { "callsign.9": "cs_bird_09.ogg" }, "words": { "callsign.9": "Lumme" } }
+            """, Path.Combine(Path.GetTempPath(), "test.json"), null)!;
+
+        Assert.Equal("Lumme", pack.Word("callsign.9"));
+        Assert.Equal("Lumme", pack.Word("CALLSIGN.9"));
+        Assert.Null(pack.Word("callsign.8"));
+    }
+
+    [Fact]
+    public void German_game_pack_names_every_callsign_clip()
+    {
+        string manifest = RepoFile("voices", "il2-ger.json");
+        var pack = VoicePack.Parse(File.ReadAllText(manifest), manifest, il2Root: "C:/il2")!;
+
+        var callsignKeys = pack.Keys.Where(k => k.StartsWith("callsign.", StringComparison.Ordinal)).ToList();
+        Assert.Equal(45, callsignKeys.Count);
+        Assert.All(callsignKeys, k => Assert.False(string.IsNullOrWhiteSpace(pack.Word(k)), $"{k} has no word"));
+        Assert.Equal("Lumme", pack.Word("callsign.9")); // heard in a flight (Кайра = guillemot; the English table says "Canary")
+    }
+
+    private static string RepoFile(params string[] parts)
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            string path = Path.Combine([dir.FullName, .. parts]);
+            if (File.Exists(path))
+                return path;
+        }
+
+        throw new FileNotFoundException(string.Join("/", parts));
+    }
+
     [Fact]
     public void Clip_voice_says_the_callsign_word_before_the_number_when_it_has_one()
     {

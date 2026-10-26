@@ -2,7 +2,7 @@
 
 A companion app for IL-2 Sturmovik: Great Battles single-player Career. It answers numpad radio requests with live, honestly-limited information from the game's own outputs (mission logs, Tacview ACMI read through on-demand Volume Shadow Copy), spoken by the game's pilot voices and shown in RTSS's on-screen display.
 
-For bug reports, use the `il2-radio-bugfix` agent (`.claude/agents/il2-radio-bugfix.md`); its triage steps and symptom map apply to any bug fix.
+For bug reports, use the `il2-radio-bugfix` agent (`.claude/agents/il2-radio-bugfix.md`); its triage steps and symptom map apply to any bug fix. For new features, use `il2-radio-feature` (`.claude/agents/il2-radio-feature.md`); its recipes cover adding commands, settings, data sources and voice or chat capabilities.
 
 Read before changing anything:
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how every subsystem works, data flow, conventions, pitfalls.

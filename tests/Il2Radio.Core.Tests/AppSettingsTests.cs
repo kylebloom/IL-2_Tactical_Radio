@@ -1,5 +1,6 @@
 using Il2Radio.Core.Input;
 using Il2Radio.Core.Osd;
+using Il2Radio.Core.Radio;
 using Il2Radio.Core.Settings;
 
 namespace Il2Radio.Core.Tests;
@@ -17,6 +18,8 @@ public class AppSettingsTests
         Assert.Equal(defaults.ToJson(), parsed.ToJson());
         Assert.Equal("rtss", parsed.Chat.Output);
         Assert.Equal("Num1", parsed.Keys.FriendlyPositions);
+        Assert.Equal("pilot", parsed.Realism);
+        Assert.Equal(RadioRealism.Pilot, parsed.RealismMode);
     }
 
     [Fact]
@@ -27,6 +30,7 @@ public class AppSettingsTests
         Assert.Contains("\"il2Path\": null", json);
         Assert.Contains("\"rtssZoom\": null", json);
         Assert.Contains("\"recordingReminderSeconds\": 60", json);
+        Assert.Contains("\"realism\": \"pilot\"", json);
     }
 
     [Fact]
@@ -48,6 +52,7 @@ public class AppSettingsTests
         Assert.Equal("F12", settings.Keys.Quit);
         Assert.Equal("Num1", settings.Keys.FriendlyPositions);
         Assert.True(settings.RadioWait);
+        Assert.Equal("pilot", settings.Realism);
     }
 
     [Fact]
@@ -71,6 +76,7 @@ public class AppSettingsTests
     [InlineData("""{ "radioWaitRatio": 1 }""", "radioWaitRatio")]
     [InlineData("""{ "recordingReminderSeconds": -1 }""", "recordingReminderSeconds")]
     [InlineData("""{ "voice": " " }""", "voice")]
+    [InlineData("""{ "realism": "radar" }""", "realism")]
     [InlineData("""{ "chat": { "output": "screen" } }""", "chat.output")]
     [InlineData("""{ "chat": { "rtssPosition": "centre" } }""", "chat.rtssPosition")]
     [InlineData("""{ "chat": { "rtssColumns": 10 } }""", "chat.rtssColumns")]

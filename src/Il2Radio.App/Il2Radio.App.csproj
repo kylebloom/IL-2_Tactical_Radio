@@ -11,7 +11,8 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
     <TargetFramework>net10.0-windows</TargetFramework>
     <AssemblyName>Il2Radio</AssemblyName>
     <RootNamespace>Il2Radio.App</RootNamespace>

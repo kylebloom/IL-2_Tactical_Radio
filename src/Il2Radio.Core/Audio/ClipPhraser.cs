@@ -14,11 +14,19 @@ namespace Il2Radio.Core.Audio;
 /// <c>callsign.&lt;IL-2 callsign number&gt;</c> (8 = "Oriole"), <c>number.1</c>–<c>number.20</c>,
 /// <c>group</c>, <c>pair</c>, <c>separated</c>,
 /// <c>clock.1</c>–<c>clock.12</c>, <c>compass.n|ne|e|se|s|sw|w|nw</c>, <c>steer</c>,
-/// <c>range.close</c>, <c>range.1</c>, <c>range.2</c>, ... (kilometres), <c>range.far</c>,
+/// <c>range.close</c>, <c>range.1</c>, <c>range.2</c>, ... (kilometres), <c>range.far</c>, <c>range.few</c>,
 /// <c>vertical.above|below|level</c>, <c>altitude</c> + <c>altitude.&lt;metres, nearest 100&gt;</c>,
 /// <c>heading</c>, <c>information</c>, <c>withus</c>,
 /// <c>class.fighter|fighters|attack|attacks|bomber|bombers|recon|recons|transport</c>,
-/// <c>nocontacts</c> (no game clip; that reply uses text-to-speech) and the optional <c>contact.type</c>.
+/// <c>nocontacts</c> (no game clip), the optional <c>contact.type</c>, <c>side.enemy|friendly</c>, <c>hedge</c>,
+/// <c>few</c>, <c>many</c>, <c>onme</c> and <c>cannotsee</c>.
+/// <para>
+/// With a phrase synthesizer's word list (<see cref="SynthWords"/>), the tokens the game's recordings
+/// can't say at all (no contacts, with us / in formation, the aircraft type, the side, "possible",
+/// "a few kilometres", "a few" / "many", "on me", "I cannot see you") are
+/// spoken by it instead, in place, so the rest of the reply keeps the game's own voice. Numbers the clips
+/// say coarsely (18 km as "long range", altitude) are never handed to the synthesizer.
+/// </para>
 /// </remarks>
 public static class ClipPhraser
 {
@@ -31,22 +39,43 @@ public static class ClipPhraser
     private static readonly string[] Compass = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
 
     /// <summary>The clip keys to play, in order, or null when a required token has no clip.</summary>
-    public static IReadOnlyList<string>? Phrase(IReadOnlyList<SpeechToken> tokens, Func<string, bool> hasClip)
+    public static IReadOnlyList<string>? Phrase(IReadOnlyList<SpeechToken> tokens, Func<string, bool> hasClip) =>
+        PhraseSegments(tokens, hasClip, synthWords: null)?.Select(s => s.Key!).ToList();
+
+    /// <summary>
+    /// The reply as clips and synthesized words, in order, or null when a required token can be said by
+    /// neither. Neighbouring synthesized words are merged into one segment, so the synthesizer speaks them
+    /// as one phrase ("vermutlich Jaks").
+    /// </summary>
+    /// <param name="synthWords">The synthesizer's words for a token (<see cref="SynthWords.For"/>), or null without one.</param>
+    public static IReadOnlyList<PhraseSegment>? PhraseSegments(IReadOnlyList<SpeechToken> tokens, Func<string, bool> hasClip, Func<SpeechToken, string?>? synthWords)
     {
-        var keys = new List<string>();
+        var segments = new List<PhraseSegment>();
 
-        void Optional(params string?[] candidates)
+        bool Optional(params string?[] candidates)
         {
-            if (candidates.FirstOrDefault(k => k is not null && hasClip(k)) is { } key)
-                keys.Add(key);
+            if (candidates.FirstOrDefault(k => k is not null && hasClip(k)) is not { } key)
+                return false;
+            segments.Add(PhraseSegment.Clip(key));
+            return true;
         }
 
-        bool Required(params string?[] candidates)
+        bool Required(params string?[] candidates) => Optional(candidates);
+
+        // A gap the recordings can't fill: the synthesizer's words, if it has them.
+        bool Synth(SpeechToken t, bool required)
         {
-            int before = keys.Count;
-            Optional(candidates);
-            return keys.Count > before;
+            if (synthWords?.Invoke(t) is not { Length: > 0 } text)
+                return false;
+            if (segments.Count > 0 && segments[^1] is { IsClip: false } previous)
+                segments[^1] = previous with { Text = $"{previous.Text} {text}", Required = previous.Required || required };
+            else
+                segments.Add(PhraseSegment.Synth(text, required));
+            return true;
         }
+
+        // The class word stands in for the type only when nothing can name the type.
+        bool typeSpoken = tokens.Any(t => t.Word == SpeechWord.ContactType && (hasClip("contact.type") || (t.Name is not null && synthWords?.Invoke(t) is { Length: > 0 })));
 
         foreach (var t in tokens)
         {
@@ -86,32 +115,60 @@ public static class ClipPhraser
                     if (hasClip(altitude))
                     {
                         Optional("altitude");
-                        keys.Add(altitude);
+                        segments.Add(PhraseSegment.Clip(altitude));
                     }
                     break;
                 case SpeechWord.Heading:
                     if (hasClip("heading") && hasClip(CompassKey(t.Value)))
-                        keys.AddRange(["heading", CompassKey(t.Value)]);
+                        segments.AddRange([PhraseSegment.Clip("heading"), PhraseSegment.Clip(CompassKey(t.Value))]);
                     break;
                 case SpeechWord.InFormation:
-                    ok = Required("information", "withus");
+                    ok = Required("information", "withus") || Synth(t, required: true);
                     break;
                 case SpeechWord.WithUs:
-                    ok = Required("withus", "information");
+                    ok = Required("withus", "information") || Synth(t, required: true);
                     break;
                 case SpeechWord.ContactCount:
                     Optional(t.Value == 2 ? "pair" : t.Value > 2 ? "group" : null);
                     break;
-                case SpeechWord.ContactClass:
+                case SpeechWord.ContactSide:
+                    _ = Optional(t.Value < 0 ? "side.enemy" : "side.friendly") || Synth(t, required: false);
+                    break;
+                case SpeechWord.ContactClass when !typeSpoken:
                     Optional(ClassKey(t.Value), ClassKey(-t.Value));
                     break;
+                case SpeechWord.Hedge:
+                    _ = Optional("hedge") || Synth(t, required: false);
+                    break;
                 case SpeechWord.ContactType:
-                    // The game has no clips naming aircraft types: the class word ("fighters") stands in,
-                    // and the type stays in the on-screen text. A custom pack can supply "contact.type".
-                    Optional("contact.type");
+                    // The game has no clips naming aircraft types: a synthesizer names it, else the class word
+                    // ("fighters") stands in and the type stays in the on-screen text. A custom pack can supply "contact.type".
+                    _ = Optional("contact.type") || Synth(t, required: false);
                     break;
                 case SpeechWord.NoContacts:
-                    ok = Required("nocontacts");
+                    ok = Required("nocontacts") || Synth(t, required: true);
+                    break;
+                case SpeechWord.RangeBand:
+                    if (t.Value <= 0)
+                        ok = Required("range.close");
+                    else if (t.Value >= 2)
+                        ok = Required("range.far");
+                    else
+                        _ = Optional("range.few") || Synth(t, required: false);
+                    break;
+                case SpeechWord.OnMe:
+                    _ = Optional("onme") || Synth(t, required: false);
+                    break;
+                case SpeechWord.CannotSee:
+                    _ = Optional("cannotsee") || Synth(t, required: false);
+                    break;
+                case SpeechWord.ContactAmount:
+                    if (t.Value >= 4)
+                        _ = Optional("many") || Synth(t, required: false);
+                    else if (t.Value >= 3)
+                        _ = Optional("few") || Synth(t, required: false);
+                    else if (t.Value == 2)
+                        Optional("pair");
                     break;
             }
 
@@ -119,7 +176,7 @@ public static class ClipPhraser
                 return null;
         }
 
-        return keys.Count > 0 ? keys : null;
+        return segments.Count > 0 ? segments : null;
     }
 
     /// <summary>"class.fighter" / "class.fighters" (negative value = plural) for an <see cref="AircraftClass"/>.</summary>

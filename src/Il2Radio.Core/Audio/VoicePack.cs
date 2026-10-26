@@ -17,7 +17,8 @@ namespace Il2Radio.Core.Audio;
 ///   "root": "{il2}/data/Audio/radio/ger",
 ///   "speakers": ["actor51", "actor52"],
 ///   "preprocessed": true,
-///   "clips": { "clock.3": "{speaker}/varDir/03clock.ogg" }
+///   "clips": { "clock.3": "{speaker}/varDir/03clock.ogg" },
+///   "words": { "callsign.9": "Lumme" }
 /// }
 /// </code>
 /// </example>
@@ -36,7 +37,17 @@ public sealed class VoicePack
         ManifestPath = manifestPath;
         Root = root;
         _clips = new Dictionary<string, string>(m.Clips ?? [], StringComparer.OrdinalIgnoreCase);
+        _words = new Dictionary<string, string>(m.Words ?? [], StringComparer.OrdinalIgnoreCase);
     }
+
+    private readonly Dictionary<string, string> _words;
+
+    /// <summary>
+    /// What a clip says, for the on-screen text, when the manifest's <c>words</c> gives it: the German
+    /// game recordings say "Lumme" for <c>callsign.9</c>, where the install's English table says "Canary".
+    /// Null when the manifest doesn't say.
+    /// </summary>
+    public string? Word(string key) => _words.TryGetValue(key, out var word) && word.Trim() is { Length: > 0 } w ? w : null;
 
     public string Name { get; }
     public string Language { get; }
@@ -153,5 +164,7 @@ public sealed class VoicePack
         public bool PreProcessed { get; init; }
 
         public Dictionary<string, string>? Clips { get; init; }
+
+        public Dictionary<string, string>? Words { get; init; }
     }
 }

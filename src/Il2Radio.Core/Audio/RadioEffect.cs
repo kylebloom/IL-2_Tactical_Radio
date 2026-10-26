@@ -22,6 +22,24 @@ public sealed record RadioEffectSettings
     /// <summary>Output volume 0–1, independent of the game's volume.</summary>
     public double Volume { get; init; } = 0.8;
 
+    /// <summary>End with the squelch click; off when only colouring a fragment that is joined into a longer transmission.</summary>
+    public bool SquelchClick { get; init; } = true;
+
+    /// <summary>
+    /// Colours clean synthesized speech so it can be joined into IL-2's pre-processed pilot clips.
+    /// Measured on German actors 51–54 (2026-10-25), level-matched at 16 kHz: the voice sits in
+    /// 0.8–2.2 kHz, with almost nothing below 300 Hz and a mean near 1.5 kHz, on a hiss floor about
+    /// a third of the RMS. Piper's raw voice is centred near 110 Hz, most of its energy below 300 Hz,
+    /// so a 300–3000 Hz pass stays boomy beside those clips. Applied at 16 kHz (see <c>ClipVoice</c>):
+    /// a 700 Hz low cut, a 2.6 kHz top, compression, and enough in-band hiss that the noise floor
+    /// agrees after the shared level match. No squelch; the transmission adds its own.
+    /// </summary>
+    public static RadioEffectSettings LikeGameRecordings { get; } = new()
+    {
+        LowCutHz = 700, HighCutHz = 2600, Drive = 6.0, NoiseLevel = 0.04,
+        SquelchOpenMs = 0, SquelchCloseMs = 0, Volume = 1.0, SquelchClick = false,
+    };
+
     /// <summary>Settings for a transmission from <paramref name="rangeFraction"/> of maximum radio range: further is noisier.</summary>
     public RadioEffectSettings ForRange(double rangeFraction) =>
         this with { NoiseLevel = NoiseLevel + 0.12 * Math.Clamp(rangeFraction, 0, 1) };
@@ -57,7 +75,7 @@ public static class RadioEffect
             double noise = Filter(noiseBand, random.NextDouble() * 2 - 1) * noiseLevel * 4;
 
             double mix = speech * 0.75 + noise;
-            if (i >= total - sampleRate / 500) // ~2 ms click as the squelch closes
+            if (settings.SquelchClick && i >= total - sampleRate / 500) // ~2 ms click as the squelch closes
                 mix += 0.3 * (((i & 1) == 0) ? 1 : -1);
 
             // Soft limiter before the volume control: |tanh| < 1, so the output can never clip.

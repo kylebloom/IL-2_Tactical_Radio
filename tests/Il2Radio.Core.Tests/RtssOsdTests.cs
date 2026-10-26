@@ -351,6 +351,58 @@ public class ChatTimelineTests
     }
 
     [Fact]
+    public void Paging_newer_from_a_short_oldest_page_shows_the_newest_page_not_the_empty_live_view()
+    {
+        // Five lines in pages of three: the oldest page is clamped to lines 1-3, only two lines
+        // back from the newest page. Paging newer from it must show the newest page again, not
+        // jump past it to the live view, which by now has faded to nothing (looks "hidden").
+        var timeline = new ChatTimeline(holdSeconds: 14, fadeSeconds: 2, maxLines: 4);
+        timeline.Post([Line(ChatLineKind.Request, "call0", 0), Line(ChatLineKind.Reply, "one0", 1), Line(ChatLineKind.Reply, "two0", 2)], T0);
+        timeline.Snapshot(T0.AddSeconds(5));
+        timeline.Post([Line(ChatLineKind.Request, "call1", 0), Line(ChatLineKind.Reply, "one1", 1)], T0.AddSeconds(10));
+        timeline.Snapshot(T0.AddSeconds(15));
+        var at = T0.AddSeconds(60);
+        Assert.Empty(Texts(timeline, 60));
+
+        timeline.Scroll(+1, at);
+        Assert.Equal("Radio log 3-5 of 5", Texts(timeline, 60).Last());
+        timeline.Scroll(+1, at);
+        Assert.Equal("Radio log 1-3 of 5", Texts(timeline, 60).Last());
+        timeline.Scroll(-1, at);
+        Assert.Equal(["two0", "call1", "one1", "Radio log 3-5 of 5"], Texts(timeline, 60));
+        timeline.Scroll(-1, at);
+        Assert.Empty(Texts(timeline, 60));
+    }
+
+    [Fact]
+    public void Paging_back_and_forward_revisits_the_same_pages()
+    {
+        var timeline = new ChatTimeline(holdSeconds: 14, fadeSeconds: 2, maxLines: 4); // pages of 3
+        for (int i = 0; i < 10; i++)
+        {
+            timeline.Post([Line(ChatLineKind.Request, $"call{i}", 0)], T0.AddSeconds(i));
+            timeline.Snapshot(T0.AddSeconds(i));
+        }
+        var at = T0.AddSeconds(60);
+
+        var back = new List<string>();
+        for (int i = 0; i < 4; i++)
+        {
+            timeline.Scroll(+1, at);
+            back.Add(Texts(timeline, 60).Last());
+        }
+        Assert.Equal(["Radio log 8-10 of 10", "Radio log 5-7 of 10", "Radio log 2-4 of 10", "Radio log 1-3 of 10"], back);
+
+        var forward = new List<string>();
+        for (int i = 0; i < 3; i++)
+        {
+            timeline.Scroll(-1, at);
+            forward.Add(Texts(timeline, 60).Last());
+        }
+        Assert.Equal(["Radio log 2-4 of 10", "Radio log 5-7 of 10", "Radio log 8-10 of 10"], forward);
+    }
+
+    [Fact]
     public void History_keeps_lines_beyond_the_line_limit_and_the_fade()
     {
         var timeline = WithNineLines(maxLines: 20);

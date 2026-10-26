@@ -17,9 +17,9 @@ This is the one supported way to fly with the radio. You don't need anything els
 
 **Every flight**
 1. Start RivaTuner Statistics Server; it sits in the system tray.
-2. Double-click `Il2Radio.exe` and accept the administrator prompt. Administrator rights are needed to read aircraft positions while IL-2 is writing them.
-   - It checks that it runs as administrator, that IL-2 exports its mission log and Tacview tracks, and that RTSS is running. Each check prints `[ok]` or `[!!]` with what to do; problems are also shown in game at the start of each mission.
-   - **On the first start**, if IL-2 is closed and isn't exporting that data yet, it offers to switch it on in `startup.cfg` (type `y`; the file is backed up first). If IL-2 is running, close it and start the radio again.
+2. Double-click `Il2Radio.exe` and accept the administrator prompt. Administrator rights are needed to read aircraft positions while IL-2 is writing them. A window opens; leave it open while you fly.
+   - The Status tab checks that it runs as administrator, that IL-2 exports its mission log and Tacview tracks, and that RTSS is running. Each check is `[ok]` or `[!!]` with what to do; problems are also shown in game at the start of each mission.
+   - **On the first start**, if IL-2 is closed and isn't exporting that data yet, it asks whether to switch it on in `startup.cfg` (Yes; the file is backed up first). If IL-2 is running, close it and start the radio again.
 3. Start IL-2 and fly a Career mission. Once you're in the cockpit, press **LCtrl+R** to start track recording; the positions come from that track. If no track is recording a minute into the mission, the radio reminds you in game.
 4. With Num Lock on, use the numpad:
 
@@ -34,16 +34,17 @@ This is the one supported way to fly with the radio. You don't need anything els
    | Numpad 7 / 9 | Page back / forward through earlier radio messages |
    | Numpad . | Quit (also writes a session report to `logs\` next to the program) |
 
-   Closing the window also quits cleanly.
+   Closing the window, or Quit, also quits cleanly.
 
 ### Settings
-The first start creates `settings.json` next to `Il2Radio.exe` with every setting at its default. Edit it with any text editor and restart the radio. A misspelt name or a bad value is reported by name when the radio starts; delete the file to get the defaults back.
+The first start creates `settings.json` next to `Il2Radio.exe` with every setting at its default. Change them on the Settings tab and choose Save and apply. The volume takes effect on the next transmission; anything else restarts the radio in the same window. A bad value is reported by name and nothing is restarted until it is fixed. Reset to defaults puts the form back; it is saved only when you apply. The file can still be edited by hand (delete it to get the defaults back).
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `il2Path` | `null` | IL-2 folder (the one with `data\startup.cfg`). `null` looks in `IL2_PATH` and the usual Steam folders |
 | `volume` | `0.8` | Radio volume, 0 to 1, independent of IL-2's own |
 | `voice` | `"auto"` | `auto`: the game's pilot voices by nation, else Windows TTS. `tts`: always TTS. Or a voice pack's name or folder |
+| `realism` | `"pilot"` | `pilot`: a friendly says only what that pilot could know (below). `precise`: bearings, ranges and counts from the live track |
 | `radioWait`, `radioWaitRatio` | `true`, `1.8` | Hold replies while IL-2's own radio is talking ([details](#audio)) |
 | `recordingReminderSeconds` | `60` | Remind you to press LCtrl+R this long into a mission without a track; `0` never |
 | `chat.output` | `"rtss"` | `rtss` (in game, works in fullscreen), `overlay` (windowed IL-2 only), `window` (e.g. a second screen) or `off` |
@@ -51,6 +52,8 @@ The first start creates `settings.json` next to `Il2Radio.exe` with every settin
 | `chat.rtssColumns`, `chat.rtssZoom`, `chat.rtssCell` | `72`, `null`, `null` | RTSS line width; OSD zoom (`null`: from IL-2's RTSS profile); character size `[w, h]` for the right and bottom presets |
 | `chat.screen`, `chat.windowArea`, `chat.fontPixels` | `0`, `[0.015, 0.40, 0.42, 0.30]`, `16` | Overlay/window: screen number, area (left, top, width, height as screen fractions), font size on a 1080-line screen |
 | `chat.keepClear` | `true` | Keep the text out of IL-2's own message line and subtitles |
+| `piper.enabled` | `false` | The optional German phrase voice for what the game's recordings can't say (type names, "nothing sighted"; [details](#german-phrase-voice-optional)). When `true` and not yet installed, the radio asks before downloading anything |
+| `piper.voice`, `piper.folder`, `piper.lengthScale` | `"de_DE-thorsten-medium"`, `null`, `0.9` | Which Piper voice (`de_DE-thorsten-medium`, `de_DE-thorsten-high`, `de_DE-thorsten-low`, `de_DE-karlsson-low`); where it is stored (`null`: a `piper` folder beside `Il2Radio.exe`, never the IL-2 folder); speaking pace (below 1 is faster) |
 | `keys.*` | `Num1` … `Num.` | One key per action: `friendlyPositions`, `flightPosition`, `rejoin`, `enemyContacts`, `identifyContact`, `menu`, `older`, `newer`, `quit`. Names: `Num0`–`Num9`, `Num.`, `Num+`, `Num-`, `Num*`, `Num/`, `F1`–`F24`, `A`–`Z`, `0`–`9`, `Insert`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, arrows, `Pause`, `ScrollLock`. `""` leaves an action unbound |
 
 Keys are watched, not taken: IL-2 still receives them, so pick keys IL-2 doesn't use. The options are described in more detail under [Radio text](#radio-text-chat), where they appear as `live` flags of the diagnostic console.
@@ -101,18 +104,20 @@ The UDP telemetry port can only point to one listener. If you use SRS or a bass-
 ### Radio keys (Num Lock on; they work while IL-2 has focus)
 | Key | Command | Example reply |
 |---|---|---|
-| Numpad 1 | Request friendly positions | "Oriole one, five aircraft together, bearing one-one-zero, approximately 18 kilometres, altitude 2700 metres." |
-| Numpad 2 | Request flight position | "Oriole one, flight of five at your three o'clock, approximately 18 kilometres, 2400 metres above you." |
-| Numpad 3 | Separated, request rejoin | "Oriole one, steer one-one-zero, approximately 18 kilometres. We are at 2700 metres, heading zero-eight-zero." |
-| Numpad 4 | Request enemy contacts | "Oriole two, four Yaks, at your four o'clock, approximately 8 kilometres, high." |
-| Numpad 5 | Identify nearest contact | "Oriole two, contact at your two o'clock, under two kilometres: a Messerschmitt, enemy, heading east." |
+| Numpad 1 | Request friendly positions | "Oriole one, five aircraft together, at your three o'clock, far, level with you." |
+| Numpad 2 | Request flight position | "Oriole one, flight of five, at your three o'clock, far, above you." |
+| Numpad 3 | Separated, request rejoin | "Oriole one, at your four o'clock, far, above you. Heading east, altitude 2500 metres." |
+| Numpad 4 | Request enemy contacts | "Oriole two, four Yaks, at your four o'clock, a few kilometres, high." |
+| Numpad 5 | Identify nearest contact | "Oriole two, contact at your two o'clock, close: a Messerschmitt, enemy, heading east." |
 | Numpad 0 | Show or hide the command list in the chat output | |
 | Numpad 7 / 9 | Page back / forward through the radio log (paging forward past the newest page returns to the live lines) | |
 | Numpad . | Quit (writes the evidence file) | |
 
 Aircraft within 2 km and 600 m of each other answer as one group through their lowest-numbered member. Only your own flight answers Numpad 2 and 3.
 
-**Contacts and identification (Numpad 4 and 5) aren't radar.** Your flight reports only what its pilots could plausibly see. Flying alone, any friendly in radio range reports instead.
+Those examples are `realism` `pilot`, the default. A pilot gives a position relative to you when he can see you, or when your own flight is in formation. Otherwise your flight says "I cannot see you" and gives its heading and altitude ("Oriole one, I cannot see you. Heading east, altitude 2500 metres."), and another unit stays silent on Numpad 1. Ranges are close, a few kilometres, or far. Set `realism` to `precise` for the earlier wording ("bearing one-one-zero, approximately 18 kilometres, altitude 2700 metres", and a steer on Numpad 3).
+
+**Contacts and identification (Numpad 4 and 5) aren't radar.** Your flight reports only what its pilots could plausibly see. Flying alone, any friendly in radio range reports instead. In `pilot`, that call is in your clock when the spotter is with you. A pilot in the fight who cannot see you says "four Yaks, on me." One who can see them but not you gives his own clock ("at my three o'clock, a few kilometres"). Up to four aircraft are counted once their shape is visible; otherwise the call is "a few" or "many".
 - **Spotting:** likelier for larger aircraft and at closer range. Haze, darkness, a target below you against the ground, and cloud between observer and target all make it harder. It's a game-design model, not physiology.
 - **What gets said:** depends on range. In order of getting closer, about four ranges apart for a fighter:
   - a speck: "unidentified aircraft"
@@ -123,14 +128,14 @@ Aircraft within 2 km and 600 m of each other answer as one group through their l
   Bombers can be made out further away than fighters.
 - **Uncertainty:** near the edge of identification range, a call can be hedged ("possible Yaks") or mistake a look-alike (Yak ↔ Messerschmitt), and a closer look corrects it.
 - **Memory:** spotted aircraft stay tracked for 60 s, so identifications don't flicker between calls.
-- **Voices:** recorded game clips cover class words ("fighters", "bombers"), clock positions, ranges and high/low. Replies naming a type use text-to-speech.
+- **Voices:** recorded game clips cover class words ("fighters", "bombers"), clock positions, ranges and high/low. The game has no recordings of type names or "no contacts": the class word stands in for the type, and "no contacts" uses Windows text-to-speech, unless the optional [German phrase voice](#german-phrase-voice-optional) is installed.
 
 Pilots identify themselves by their Career callsign and number from the mission plan ("Oriole two"). The callsign words come from your install's `data\GUI\DefaultCallsigns.eng`. If a pilot isn't in the plan or the word is unknown, he says "Number two", or his name if he's from another unit.
 
 ### Audio
 Replies are spoken by **IL-2's own radio voice actors** in the speaker's language: German for Luftwaffe (country 201), Russian for VVS (101), English for RAF and USAAF (102, 103). The app reads the recordings straight from your install (`data\Audio\radio\…\*.ogg`) and joins fragments such as number, clock position, range and high/low. Nothing is copied out of the game or modified. No setup is needed if IL-2 is in the default Steam folder; otherwise pass `--game <IL-2 root>` or set `IL2_PATH`.
 
-The game's fragments are coarser than the English text, which still appears on screen. For example, "flight of five at your three o'clock, approximately 18 kilometres, 2400 metres above you" is spoken as *Oriole · one · group · three o'clock · long range · high*. Replies the recordings can't express ("you are with us") fall back to Windows text-to-speech.
+The game's fragments are coarser than the English text, which still appears on screen. For example, "flight of five, at your three o'clock, far, above you" is spoken as *Oriole · one · group · three o'clock · long range · high*. "A few kilometres", "on me" and "I cannot see you" stay on screen; with the German phrase voice they are spoken too. Replies the recordings can't express ("you are with us", "no contacts") fall back to Windows text-to-speech, or use the optional [German phrase voice](#german-phrase-voice-optional).
 
 Every transmission then goes through a radio effect:
 - squelch burst at the start, tail and click at the end
@@ -156,6 +161,24 @@ dotnet run --project src/Il2Radio.Diag -- audio-meter --seconds 120     # watch 
 **Your own recordings:** put WAV or OGG clips and a `voice.json` manifest in `voices/<name>/`. Your packs take precedence over the game's for the countries they list. Keys and the manifest format are in [voices/README.md](voices/README.md). Please don't copy IL-2's audio files into this repository.
 
 **Unverified:** the meaning of each German or Russian fragment is inferred from its file name. For the English set it was spot-checked with speech recognition. If `voice-check --play` shows a clip saying something else, fix its line in `voices/il2-ger.json`.
+
+#### German phrase voice (optional)
+The game's German pilots can't say aircraft types or "no contacts". With `"piper": { "enabled": true }` in `settings.json`, a local neural voice ([Piper](https://github.com/rhasspy/piper), runs on your PC, no internet once installed) says just those words, in German, in the middle of the recorded reply:
+
+| Reply text (on screen) | Spoken |
+|---|---|
+| Toni Seemann, four Yaks, at your four o'clock, approximately 8 kilometres, high. | *group* · **Jaks** · *four o'clock* · *8 km* · *high* |
+| … contact at your four o'clock …: four Yaks, enemy, heading south. | *group* · **Jaks Feind** · *four o'clock* · *8 km* · *high* |
+| Oriole one, no contacts. | *Oriole* · *one* · **nichts gesichtet** |
+
+*Italics* are the game's recordings, **bold** is Piper. The fill-in is cut to the same band as those recordings (about 700 Hz to 2.6 kHz) and given a matching hiss, and Piper is asked for a flatter delivery than its normal read-aloud voice. It also says "vermutlich" (possible), "Feind"/"eigene" (enemy/friendly) and "du bist bei uns" (with us). Numbers stay with the recordings (18 km is still "long range"), and Soviet, British and American speakers are unaffected.
+
+Turn it on in Settings. The first time, the radio lists what would be downloaded, from where, and how big (about 86 MB: the Piper engine from GitHub, 22.5 MB, and the voice from Hugging Face, 63 MB), and downloads only if you choose Yes. Each file is checked against its published size and hash before use (the engine's release has no published hash, so it is checked by size and contents). Everything goes into a `piper` folder beside `Il2Radio.exe`; delete it to remove the voice. Without it, or if it fails, the radio works as before.
+
+```bash
+dotnet run --project src/Il2Radio.Diag -- piper-setup --piper C:\Il2Radio\piper     # same prompt, for the developer console
+dotnet run --project src/Il2Radio.Diag -- say --piper C:\Il2Radio\piper             # samples with the phrase voice
+```
 
 ### Radio text (chat)
 IL-2 offers no way for an external program to write into its chat in single-player (see [FEASIBILITY.md](docs/FEASIBILITY.md#radio-text-in-il-2s-chat--message-area-researched-2026-10-25)). Instead, `live` shows the exchange through one of three outputs.

@@ -296,6 +296,36 @@ public class EnemyCommandTests
     }
 
     [Fact]
+    public void Type_level_calls_carry_the_type_and_side_for_a_german_phrase_voice()
+    {
+        string[] pack = ["number.1", "pair", "group", "class.fighter", "class.fighters", "clock.3", "range.close", "range.1", "vertical.level", "vertical.above"];
+        Frame(10, Enemy("e1", 0, 600), Enemy("e2", 50, 650));
+
+        var contacts = Assert.Single(EnemyCommands.EnemyContacts(_tracker, SureSpotting).Replies);
+        var identify = Assert.Single(EnemyCommands.Identify(_tracker, SureSpotting).Replies);
+
+        Assert.Contains(new SpeechToken(SpeechWord.ContactType, 2, "Yak"), contacts.Tokens!);
+        Assert.DoesNotContain(contacts.Tokens!, t => t.Word == SpeechWord.ContactSide); // "pair of Yaks": the text names no side
+        Assert.Equal(["number.1", "pair", "\"Jaks\"", "clock.3", "range.close", "vertical.level"],
+            Audio.ClipPhraser.PhraseSegments(contacts.Tokens!, pack.Contains, Audio.SynthWords.German)!.Select(s => s.ToString()));
+        Assert.Contains("two Yaks, enemy", identify.Text);
+        Assert.Equal(["number.1", "pair", "\"Jaks Feind\"", "clock.3", "range.close", "vertical.level"],
+            Audio.ClipPhraser.PhraseSegments(identify.Tokens!, pack.Contains, Audio.SynthWords.German)!.Select(s => s.ToString()));
+    }
+
+    [Fact]
+    public void Side_level_calls_say_the_side_but_never_a_type()
+    {
+        Frame(10, Enemy("e1", 0, 2_600)); // fighter at 2.6 km: side (3 km) but not type (1.8 km)
+
+        var contacts = Assert.Single(EnemyCommands.EnemyContacts(_tracker, SureSpotting).Replies);
+
+        Assert.Contains("enemy fighter", contacts.Text);
+        Assert.Contains(new SpeechToken(SpeechWord.ContactSide, -1), contacts.Tokens!);
+        Assert.DoesNotContain(contacts.Tokens!, t => t.Word == SpeechWord.ContactType);
+    }
+
+    [Fact]
     public void No_contacts_has_no_game_clip_and_falls_back_to_tts()
     {
         Frame(10);

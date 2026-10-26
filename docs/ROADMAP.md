@@ -6,7 +6,7 @@ What's left, in priority order. How each part works today is in [ARCHITECTURE.md
 - Numpad 1–5: friendly positions, flight position, rejoin, enemy contacts, identify.
 - Career callsigns, the game's own German and Russian pilot voices with a radio effect, and RTSS on-screen chat in exclusive fullscreen.
 
-**Built, not yet flown:** `Il2Radio.exe` (`src/Il2Radio.App`), the player's program. It is one self-contained file that asks for administrator rights itself and reads `settings.json` beside it. At start-up it checks rights, the `startup.cfg` outputs (offering to set them) and RTSS. During a mission it reminds the player to press LCtrl+R. See ARCHITECTURE.md, "The app". `Il2Radio.Diag` stays as the developer tool.
+**Built, not yet flown:** `Il2Radio.exe` (`src/Il2Radio.App`), the player's program. It is one self-contained file that asks for administrator rights itself and opens a window: flight status, and settings saved to `settings.json` beside it. At start-up it checks rights, the `startup.cfg` outputs (asking before it changes them) and RTSS. During a mission it reminds the player to press LCtrl+R. See ARCHITECTURE.md, "The app". `Il2Radio.Diag` stays the developer console.
 
 ## 1. Joystick buttons
 Today only the numpad works (`NumpadKeys`, polled with `GetAsyncKeyState`). The original brief asked for joystick buttons too.
@@ -23,21 +23,32 @@ Nothing is Stalingrad-specific, but nothing has been tested elsewhere either.
 
 ## Optional extras
 - **Calls the flight makes without being asked**, such as "Oriole three, I'm hit, going down", using mission-log events (damage, kill, bail-out, landing). Only if wanted; the brief asked for no unnecessary chatter.
-- **A downloadable German voice** (Piper, 20–110 MB) for phrases the game's recordings can't say: aircraft type names, "no contacts". Ask before downloading anything.
+- ~~**A downloadable German voice** (Piper, 20–110 MB) for phrases the game's recordings can't say: aircraft type names, "no contacts". Ask before downloading anything.~~ Built 2026-10-25, off by default (`piper.enabled`); see ARCHITECTURE.md, "German phrase voice". Possible next steps: a Russian voice for the VVS side (`ru_RU-dmitri-medium`, CC0) with Russian words in `SynthWords`; German words for altitude and three-digit headings, if mixing voices turns out to sound acceptable.
 - **Sharing UDP telemetry** with SRS or bass-shaker tools. Only matters if they're used. Positions come from Tacview now, so telemetry is only shown in the monitor and could be switched off entirely.
 
 ## Still to check in a flight
 These were built and unit-tested but not yet seen or heard in IL-2:
-- `Il2Radio.exe` as a whole: the elevation prompt on double-click, the published single file (WMI shadow copies, System.Speech and the overlay inside a single-file bundle), and a clean exit when the console window is closed (the RTSS slot released, `logs\evidence-*.md` written);
+- realism `pilot` (the default; `precise` is on the Settings tab): a wingman you can see answers with your clock and close / a few kilometres / far, and high, level or low; your own flight, when it cannot see you, gives an eight-point heading and altitude to the nearest 500 m and no steer (Numpad 3); another unit that cannot see you stays silent on Numpad 1; a pilot fighting away from you says the enemy is on him, and one who can see a distant aircraft but not you gives his own clock. The chat carries "on me" and "I cannot see you"; the game clips say the clock, close or far, and the heading.
+- `Il2Radio.exe` as a whole: the elevation prompt on double-click, the published single file (WMI shadow copies, System.Speech and the overlay inside a single-file bundle), and a clean exit when the window is closed (the RTSS slot released, `logs\evidence-*.md` written);
+- the window itself: Status shows mission, track, you, the start-up lines and the radio's own replies, and does not name aircraft the radio did not report; Save and apply changes the volume on the next transmission and comes back with new keys and chat output; Yes is required before `startup.cfg` or the German voice is touched;
 - the track-recording reminder: whether "running mission" (log chunks grown in the last 90 s) and "recording" (the newest ACMI locked) hold up in a real Career mission, including pauses and a second recording segment;
 - start-up warnings re-shown in game at each mission start;
 - the mic-click's loudness and length;
 - the RTSS presets other than the default (`bottom-left`, `top-right`, ...) and the estimated character size behind them (`--rtss-cell`);
 - the window overlay's absolute font size (`--chat-font`) and whether IL-2 colours chat speaker names;
 - whether replies really hold back while IL-2's own pilots are talking (`Il2AudioMeter` threshold, `--radio-wait-ratio`);
-- what the German callsign recordings actually say (`voice-check --country 201 --play`). Their mapping is inferred from file names;
+- what the German callsign recordings actually say (`voice-check --country 201 --play`, which prints the word the chat shows next to each clip). Their mapping is inferred from file names, and only callsign 9 ("Lumme") has been heard; the other German words in `voices/il2-ger.json` `words` are translations of the Russian list, to be corrected by ear;
 - enemy callouts in German, using the class word in place of the type;
-- whether the visibility model feels too sharp-eyed or too blind (`VisibilitySettings`).
+- the German phrase voice (Piper), none of which has run on this machine yet, because nothing was downloaded during development:
+  - the consent dialog and the download itself (turn it on in Settings, then Yes): sizes and hashes should match, and the engine's SHA-256 (not published by GitHub) is shown for the record;
+  - that `piper.exe` 2023.11.14-2 starts from `piper\runtime\piper\piper.exe` (the zip's `piper\` folder is how the release workflow packs the cmake install; not extracted or run here), finds `espeak-ng-data` beside it, and answers one WAV path per stdin line with `--output_dir` (read from its source, not run);
+  - UTF-8 on stdin (the type names are spelt for a German voice: "Jak", "Lawotschkin", "Iljuschin", "Ju zweiundfünfzig"): no garbled words;
+  - how a Piper word sounds between the game actor's clips after the 2026-10-25 retune (700 Hz–2.6 kHz, hiss matched to actors 51–54, flatter Piper delivery). The spectrum now lines up with those clips on the bench; the remaining question is whether the change of voice mid-sentence is acceptable in a flight;
+  - latency: the first phrase after start (model load, warmed in the background) and later ones (cached per text);
+  - the German words themselves ("nichts gesichtet", "Feind", "eigene", "vermutlich") as radio phrasing;
+  - in the double-clicked, elevated `Il2Radio.exe` window, the Yes/No dialog and the download progress show and finish before the Status tab takes over;
+- whether the visibility model feels too sharp-eyed or too blind (`VisibilitySettings`);
+- radio-log paging after the 2026-10-25 fix (Num9 from the short oldest page used to blank the chat): with 8–13 lines logged, Num7, Num7, Num9 should show the newest page again, and only a further Num9 returns to the live lines. Also whether Num7 = older / Num9 = newer suits the player, or Num9 (the PgUp key) should be older.
 
 ## Known gaps in the visibility model
 Sun glare and bounces out of the sun; cockpit blind spots; terrain masking; combat awareness from log events (an aircraft shooting at you is obviously spotted); time of day uses mission start time plus recording time, not the real game clock.

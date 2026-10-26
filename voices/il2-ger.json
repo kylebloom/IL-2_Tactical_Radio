@@ -127,5 +127,57 @@
     "range.far": "{speaker}/varRange/long.ogg",
     "vertical.above": "{speaker}/varDir/toHigh.ogg",
     "vertical.below": "{speaker}/varDir/toLow.ogg"
+  },
+  // What the callsign clips say, shown in the chat in place of the English table's word so text and voice agree.
+  // The German actors say German words for the original Russian list (data\GUI\DefaultCallsigns.rus), not the
+  // English table's: callsign 9 (Кайра, guillemot) was heard as "Lumme" in a flight, where the English table says "Canary".
+  // Only 9 has been heard; the rest are INFERRED translations of the Russian words. Check by ear with
+  // Il2Radio.Diag voice-check --country 201 --play and correct a word here if it differs.
+  "words": {
+    "callsign.1": "Storch",
+    "callsign.2": "Kormoran",
+    "callsign.3": "Rabe",
+    "callsign.4": "Saatkrähe",
+    "callsign.5": "Drossel",
+    "callsign.6": "Kranich",
+    "callsign.7": "Fink",
+    "callsign.8": "Pirol",
+    "callsign.9": "Lumme",
+    "callsign.10": "Schwan",
+    "callsign.11": "Marabu",
+    "callsign.12": "Adler",
+    "callsign.13": "Pelikan",
+    "callsign.14": "Mauersegler",
+    "callsign.15": "Rotschenkel",
+    "callsign.16": "Ente",
+    "callsign.17": "Fasan",
+    "callsign.18": "Möwe",
+    "callsign.19": "Bergfink",
+    "callsign.20": "Habicht",
+    "callsign.21": "Akazie",
+    "callsign.22": "Buche",
+    "callsign.23": "Ulme",
+    "callsign.24": "Eiche",
+    "callsign.25": "Hainbuche",
+    "callsign.26": "Fichte",
+    "callsign.27": "Jasmin",
+    "callsign.28": "Weide",
+    "callsign.29": "Ahorn",
+    "callsign.30": "Linde",
+    "callsign.31": "Magnolie",
+    "callsign.32": "Erle",
+    "callsign.33": "Tanne",
+    "callsign.34": "Eberesche",
+    "callsign.35": "Kiefer",
+    "callsign.36": "Thuja",
+    "callsign.37": "Pistazie",
+    "callsign.38": "Maulbeere",
+    "callsign.39": "Eukalyptus",
+    "callsign.40": "Esche",
+    "callsign.41": "Sturm",
+    "callsign.42": "Taifun",
+    "callsign.43": "Orkan",
+    "callsign.44": "Zyklon",
+    "callsign.45": "Vulkan"
   }
 }

@@ -24,7 +24,14 @@ internal sealed class VoiceSelection
     public IReadOnlyList<ClipVoice> Voices => _voices;
     public IReadOnlyList<string> Problems { get; }
 
-    public static VoiceSelection TtsOnly { get; } = new("tts", [], null, []);
+    /// <summary>
+    /// The optional phrase voice (Piper) that fills what a clip voice of its language can't say: type names,
+    /// "nothing sighted". Never used for TTS-only speakers or packs in another language. Null: none.
+    /// </summary>
+    public IPhraseSynthesizer? Synth { get; set; }
+
+    /// <summary>A new TTS-only selection each time, so setting <see cref="Synth"/> on one never leaks into another.</summary>
+    public static VoiceSelection TtsOnly => new("tts", [], null, []);
 
     /// <summary>Folders searched for manifests: ./voices, then voices next to the executable.</summary>
     public static IReadOnlyList<string> Folders =>
@@ -98,11 +105,20 @@ internal sealed class VoiceSelection
                                   ?? _voices.FirstOrDefault(v => v.Pack.Countries.Count == 0)
                                : null);
 
+    /// <summary>
+    /// The callsign word the voice for this country says (its manifest's <c>words</c>), so the on-screen text
+    /// names the same callsign; null when that voice is TTS (which reads the text) or its pack doesn't say.
+    /// </summary>
+    public string? CallsignWord(int country, int callsign) => For(country)?.Pack.Word($"callsign.{callsign}");
+
     public string Describe() => Mode switch
     {
         "tts" => "Windows text-to-speech only",
         "auto" when _voices.Count == 0 => "Windows text-to-speech (no voice packs found)",
-        "auto" => $"by nation: {string.Join("; ", _voices.Select(v => $"{v.Pack.Name} [{(v.Pack.Countries.Count == 0 ? "any" : string.Join(",", v.Pack.Countries))}]"))}; TTS fallback",
-        _ => $"{Mode} for every speaker; TTS fallback",
+        "auto" => $"by nation: {string.Join("; ", _voices.Select(v => $"{v.Pack.Name} [{(v.Pack.Countries.Count == 0 ? "any" : string.Join(",", v.Pack.Countries))}]"))}{SynthNote}; TTS fallback",
+        _ => $"{Mode} for every speaker{SynthNote}; TTS fallback",
     };
+
+    private string SynthNote =>
+        Synth is { } s && _voices.Any(v => v.CanUse(s)) ? $"; {s.Name} fills gaps in {string.Join(", ", _voices.Where(v => v.CanUse(s)).Select(v => v.Pack.Name))}" : "";
 }

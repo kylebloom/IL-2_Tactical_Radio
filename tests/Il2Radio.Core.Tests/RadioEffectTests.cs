@@ -69,6 +69,35 @@ public class RadioEffectTests
     }
 
     [Fact]
+    public void Phrase_colouring_cuts_the_bass_and_the_top_of_a_close_miked_voice()
+    {
+        // Tuned to the German pilot clips: voice around 1.5 kHz, little below 300 Hz, little above 2.6 kHz.
+        var tone = RadioEffectSettings.LikeGameRecordings with { NoiseLevel = 0 };
+        double bass = Passed(110, tone);
+        double voice = Passed(1200, tone);
+        double top = Passed(6000, tone);
+
+        Assert.True(bass < voice * 0.05, $"110 Hz ({bass:F4}) should be far below the 1.2 kHz voice band ({voice:F4})");
+        Assert.True(top < voice * 0.1, $"6 kHz ({top:F4}) should be well below the voice band ({voice:F4})");
+    }
+
+    [Fact]
+    public void Phrase_colouring_lays_a_hiss_floor_under_silence_without_a_squelch()
+    {
+        var coloured = RadioEffect.Apply(new short[Rate], Rate, RadioEffectSettings.LikeGameRecordings, seed: 1);
+
+        Assert.Equal(Rate, coloured.Length);
+        Assert.InRange(Rms(coloured), 0.02, 0.09);
+    }
+
+    /// <summary>RMS of the middle of a tone passed through <paramref name="settings"/>.</summary>
+    private static double Passed(double hz, RadioEffectSettings settings)
+    {
+        var output = RadioEffect.Apply(Sine(hz, 1.0, 0.25), Rate, settings, seed: 1);
+        return Rms(output.AsSpan(Rate / 10, Rate / 2));
+    }
+
+    [Fact]
     public void Zero_volume_is_silent_and_output_is_deterministic_per_seed()
     {
         Assert.All(RadioEffect.Apply(Sine(1000, 0.2), Rate, new RadioEffectSettings { Volume = 0 }), s => Assert.Equal(0, s));

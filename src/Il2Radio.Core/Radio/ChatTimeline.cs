@@ -23,7 +23,7 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
     private readonly List<(ChatLine Line, DateTime ShownUtc)> _history = [];
     private View _view;
     private IReadOnlyList<ChatLine> _menu = [];
-    private int _historyOffset; // lines skipped back from the newest
+    private int _historyPage; // pages back from the newest; 0 is the newest page
     private DateTime _viewUntilUtc;
 
     public double HoldSeconds => holdSeconds;
@@ -85,19 +85,24 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
     /// newest page; stepping forward past it returns to the live lines. The view closes by itself
     /// after the hold time without a key.
     /// </summary>
+    /// <remarks>
+    /// Pages are counted, not lines: the oldest page is clamped to the first lines of the log, so it
+    /// can overlap the next one, and paging newer from it must land on the next page, never past
+    /// the newest one (which would drop to the live lines, usually faded to nothing).
+    /// </remarks>
     public void Scroll(int pages, DateTime nowUtc)
     {
         lock (_gate)
         {
             Advance(nowUtc);
             bool browsing = _view == View.History && nowUtc < _viewUntilUtc;
-            int offset = browsing ? _historyOffset + pages * PageSize : pages > 0 ? 0 : -1;
-            if (offset < 0)
+            int page = browsing ? _historyPage + pages : pages > 0 ? 0 : -1;
+            if (page < 0)
             {
                 _view = View.Live;
                 return;
             }
-            _historyOffset = Math.Min(offset, Math.Max(0, _history.Count - PageSize));
+            _historyPage = Math.Min(page, OldestPage);
             _view = View.History;
             _viewUntilUtc = nowUtc.AddSeconds(holdSeconds);
         }
@@ -145,10 +150,14 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
             _shown.RemoveAt(0);
     }
 
+    /// <summary>The index of the oldest page (0 when the whole log fits on one page).</summary>
+    private int OldestPage => Math.Max(0, (_history.Count - PageSize + PageSize - 1) / PageSize);
+
     /// <summary>One page of past lines, each stamped with its local time, and a footer saying where in the log it is.</summary>
     private List<VisibleChatLine> HistoryPage(DateTime nowUtc, float alpha)
     {
-        int end = _history.Count - _historyOffset, start = Math.Max(0, end - PageSize);
+        int offset = Math.Min(Math.Min(_historyPage, OldestPage) * PageSize, Math.Max(0, _history.Count - PageSize));
+        int end = _history.Count - offset, start = Math.Max(0, end - PageSize);
         var page = _history.Skip(start).Take(end - start).Select(h =>
         {
             string time = h.ShownUtc.ToLocalTime().ToString("HH:mm:ss");

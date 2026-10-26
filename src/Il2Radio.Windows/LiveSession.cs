@@ -37,9 +37,32 @@ internal sealed record LiveOptions
     /// <summary>Remind to start track recording when none runs this long into a mission; zero switches it off.</summary>
     public TimeSpan RecordingReminder { get; init; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>How much a pilot is allowed to say. The player's program and Diag default to pilot.</summary>
+    public RadioRealism Realism { get; init; } = RadioRealism.Pilot;
+
     /// <summary>The app's start-up check lines, kept in the compact view (otherwise its alerts are listed).</summary>
     public IReadOnlyList<string> StartupResults { get; init; } = [];
+
+    /// <summary>
+    /// When set, the player's compact view is delivered here and the console is left alone.
+    /// Diag leaves this null and keeps the scrolling monitor.
+    /// </summary>
+    public Action<CompactStatus>? Status { get; init; }
 }
+
+/// <summary>
+/// The player's view of a flight. It carries the mission, the track and what the radio itself said,
+/// and never names aircraft the radio did not report.
+/// </summary>
+internal sealed record CompactStatus(
+    string Mission,
+    string Track,
+    string You,
+    string? Chat,
+    string? Audio,
+    string Exchange,
+    IReadOnlyList<string> Notices,
+    IReadOnlyList<string> Notes);
 
 /// <summary>
 /// Watches every data source IL-2 exposes during a mission and records evidence of what each one
@@ -53,7 +76,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     /// <summary>Log chunks arrive about every 33 s while a mission runs; none for this long means it ended or is paused.</summary>
     private static readonly TimeSpan MissionQuietAfter = TimeSpan.FromSeconds(90);
 
-    private readonly ContactTracker _tracker = new();
+    // Callsign words as the speaker's voice says them, so the chat names the callsign the voice does.
+    private readonly ContactTracker _tracker = new() { CallsignWords = voice is null ? null : voice.Voices.CallsignWord };
     private readonly SightingMemory _sightings = new(); // what the flight has spotted, kept between calls
     private readonly DateTime _startedUtc = DateTime.UtcNow;
     private readonly object _gate = new();
@@ -109,7 +133,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(stop);
         if (options.Duration is { } d)
             cts.CancelAfter(d);
-        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+        if (options.Status is null)
+            Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
         if (ShadowCopy.IsElevated())
         {
@@ -136,7 +161,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
 
         try { await udp; } catch (OperationCanceledException) { }
         string summary = WriteSummary();
-        Console.WriteLine($"\nEvidence summary written to {summary}");
+        if (options.Status is null)
+            Console.WriteLine($"\nEvidence summary written to {summary}");
         return 0;
     }
 
@@ -223,7 +249,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
 
     private string Describe(RadioCommand command, string? problem = null)
     {
-        var settings = new RadioSettings();
+        var settings = new RadioSettings { Realism = options.Realism };
         var result = RadioCommands.Execute(command, _tracker, settings, _sightings);
         Transmitted?.Invoke(command, result, _tracker.Player, problem);
         voice?.Say(result.Replies.Select(r => new Transmission(
@@ -612,6 +638,22 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
 
     private void Render()
     {
+        if (options.Status is { } report)
+        {
+            CompactStatus snapshot;
+            lock (_gate)
+                snapshot = Snapshot(DateTime.UtcNow);
+            try
+            {
+                report(snapshot);
+            }
+            catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException)
+            {
+                // The window went away between polls.
+            }
+            return;
+        }
+
         var sb = new StringBuilder();
         lock (_gate)
         {
@@ -633,39 +675,46 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         Console.Write(sb.ToString());
     }
 
+    /// <summary>The player's view, for the window. Caller holds _gate.</summary>
+    private CompactStatus Snapshot(DateTime now)
+    {
+        var missionStart = RunningMissionStartUtc(now);
+        string mission = missionStart is { } start
+            ? $"running since {start.ToLocalTime():HH:mm:ss}"
+            : _chunkStamp is null ? "waiting for a mission to start" : "none running (ended, paused or loading)";
+        string track = _recording
+            ? $"recording ({Path.GetFileName(_acmiPath)}, {_acmiSizeOnDisk / 1024} KB): positions are live"
+            : missionStart is not null
+                ? "NOT recording: press LCtrl+R in the cockpit, or nobody can report positions"
+                : "not recording (press LCtrl+R once in the cockpit)";
+        var player = _tracker.Player;
+        int flight = _tracker.Contacts.Count(c => c.InPlayerFlight && !c.IsPlayer);
+        string you = player is null
+            ? "not identified yet (the mission log names you once you spawn)"
+            : $"{player.DisplayName} in {player.TypeName}{(flight > 0 ? $", {flight} others in your flight" : "")}";
+        IReadOnlyList<string> notices = options.StartupResults.Count > 0
+            ? options.StartupResults
+            : _missionAlerts.Select(alert => $"Warning     {alert}").ToArray();
+        var notes = _notes.Where(n => !n.MonitorOnly).TakeLast(8).Select(n => n.Text).ToArray();
+        return new CompactStatus(mission, track, you, ChatStatus?.Invoke(), AudioStatus?.Invoke(), _lastExchange.TrimEnd(), notices, notes);
+    }
+
     /// <summary>The player's view. Shows nothing about other aircraft beyond what the radio itself said. Caller holds _gate.</summary>
     private void RenderCompact(StringBuilder sb, DateTime now)
     {
-        var missionStart = RunningMissionStartUtc(now);
-        sb.AppendLine(missionStart is { } start
-            ? $"Mission     running since {start.ToLocalTime():HH:mm:ss}"
-            : $"Mission     {(_chunkStamp is null ? "waiting for a mission to start" : "none running (ended, paused or loading)")}");
-        sb.AppendLine(_recording
-            ? $"Track       recording ({Path.GetFileName(_acmiPath)}, {_acmiSizeOnDisk / 1024} KB): positions are live"
-            : missionStart is not null
-                ? "Track       NOT recording: press LCtrl+R in the cockpit, or nobody can report positions"
-                : "Track       not recording (press LCtrl+R once in the cockpit)");
-        var player = _tracker.Player;
-        int flight = _tracker.Contacts.Count(c => c.InPlayerFlight && !c.IsPlayer);
-        sb.AppendLine(player is null
-            ? "You         not identified yet (the mission log names you once you spawn)"
-            : $"You         {player.DisplayName} in {player.TypeName}{(flight > 0 ? $", {flight} others in your flight" : "")}");
+        var status = Snapshot(now);
+        sb.AppendLine($"Mission     {status.Mission}");
+        sb.AppendLine($"Track       {status.Track}");
+        sb.AppendLine($"You         {status.You}");
         if (options.StartupResults.Count > 0)
-        {
             sb.AppendLine("At start-up:");
-            foreach (string line in options.StartupResults)
-                sb.AppendLine(line);
-        }
-        else
-        {
-            foreach (string alert in _missionAlerts)
-                sb.AppendLine($"Warning     {alert}");
-        }
+        foreach (string line in status.Notices)
+            sb.AppendLine(line);
         sb.AppendLine(new string('─', 110));
-        sb.AppendLine(_lastExchange.TrimEnd());
+        sb.AppendLine(status.Exchange);
         sb.AppendLine(new string('─', 110));
-        foreach (var note in _notes.Where(n => !n.MonitorOnly).TakeLast(8))
-            sb.AppendLine(note.Text);
+        foreach (string note in status.Notes)
+            sb.AppendLine(note);
     }
 
     /// <summary>The developer monitor: every source, every contact, every reason for silence. Caller holds _gate.</summary>

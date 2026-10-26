@@ -78,6 +78,10 @@ public static class AircraftTypes
         return AircraftType.Unknown;
     }
 
+    /// <summary>The type with this <see cref="AircraftType.Family"/> (as carried by a speech token), or null.</summary>
+    public static AircraftType? ByFamily(string family) =>
+        family == AircraftType.Unknown.Family ? AircraftType.Unknown : Table.Select(e => e.Type).FirstOrDefault(t => t.Family == family);
+
     /// <summary>
     /// Silhouettes pilots confused in practice. Used for hedged ("looks like") misidentification at the
     /// edge of identification range; never applied to a confident identification.
