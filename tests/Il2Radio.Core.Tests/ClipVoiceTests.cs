@@ -72,7 +72,7 @@ public class ClipVoiceTests
             new(SpeechWord.Speaker, 3), new(SpeechWord.Separated, 0), new(SpeechWord.Steer, 110), new(SpeechWord.Range, 4_000),
             new(SpeechWord.Vertical, 100), new(SpeechWord.Altitude, 2_700), new(SpeechWord.Heading, 80));
 
-        Assert.Equal(["number.3", "compass.e", "range.4"], keys);
+        Assert.Equal(["number.3", "compass.e", "range.4", "compass.e"], keys); // a heading is the compass clip alone
     }
 
     [Fact]
@@ -87,12 +87,27 @@ public class ClipVoiceTests
     }
 
     [Fact]
-    public void Missing_required_clip_means_the_reply_cannot_be_phrased()
+    public void A_missing_clip_drops_only_that_part()
     {
-        Assert.Null(Phrase([.. GameVocabulary.Except(["clock.3"])], new(SpeechWord.Speaker, 1), new(SpeechWord.Clock, 3), new(SpeechWord.Range, 5_000)));
-        Assert.Null(Phrase(GameVocabulary, new(SpeechWord.Speaker, 1), new(SpeechWord.WithUs))); // the game has no "with us"
-        Assert.Null(Phrase(GameVocabulary, new(SpeechWord.Speaker, 1), new(SpeechWord.InFormation)));
-        Assert.Null(Phrase([], new SpeechToken(SpeechWord.Speaker, 1)));
+        Assert.Equal(["number.1", "range.5"], Phrase([.. GameVocabulary.Except(["clock.3"])], new(SpeechWord.Speaker, 1), new(SpeechWord.Clock, 3), new(SpeechWord.Range, 5_000)));
+        Assert.Equal(["number.1"], Phrase(GameVocabulary, new(SpeechWord.Speaker, 1), new(SpeechWord.WithUs))); // the game has no "with us"
+        Assert.Null(Phrase([], new SpeechToken(SpeechWord.Speaker, 1))); // nothing to play: chat only
+    }
+
+    [Theory]
+    [InlineData(SpeechWord.WithUs)]
+    [InlineData(SpeechWord.InFormation)]
+    [InlineData(SpeechWord.NoContacts)]
+    public void A_whole_message_without_a_recording_is_the_acknowledgement(SpeechWord word)
+    {
+        Assert.Equal(["number.1", "ack"], Phrase([.. GameVocabulary, "ack"], new(SpeechWord.Speaker, 1), new(word)));
+    }
+
+    [Fact]
+    public void An_uncounted_strength_is_a_group_and_an_enemy_down_is_target_destroyed()
+    {
+        Assert.Equal(["group", "class.fighters"], Phrase([.. GameVocabulary, "class.fighters"], new(SpeechWord.ContactAmount, 4), new(SpeechWord.ContactClass, -1)));
+        Assert.Equal(["number.3", "destroyed"], Phrase([.. GameVocabulary, "destroyed"], new(SpeechWord.Speaker, 3), new(SpeechWord.Destroyed)));
     }
 
     [Fact]
@@ -186,7 +201,7 @@ public class ClipVoiceTests
             Assert.NotNull(utterance);
             Assert.Equal(["number.1", "clock.3", "range.far"], utterance.Keys);
             Assert.Equal(3 * 4800 - 2 * 400, utterance.Samples.Length);
-            Assert.Null(new ClipVoice(pack).Render(tokens, speakerId: 2, sampleRate: 16_000)); // speaker b can't say "far"
+            Assert.DoesNotContain("range.far", new ClipVoice(pack).Render(tokens, speakerId: 2, sampleRate: 16_000)?.Keys ?? []); // speaker b can't say "far"
 
             Assert.Equal("Test pack", Assert.Single(VoicePack.Discover([root, root], null)).Name); // finds mypack/voice.json once
         }

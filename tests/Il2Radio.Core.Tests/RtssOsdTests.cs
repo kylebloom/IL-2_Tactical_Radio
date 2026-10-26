@@ -228,16 +228,27 @@ public class RtssOsdTests
     }
 
     [Fact]
-    public void Long_replies_wrap_under_the_text_column()
+    public void Long_replies_wrap_past_the_time_not_under_the_whole_speaker()
     {
         var text = RtssOsd.Format(
-            [Visible(ChatLineKind.Reply, "Heinz Koelzig", "Number one, five aircraft together, bearing one-one-zero, approximately 18 kilometres, altitude 2700 metres.")],
+            [Visible(ChatLineKind.Reply, "[16:44:52]  [Lumme 1] [Heinz Koelzig]", "Five aircraft together, bearing one-one-zero, approximately 18 kilometres, altitude 2700 metres.")],
             tags: false, wrapColumns: 60);
 
         var lines = text.Split('\n');
         Assert.True(lines.Length > 1);
         Assert.All(lines, l => Assert.True(l.Length <= 60, l));
-        Assert.All(lines.Skip(1), l => Assert.StartsWith(new string(' ', "Heinz Koelzig: ".Length), l));
+        Assert.All(lines.Skip(1), l => Assert.StartsWith(new string(' ', ChatTimeline.StampWidth), l));
+        Assert.All(lines.Skip(1), l => Assert.NotEqual(' ', l[ChatTimeline.StampWidth]));
+    }
+
+    [Fact]
+    public void A_short_speaker_wraps_under_the_text_column()
+    {
+        var text = RtssOsd.Format(
+            [Visible(ChatLineKind.Reply, "[A]", "Number one, five aircraft together, bearing one-one-zero, approximately 18 kilometres, altitude 2700 metres.")],
+            tags: false, wrapColumns: 40);
+
+        Assert.All(text.Split('\n').Skip(1), l => Assert.StartsWith("     ", l));
     }
 
     [Fact]
@@ -502,18 +513,18 @@ public class ChatTimelineTests
         // The line was shown at T0, before this sample. 14:12:00 at T0+2s puts it at 14:11:58.
         clock.Sync(new DateTime(1942, 8, 26, 14, 12, 0), T0.AddSeconds(2), authoritative: true);
         var page = timeline.Snapshot(T0.AddSeconds(3));
-        Assert.Equal("14:11:58 x", page[0].Line.Speaker);
+        Assert.Equal("[14:11:58]  x", page[0].Line.Speaker);
 
         timeline.Post([new ChatLine(ChatLineKind.System, "", "no reply", -1, TimeSpan.Zero)], T0.AddSeconds(3));
         timeline.Scroll(+1, T0.AddSeconds(4));
         page = timeline.Snapshot(T0.AddSeconds(4));
-        Assert.Equal("14:12:01 no reply", page[^2].Line.Text);
+        Assert.Equal("[14:12:01]  no reply", page[^2].Line.Text);
 
         timeline.FreezeMissionTime();
         clock.Reset(T0.AddSeconds(10));
         clock.Sync(new DateTime(1942, 8, 26, 18, 0, 0), T0.AddSeconds(10), authoritative: true);
         page = timeline.Snapshot(T0.AddSeconds(11));
-        Assert.Equal("14:11:58 x", page[0].Line.Speaker);
-        Assert.Equal("14:12:01 no reply", page[1].Line.Text);
+        Assert.Equal("[14:11:58]  x", page[0].Line.Speaker);
+        Assert.Equal("[14:12:01]  no reply", page[1].Line.Text);
     }
 }

@@ -16,7 +16,6 @@ internal sealed class FlightHost
     private RadioVoice? _voice;
     private Il2AudioMeter? _meter;
     private IChatSink? _chat;
-    private PiperSynthesizer? _piper;
     private int _generation;
 
     public RadioVoice? Voice => _voice;
@@ -24,7 +23,7 @@ internal sealed class FlightHost
     public bool Running => _run is { IsCompleted: false };
 
     /// <summary>A voice, chat output or session is still held and must be released on the way out.</summary>
-    public bool NeedsRelease => Running || _voice is not null || _chat is not null || _meter is not null || _piper is not null;
+    public bool NeedsRelease => Running || _voice is not null || _chat is not null || _meter is not null;
 
     /// <summary>The session ended on its own. Null is the quit key; otherwise it failed.</summary>
     public event Action<Exception?>? Ended;
@@ -32,11 +31,9 @@ internal sealed class FlightHost
     /// <summary>
     /// Stops any current session, runs the checks and starts again. Returns a reason when it did not
     /// start (IL-2 or the voice); the check lines are still in <see cref="StartupChecks.Results"/>.
-    /// The answer to the German-voice question (yes or no; not later) goes to <paramref name="rememberPiper"/> to be saved.
     /// </summary>
     public async Task<string?> StartAsync(AppSettings settings, string home, Action<CompactStatus> status,
-        Func<string, bool> confirmOutputs, Func<IReadOnlyList<string>, PiperAnswer> confirmPiper,
-        Action<PiperProgress> piperProgress, Action<string> piperLog, Action<bool> rememberPiper, CancellationToken cancel = default)
+        Func<string, bool> confirmOutputs, CancellationToken cancel = default)
     {
         await StopAsync();
         int generation = Interlocked.Increment(ref _generation);
@@ -74,7 +71,6 @@ internal sealed class FlightHost
 
         try
         {
-            _piper = await StartupChecks.PhraseVoice(settings, voices, install, confirmPiper, piperProgress, piperLog, rememberPiper, cancel);
             if (cancel.IsCancellationRequested)
             {
                 ReleaseOutputs();
@@ -101,6 +97,7 @@ internal sealed class FlightHost
                 Realism = settings.RealismMode,
                 UnaskedRoute = settings.Unasked?.Route ?? true,
                 UnaskedContacts = settings.Unasked?.Contacts ?? true,
+                UnaskedLosses = settings.Unasked?.Losses ?? true,
                 StartupResults = StartupChecks.Results.ToArray(),
                 Status = status,
             }, _voice);
@@ -157,11 +154,9 @@ internal sealed class FlightHost
         DisposeQuiet(_chat);
         DisposeQuiet(_meter);
         DisposeQuiet(_voice);
-        DisposeQuiet(_piper);
         _chat = null;
         _meter = null;
         _voice = null;
-        _piper = null;
     }
 
     /// <summary>One output failing to close must not skip the others (the RTSS slot, in particular).</summary>

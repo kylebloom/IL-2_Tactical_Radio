@@ -408,8 +408,10 @@ public static class EnemyCommands
             if (Engaged(g) || fromHim is null)
             {
                 string band = fromHim is { } r && Math.Abs(r.AltitudeDeltaMetres) >= PilotReport.LevelMetres ? $", {HighLow(r.AltitudeDeltaMetres)}" : "";
-                text = $"{who}, {what}, {seen}on me{band}.";
-                tokens.Add(new(SpeechWord.OnMe));
+                bool mates = KnownFriendly(g, look.Player);
+                text = $"{who}, {what}, {seen}{(mates ? "with me" : "on me")}{band}.";
+                if (!mates)
+                    tokens.Add(new(SpeechWord.OnMe));
                 if (fromHim is { } height && Math.Abs(height.AltitudeDeltaMetres) >= PilotReport.LevelMetres)
                     tokens.Add(new(SpeechWord.Vertical, height.AltitudeDeltaMetres));
             }
@@ -452,8 +454,10 @@ public static class EnemyCommands
             var fromHim = RelativeTo(reporter, g.Members);
             if (Engaged(g) || fromHim is null)
             {
-                text = $"{who}, {seen}on me: {id}{heading}.";
-                tokens.Add(new(SpeechWord.OnMe));
+                bool mates = KnownFriendly(g, look.Player);
+                text = $"{who}, {seen}{(mates ? "with me" : "on me")}: {id}{heading}.";
+                if (!mates)
+                    tokens.Add(new(SpeechWord.OnMe));
             }
             else
             {
@@ -500,6 +504,13 @@ public static class EnemyCommands
     private static bool WithPlayer(LiveContact reporter, LookResult look, ContactTracker tracker, RadioSettings settings) =>
         reporter.Relative.RangeMetres <= settings.InFormationMetres
         || PilotReport.CanSeePlayer(reporter, look.Player, look.PlayerFix, tracker, settings);
+
+    /// <summary>
+    /// He has made out their markings and they are all on his side. "On me" means an enemy is on him; friendly
+    /// aircraft that close are "with me" (2026-10-26 flight: "on me: friendly fighters" for a pair of 109s).
+    /// </summary>
+    private static bool KnownFriendly(SightedGroup g, Contact player) =>
+        g.Level >= IdentificationLevel.Side && g.Members.All(m => IsFriendly(player, m.Target.Contact));
 
     private static bool Engaged(SightedGroup g) =>
         g.Members.Any(m => (Navigation.Relative(g.Reporter.Fix.Position, m.Plot)?.RangeMetres ?? double.MaxValue) <= PilotReport.EngagedMetres);

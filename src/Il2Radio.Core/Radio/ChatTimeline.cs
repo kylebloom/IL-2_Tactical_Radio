@@ -67,7 +67,7 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
     {
         lock (_gate)
         {
-            int i = _pending.FindIndex(p => p.AwaitVoice && p.Line.Text == text);
+            int i = _pending.FindIndex(p => p.AwaitVoice && (p.Line.Spoken ?? p.Line.Text) == text);
             if (i >= 0)
                 _pending[i] = _pending[i] with { DueUtc = nowUtc, AwaitVoice = false };
         }
@@ -135,7 +135,7 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
                 {
                     double age = (nowUtc - s.ShownUtc).TotalSeconds;
                     float alpha = age <= holdSeconds ? 1f : (float)Math.Clamp(1 - (age - holdSeconds) / fadeSeconds, 0, 1);
-                    return new VisibleChatLine(s.Line, s.ShownUtc, alpha);
+                    return new VisibleChatLine(Stamped(s.Line, MissionTime?.At(s.ShownUtc), s.ShownUtc), s.ShownUtc, alpha);
                 }).ToList(),
             };
         }
@@ -183,17 +183,31 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
         var page = _history.Skip(start).Take(end - start).Select(h =>
         {
             Place(h, freeze: false);
-            string time = h.GameTime is { } game
-                ? game.ToString("HH:mm:ss", CultureInfo.InvariantCulture)
-                : h.ShownUtc.ToLocalTime().ToString("HH:mm:ss");
-            var line = h.Line.Speaker.Length > 0 ? h.Line with { Speaker = $"{time} {h.Line.Speaker}" } : h.Line with { Text = $"{time} {h.Line.Text}" };
-            return new VisibleChatLine(line, h.ShownUtc, alpha);
+            return new VisibleChatLine(Stamped(h.Line, h.GameTime, h.ShownUtc), h.ShownUtc, alpha);
         }).ToList();
 
         string where = _history.Count == 0 ? "Radio log is empty" : $"Radio log {start + 1}-{end} of {_history.Count}";
         page.Add(new VisibleChatLine(new ChatLine(ChatLineKind.System, "", where + HistoryHint, -1, TimeSpan.Zero), nowUtc, alpha));
         return page;
     }
+
+    /// <summary>
+    /// "[16:44:52]  " in front of the speaker (or of the text, for a line with no speaker): the mission
+    /// clock, or the wall clock before one is known.
+    /// </summary>
+    private static ChatLine Stamped(ChatLine line, DateTime? game, DateTime shownUtc)
+    {
+        string time = "[" + (game is { } g
+            ? g.ToString("HH:mm:ss", CultureInfo.InvariantCulture)
+            : shownUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture)) + "]" + TimeGap;
+        return line.Speaker.Length > 0 ? line with { Speaker = time + line.Speaker } : line with { Text = time + line.Text };
+    }
+
+    /// <summary>Between the bracketed time and the speaker.</summary>
+    public const string TimeGap = "  ";
+
+    /// <summary>How wide "[16:44:52]  " is: wrapped rows of a line indent this far, not under the whole speaker.</summary>
+    public const int StampWidth = 10 + 2;
 
     /// <summary>Fills in the mission time. Frozen lines keep whatever they already have, including none.</summary>
     private void Place(LoggedLine line, bool freeze)

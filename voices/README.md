@@ -1,6 +1,6 @@
 # Voice packs
 
-A voice pack is a JSON manifest that maps clip **keys** to audio files. Replies are spoken by joining clips in key order, then putting the result through the radio effect. When a pack can't say a required part of a reply, that reply is spoken with Windows text-to-speech instead.
+A voice pack is a JSON manifest that maps clip **keys** to audio files. Replies are spoken by joining clips in key order, then putting the result through the radio effect. What a pack can't say is left out of the audio and stays on the on-screen text; nothing else speaks in its place.
 
 The app looks for manifests in `./voices` and in the `voices` folder next to the program (`Il2Radio.exe` or `Il2Radio.Diag.exe`):
 - `*.json` directly in either folder;
@@ -42,28 +42,31 @@ Put your recordings (WAV 8/16/24/32-bit or float, or Ogg Vorbis; any rate; mono 
 Your own packs take precedence over the game's for the same country. To use one pack for every speaker, pass `--voice voices/my-voice` (or part of its name).
 
 ## Keys
-Required keys must exist for a reply to be spoken from clips. Optional keys are skipped when missing.
+Every key is optional. A part of a reply the pack has no clip for is left out of the audio, and the rest still plays; the on-screen text always carries the whole report. A reply the pack can say nothing of is text only. No other voice is mixed in.
 
-| Key | Says | Used by |
+| Key | Says | Notes |
 |---|---|---|
-| `callsign.<N>` | the speaker's career callsign word, N = IL-2 callsign number (8 = "Oriole"; see `data\GUI\DefaultCallsigns.eng`) | optional |
-| `number.1` … `number.20` | the speaker's number within his callsign, or in your flight | optional |
-| `group`, `pair` | "flight of N" / "two aircraft" (`pair` falls back to `group`) | optional |
-| `separated` | "separated" | optional |
-| `clock.1` … `clock.12` | "three o'clock" | **required** for flight position |
-| `compass.n`, `.ne`, `.e`, `.se`, `.s`, `.sw`, `.w`, `.nw` | direction (bearing, steer) | **required** for friendly positions and rejoin |
-| `steer` | "steer" (before the direction) | optional |
-| `range.close` (under 1.5 km, and pilot "close"), `range.1`, `range.2`, … (whole km), `range.far` (beyond 10 km, and pilot "far"), `range.few` | range. Pilot "a few kilometres" uses `range.few` only; it is not required | **required** when the reply states a range the pack must say (`range.close` / `range.far` in pilot mode) |
-| `vertical.above`, `vertical.below`, `vertical.level` | height relative to you (level = within 300 m) | optional |
-| `altitude` + `altitude.<metres to nearest 100>` (e.g. `altitude.2700`) | "altitude 2700 metres" | optional |
-| `heading` | "heading" (followed by the compass clip) | optional |
-| `information`, `withus` | "you are in formation with us" / "you are with us" (each falls back to the other) | **required** for those replies |
-| `class.fighter`, `class.fighters`, … `bomber(s)`, `attack(s)`, `recon(s)`, `transport` | contact class | optional (dropped when the type is spoken) |
-| `side.enemy`, `side.friendly`, `hedge` | "enemy" / "friendly", "possible" | optional |
-| `contact.type` | one generic clip for the aircraft type | optional |
-| `nocontacts` | "no contacts" | **required** for that reply |
-| `few`, `many`, `onme`, `cannotsee`, `lastseen` | pilot mode: "a few", "many", "on me", "I cannot see you", "last seen" | optional. The German phrase voice can say them; a missing clip leaves them on screen |
+| `callsign.<N>` | the speaker's career callsign word, N = IL-2 callsign number (8 = "Oriole"; see `data\GUI\DefaultCallsigns.eng`) | |
+| `number.1` … `number.20` | the speaker's number within his callsign, or in your flight | |
+| `group`, `pair` | "flight of N" / "two aircraft" (`pair` falls back to `group`) | `group` also stands in for pilot "a few" / "many" |
+| `separated` | "separated" | |
+| `clock.1` … `clock.12` | "three o'clock" | |
+| `compass.n`, `.ne`, `.e`, `.se`, `.s`, `.sw`, `.w`, `.nw` | direction (bearing, steer, heading, a cruise course) | |
+| `steer` | "steer" (before the direction) | |
+| `range.close` (under 1.5 km, and pilot "close"), `range.1`, `range.2`, … (whole km), `range.far` (beyond 10 km, and pilot "far"), `range.few` | range | pilot "a few kilometres" uses `range.few` only |
+| `vertical.above`, `vertical.below`, `vertical.level` | height relative to you (level = within 300 m) | |
+| `altitude` + `altitude.<metres to nearest 100>` (e.g. `altitude.2700`) | "altitude 2700 metres" | |
+| `heading` | "heading" (in front of the compass clip) | without it, a heading is the compass clip alone |
+| `turn.left`, `turn.right` | "turning left" / "turning right", before a cruise course | |
+| `information`, `withus` | "you are in formation with us" / "you are with us" (each falls back to the other, then to `ack`) | |
+| `nocontacts` | "no contacts" (falls back to `ack`) | |
+| `ack` | an acknowledgement ("Roger"): the placeholder for a whole message the pack has no recording of | |
+| `destroyed` | "target destroyed", for an enemy a mate saw go down | |
+| `class.fighter`, `class.fighters`, … `bomber(s)`, `attack(s)`, `recon(s)`, `transport` | contact class | also stands in for the type name |
+| `side.enemy`, `side.friendly`, `hedge` | "enemy" / "friendly", "possible" | |
+| `contact.type` | one generic clip for the aircraft type | the class word is dropped when this plays |
+| `few`, `many`, `onme`, `cannotsee`, `lastseen`, `grid` | pilot mode: "a few", "many", "on me", "I cannot see you", "last seen", "grid" | |
 
-A pack whose `language` is `de` can have its gaps (type names, side, "possible", "no contacts", "with us", and in pilot mode "a few kilometres", "a few", "many", "on me", "I cannot see you") filled by the optional German phrase voice (Piper); see the main README. A clip in the pack always wins over it. A cruise course is not one of those gaps: the number stays on the chat.
+The game packs map `ack` to `const\roger`, `turn.left`/`turn.right` to `const\trnleft`/`trnright` and `destroyed` to `const\rep_trgdestr`. Those meanings come from Windows speech recognition on the English actors, whose script matches the German and Russian file for file; the other languages have not been heard yet.
 
 Each clip is levelled to the same loudness and joined with a 25 ms crossfade. Clips with little silence at either end sound most natural.

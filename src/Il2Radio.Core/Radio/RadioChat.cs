@@ -14,11 +14,17 @@ public enum ChatLineKind
 /// One line of the on-screen radio log. <see cref="Delay"/> is measured from the moment the request
 /// is keyed, so replies can appear roughly as they are spoken rather than all at once.
 /// </summary>
-public sealed record ChatLine(ChatLineKind Kind, string Speaker, string Text, int Coalition, TimeSpan Delay);
+public sealed record ChatLine(ChatLineKind Kind, string Speaker, string Text, int Coalition, TimeSpan Delay)
+{
+    /// <summary>The transmission as the voice says it, when the chat shows it shorter. The voice is matched on this.</summary>
+    public string? Spoken { get; init; }
+}
 
 /// <summary>
 /// Turns a radio exchange into text lines in the style of IL-2's chat ("Speaker: message"), for an
-/// overlay or a second-screen window. Reply wording is the exact <see cref="RadioReply.Text"/>.
+/// overlay or a second-screen window. The speaker is his callsign and name, each in brackets
+/// ("[Lumme 1] [Viktor Richter]"); the chat then leaves out the callsign he says at the start of
+/// <see cref="RadioReply.Text"/>. The chat output puts the bracketed time in front.
 /// </summary>
 public static class RadioChat
 {
@@ -46,17 +52,42 @@ public static class RadioChat
     public static IReadOnlyList<ChatLine> Lines(RadioCommand command, RadioResult result, Contact? player, string? problem = null) =>
         [RequestLine(command, player), .. Replies(result, problem, FirstReplyDelay)];
 
-    /// <summary>One reply as a chat line. <see cref="RadioReply.SpeakerLabel"/> overrides the pilot's name.</summary>
+    /// <summary>One reply as a chat line. <see cref="RadioReply.SpeakerLabel"/> overrides the callsign and name.</summary>
     public static ChatLine Line(RadioReply reply, TimeSpan delay = default)
     {
-        string name = reply.SpeakerLabel
-            ?? (reply.Contact.PilotName.Length > 0 ? reply.Contact.PilotName : reply.Contact.DisplayName);
-        return new ChatLine(ChatLineKind.Reply, name, reply.Text, reply.Contact.Coalition, delay);
+        string speaker = reply.SpeakerLabel is { } label ? Bracket(label) : Speaker(reply.Contact);
+        string text = WithoutOwnCall(reply.Text, reply.SpeakerLabel ?? RadioPhrases.Who(reply.Contact));
+        return new ChatLine(ChatLineKind.Reply, speaker, text, reply.Contact.Coalition, delay) { Spoken = text == reply.Text ? null : reply.Text };
     }
 
     /// <summary>The player's call, shown the moment the key is pressed, before any answer is known.</summary>
     public static ChatLine RequestLine(RadioCommand command, Contact? player) =>
-        new(ChatLineKind.Request, player?.PilotName is { Length: > 0 } name ? name : "You", RequestPhrase(command), player?.Coalition ?? -1, TimeSpan.Zero);
+        new(ChatLineKind.Request, player is null ? Bracket("You") : Speaker(player), RequestPhrase(command), player?.Coalition ?? -1, TimeSpan.Zero);
+
+    /// <summary>
+    /// "[Lumme 1] [Viktor Richter]": the callsign with its number in digits, then the name, each in
+    /// brackets. Without a callsign, "[Number 1]" in the player's flight; otherwise the name alone.
+    /// </summary>
+    public static string Speaker(Contact c)
+    {
+        string name = c.PilotName.Length > 0 ? c.PilotName : c.DisplayName;
+        string? call = RadioPhrases.CallNumber(c) is int n
+            ? c.CallsignName is { } word ? $"{word} {n}" : c.InPlayerFlight ? $"Number {n}" : null
+            : null;
+        return call is null ? Bracket(name) : $"{Bracket(call)} {Bracket(name)}";
+    }
+
+    private static string Bracket(string part) => $"[{part}]";
+
+    /// <summary>"Lumme one, flight of five, ..." shows as "Flight of five, ...": the speaker column already names him.</summary>
+    private static string WithoutOwnCall(string text, string who)
+    {
+        string prefix = who + ", ";
+        if (!text.StartsWith(prefix, StringComparison.Ordinal) || text.Length == prefix.Length)
+            return text;
+        string rest = text[prefix.Length..];
+        return char.ToUpperInvariant(rest[0]) + rest[1..];
+    }
 
     /// <summary>
     /// The answers to a call already on screen, starting <paramref name="start"/> from now. A silence

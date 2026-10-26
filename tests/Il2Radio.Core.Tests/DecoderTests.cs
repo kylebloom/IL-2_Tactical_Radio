@@ -266,6 +266,21 @@ public class AcmiStreamTests
     }
 
     [Fact]
+    public void East_uses_one_scale_for_the_stream_so_absolute_degrees_give_true_distances()
+    {
+        // IL-2 writes absolute degrees with no reference point. The flight's leader and the player
+        // from the 2026-10-26 Career track, 45.3 km apart by the great circle.
+        var acmi = new AcmiStream();
+        acmi.Feed("FileType=text/acmi/tacview\nFileVersion=2.1\n#0\n" +
+                  "a,T=43.19650408|48.438842737|556,Type=Air+FixedWing,Name=Bf 109 F-4,Pilot=Viktor Richter,Coalition=Axis\n" +
+                  "b,T=43.581345815|48.756216214|562,Type=Air+FixedWing,Name=Bf 109 F-4,Pilot=Gert Knoll,Coalition=Axis\n#1\n");
+
+        var rel = Navigation.Relative(acmi.PositionOf(acmi.Objects["a"])!.Value, acmi.PositionOf(acmi.Objects["b"])!.Value)!.Value;
+
+        Assert.InRange(rel.RangeMetres, 45_000, 45_600);
+    }
+
+    [Fact]
     public void Parses_il2_style_names_with_unescaped_commas_and_control_prefix()
     {
         // Lines as written by IL-2 (Career, Oct 2026).

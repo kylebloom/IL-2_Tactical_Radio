@@ -40,10 +40,16 @@ public enum SpeechWord
 
     /// <summary>
     /// A course to fly, already rounded by <see cref="Geometry.Navigation.CourseDegrees"/> (5–360, north is 360).
-    /// The chat says it in three figures. It is not spoken: the pilot clips have 1–20 and no zero, the compass
-    /// clips are a different report, and the phrase voice is not used for this word.
+    /// The chat says it in three figures. A clip voice says the eight-point compass point: the pilot clips have
+    /// 1–20 and no zero, so they cannot say the figure.
     /// </summary>
     Course,
+
+    /// <summary>The leader is about to turn onto the course that follows: Value negative left, positive right.</summary>
+    Turn,
+
+    /// <summary>"Target destroyed": an enemy aircraft the speaker saw go down.</summary>
+    Destroyed,
 
     /// <summary>"You are in formation with us."</summary>
     InFormation,
@@ -59,8 +65,8 @@ public enum SpeechWord
 
     /// <summary>
     /// A named aircraft type: <see cref="SpeechToken.Name"/> is the <see cref="AircraftType.Family"/> called
-    /// (null when no type was made out), Value the number of aircraft. The game's recordings have no type names;
-    /// a phrase synthesizer (Piper) can say it.
+    /// (null when no type was made out), Value the number of aircraft. The game's recordings have no type names,
+    /// so a clip voice says the class word instead.
     /// </summary>
     ContactType,
 
@@ -76,7 +82,7 @@ public enum SpeechWord
     /// <summary>
     /// Coarse range, because an eyeball does not count kilometres. 0 = "close" (under 2 km),
     /// 1 = "a few kilometres", 2 = "far". The recordings can say close and far; "a few kilometres"
-    /// is text, or a phrase synthesizer when one is installed.
+    /// stays on the chat.
     /// </summary>
     RangeBand,
 
@@ -105,8 +111,8 @@ public enum SpeechWord
 
 /// <summary>
 /// One language-neutral element of a radio reply. Tokens carry exact values; each voice decides how
-/// precisely it can say them (Windows TTS speaks the English text; a clip voice may say "long range"
-/// for 18 km because the recordings stop at 10 km). <see cref="Name"/> carries a word that is not a
+/// precisely it can say them (a clip voice may say "long range" for 18 km because the recordings
+/// stop at 10 km; the chat keeps the English text). <see cref="Name"/> carries a word that is not a
 /// number, such as the aircraft type called.
 /// </summary>
 public readonly record struct SpeechToken(SpeechWord Word, double Value = 0, string? Name = null)

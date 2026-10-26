@@ -75,8 +75,9 @@ internal static class Acmi
 
     public static string Object(string id, double northM, double eastM, double altM, string pilot, string coalition, string name = "Bf 109 F-4", double? heading = null)
     {
+        // AcmiStream scales east by the first latitude it sees; scenarios start near the reference point.
         double lat = northM / 111_320.0;
-        double lon = eastM / (111_320.0 * Math.Cos((RefLat + lat) * Math.PI / 180.0));
+        double lon = eastM / (111_320.0 * Math.Cos(RefLat * Math.PI / 180.0));
         string attitude = heading is double h ? string.Create(CultureInfo.InvariantCulture, $"|0|0|{h:F1}") : "";
         return string.Create(CultureInfo.InvariantCulture,
             $"{id},T={lon:F7}|{lat:F7}|{altM:F1}{attitude},Type=Air+FixedWing,Name={name},Pilot={pilot},Coalition={coalition}\n");

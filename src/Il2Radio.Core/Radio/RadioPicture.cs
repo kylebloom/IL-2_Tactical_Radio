@@ -38,8 +38,12 @@ public sealed record RadioSettings
     /// <summary>Aircraft further apart than this vertically are not flying together.</summary>
     public double GroupAltitudeBandMetres { get; init; } = 600;
 
-    /// <summary>The player is "in formation" when this close to a member of the flight's main group.</summary>
-    public double InFormationMetres { get; init; } = 1_500;
+    /// <summary>
+    /// The player is "in formation" when this close to a member of the flight's main group. A kilometre
+    /// is already a loose Rotte; at 1.5 km (before 2026-10-26) a mate still closing called the player
+    /// in formation when he was plainly not.
+    /// </summary>
+    public double InFormationMetres { get; init; } = 1_000;
 
     /// <summary>Spotting and identification model used by the enemy-contact commands.</summary>
     public VisibilitySettings Visibility { get; init; } = new();

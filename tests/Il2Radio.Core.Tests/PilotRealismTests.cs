@@ -284,6 +284,22 @@ public class PilotRealismTests
     }
 
     [Fact]
+    public void Friendly_aircraft_beside_a_pilot_are_with_him_not_on_him()
+    {
+        Start(Overcast);
+        LogFlightMember("Heinz Koelzig", 1);
+        LogFlightMember("Ernst Lignitz", 2);
+        Frame(10,
+            Mate("w", "Heinz Koelzig", 0, 100, alt: 1000, heading: 0),
+            Mate("d", "Ernst Lignitz", 8_000, 0, alt: 3000, heading: 0),
+            Acmi.Object("g", 8_000, 200, 3000, "Josef Weinbergmair", "Axis", "Bf 109 G-2", heading: 90));
+
+        var identify = Assert.Single(EnemyCommands.Identify(_tracker, See).Replies);
+        Assert.StartsWith("Number two, with me: ", identify.Text);
+        Assert.DoesNotContain(identify.Tokens!, t => t.Word == SpeechWord.OnMe);
+    }
+
+    [Fact]
     public void A_pilot_who_cannot_see_the_player_gives_his_own_clock_for_a_distant_contact()
     {
         Start(Overcast);
@@ -354,22 +370,20 @@ public class PilotRealismTests
         Frame(10, Acmi.Object("f", 0, 800, 1000, "Felix Knierim", "Axis"));
         var close = Assert.Single(FriendlyPositionsCommand.Execute(_tracker, See).Replies);
         Assert.Equal(["clock.3", "range.close", "vertical.level"], ClipPhraser.Phrase(close.Tokens!, Has));
-        Assert.Null(ClipPhraser.Phrase(close.Tokens!, key => key != "range.close"));
+        Assert.Equal(["clock.3", "vertical.level"], ClipPhraser.Phrase(close.Tokens!, key => Has(key) && key != "range.close")); // a missing clip drops only that part
 
         Start("");
         Frame(10, Acmi.Object("f", 0, 4_000, 1000, "Felix Knierim", "Axis"));
         var few = Assert.Single(FriendlyPositionsCommand.Execute(_tracker, See).Replies);
-        Assert.Equal(["clock.3", "vertical.level"], ClipPhraser.Phrase(few.Tokens!, Has));
-        Assert.Contains("ein paar Kilometer",
-            string.Join(" ", ClipPhraser.PhraseSegments(few.Tokens!, Has, SynthWords.German)!));
+        Assert.Equal(["clock.3", "vertical.level"], ClipPhraser.Phrase(few.Tokens!, Has)); // "a few kilometres" is chat only
 
         Start("");
         LogFlightMember("Heinz Koelzig", 1);
         Frame(10, Mate("a", "Heinz Koelzig", 0, 20_000, alt: 3000, heading: 90));
         var unseen = Assert.Single(FlightCommands.Rejoin(_tracker, Pilot).Replies);
         Assert.Equal(
-            ["number.1", "\"ich sehe dich nicht\"", "heading", "compass.e", "altitude", "altitude.3000"],
-            ClipPhraser.PhraseSegments(unseen.Tokens!, Has, SynthWords.German)!.Select(s => s.ToString()));
+            ["number.1", "heading", "compass.e", "altitude", "altitude.3000"],
+            ClipPhraser.Phrase(unseen.Tokens!, Has));
 
         Start(Overcast);
         LogFlightMember("Heinz Koelzig", 1);
@@ -379,9 +393,7 @@ public class PilotRealismTests
             Mate("d", "Ernst Lignitz", 8_000, 0, alt: 3000, heading: 0),
             Bogey("e1", 8_000, 200, alt: 3000));
         var onMe = Assert.Single(EnemyCommands.EnemyContacts(_tracker, See).Replies);
-        Assert.Equal(
-            ["number.2", "\"Jak bei mir\""],
-            ClipPhraser.PhraseSegments(onMe.Tokens!, Has, SynthWords.German)!.Select(s => s.ToString()));
+        Assert.Equal(["number.2", "class.fighter"], ClipPhraser.Phrase(onMe.Tokens!, Has)); // "Yak" and "on me" stay on the chat
     }
 
     [Fact]
@@ -396,8 +408,7 @@ public class PilotRealismTests
 
         Assert.Equal("Number two, I cannot see you. Heading east, altitude 1000 metres. Grid 1022-5.", reply.Text);
         Assert.Contains(reply.Tokens!, t => t.Word == SpeechWord.Grid && t.Value == 1022 && t.Name == "5");
-        Assert.Contains("Planquadrat eins null zwo zwo fünf",
-            string.Join(" ", ClipPhraser.PhraseSegments(reply.Tokens!, _ => false, SynthWords.German)!));
+        Assert.Null(ClipPhraser.Phrase(reply.Tokens!, _ => false)); // no clips: chat only
     }
 
     [Fact]

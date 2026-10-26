@@ -20,7 +20,7 @@ public sealed record AppSettings
     /// <summary>Radio volume, 0 to 1, independent of IL-2's own sound settings.</summary>
     public double Volume { get; init; } = 0.8;
 
-    /// <summary>auto (the game's pilot voices by nation, else Windows TTS), tts, or a voice pack's name or folder.</summary>
+    /// <summary>auto (the game's pilot voices by nation), off (chat only), or a voice pack's name or folder.</summary>
     public string Voice { get; init; } = "auto";
 
     /// <summary>
@@ -48,7 +48,12 @@ public sealed record AppSettings
 
     public KeySettings Keys { get; init; } = new();
 
-    public PiperSettings Piper { get; init; } = new();
+    /// <summary>
+    /// The German phrase voice's settings, from before 2026-10-26. That voice is gone (only the game's
+    /// recordings speak), so the value is ignored and never written; it is accepted so an older file still loads.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? Piper { get; init; }
 
     /// <summary>Calls the flight makes without a numpad request. Each one can be turned off on its own.</summary>
     public UnaskedSettings Unasked { get; init; } = new();
@@ -82,23 +87,6 @@ public sealed record AppSettings
         return (settings, settings.Validate());
     }
 
-    /// <summary>
-    /// The settings text with <c>piper.enabled</c> set and every other value kept, so the player's answer to the
-    /// German-voice question is remembered without him editing JSON (JSON comments are dropped). Blank text
-    /// starts from an empty object.
-    /// </summary>
-    public static string WithPiperEnabled(string json, bool enabled)
-    {
-        var options = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
-        var root = string.IsNullOrWhiteSpace(json)
-            ? new System.Text.Json.Nodes.JsonObject()
-            : System.Text.Json.Nodes.JsonNode.Parse(json, documentOptions: options)!.AsObject();
-        if (root["piper"] is not System.Text.Json.Nodes.JsonObject piper)
-            root["piper"] = piper = new System.Text.Json.Nodes.JsonObject();
-        piper["enabled"] = enabled;
-        return root.ToJsonString(JsonOptions);
-    }
-
     /// <summary>Loads the file, or creates it with the defaults when it doesn't exist.</summary>
     public static (AppSettings Settings, bool Created, IReadOnlyList<string> Problems) LoadOrCreate(string path)
     {
@@ -123,7 +111,9 @@ public sealed record AppSettings
         if (RecordingReminderSeconds < 0)
             problems.Add($"recordingReminderSeconds {RecordingReminderSeconds}: expected 0 (off) or more");
         if (string.IsNullOrWhiteSpace(Voice))
-            problems.Add("voice: expected auto, tts or a voice pack's name");
+            problems.Add("voice: expected auto, off or a voice pack's name");
+        else if (Voice.Trim().Equals("tts", StringComparison.OrdinalIgnoreCase))
+            problems.Add("voice \"tts\": Windows text-to-speech was removed; expected auto (the game's pilot voices), off or a voice pack's name");
         if (Realism is null || !RealismModes.Contains(Realism.ToLowerInvariant()))
             problems.Add($"realism \"{Realism}\": expected {string.Join(" or ", RealismModes)}");
 
@@ -137,11 +127,6 @@ public sealed record AppSettings
         else
             problems.AddRange(Keys.Validate());
 
-        if (Piper is null)
-            problems.Add("piper: missing");
-        else
-            problems.AddRange(Piper.Validate());
-
         if (Unasked is null)
             problems.Add("unasked: missing");
         return problems;
@@ -149,50 +134,19 @@ public sealed record AppSettings
 }
 
 /// <summary>
-/// The optional German phrase voice (Piper, a local neural text-to-speech engine). It speaks only what the
-/// game's German recordings can't: aircraft type names, the side, "possible", "nothing sighted", "with us".
-/// Everything else keeps the game's own pilot voices. Nothing is downloaded without the player's yes.
-/// </summary>
-public sealed record PiperSettings
-{
-    /// <summary>
-    /// null (the default): not answered yet, so the radio asks once at start: Yes / No / Later, with what,
-    /// from where and how big. true: use it, and ask before downloading it again if it is missing. false: the
-    /// game's recordings only, never asked. The radio saves the player's yes or no here itself.
-    /// </summary>
-    public bool? Enabled { get; init; }
-
-    /// <summary>Which Piper voice: de_DE-thorsten-medium (default), de_DE-thorsten-high, de_DE-thorsten-low or de_DE-karlsson-low.</summary>
-    public string Voice { get; init; } = Audio.PiperCatalog.DefaultVoice;
-
-    /// <summary>Where Piper and the voice are stored; null = a "piper" folder beside the program. Never inside the IL-2 folder.</summary>
-    public string? Folder { get; init; }
-
-    /// <summary>Piper's speaking pace: below 1 is faster, above 1 slower. Radio calls are brisk.</summary>
-    public double LengthScale { get; init; } = 0.9;
-
-    public IEnumerable<string> Validate()
-    {
-        if (Audio.PiperCatalog.Find(Voice ?? "") is null)
-            yield return $"piper.voice \"{Voice}\": expected one of {string.Join(", ", Audio.PiperCatalog.Voices.Select(v => v.Name))}";
-        if (Folder is not null && string.IsNullOrWhiteSpace(Folder))
-            yield return "piper.folder: expected null (beside the program) or a folder path";
-        if (!(LengthScale is >= 0.5 and <= 2))
-            yield return $"piper.lengthScale {LengthScale.ToString(CultureInfo.InvariantCulture)}: expected 0.5 to 2";
-    }
-}
-
-/// <summary>
-/// Calls spoken without a numpad request. Both are on until turned off. Turning both off also stops
+/// Calls spoken without a numpad request. All are on until turned off. Turning all off also stops
 /// the extra track snapshots those calls need while IL-2 is recording.
 /// </summary>
 public sealed record UnaskedSettings
 {
-    /// <summary>An AI leader calls the new cruise course in degrees. When you lead, the chat shows "Route, heading 185".</summary>
+    /// <summary>An AI leader calls the cruise course in degrees. A corner still ahead is "turning to heading 185"; a course he is already flying is "heading 185". When you lead, the chat shows "Route: Turning to heading 185."</summary>
     public bool Route { get; init; } = true;
 
     /// <summary>One call when the contact picture changes: a group gained, lost, or "on me".</summary>
     public bool Contacts { get; init; } = true;
+
+    /// <summary>A flight mate who saw it calls one of the flight down, or an enemy going down, when IL-2's own pilots do not.</summary>
+    public bool Losses { get; init; } = true;
 }
 
 /// <summary>Where the radio text goes and how it looks.</summary>

@@ -49,11 +49,51 @@ public class UnaskedCallTests
         Frame(11, 100_000, 208_000, 90);
         var call = Say();
 
-        Assert.Equal("Number one, heading 180.", call!.Text);
+        Assert.Equal("Number one, turning to heading 180.", call!.Text);
         Assert.Null(call.SpeakerLabel);
         Assert.Contains(call.Tokens!, t => t.Word == SpeechWord.Course && t.Value == 180);
         Assert.DoesNotContain(call.Tokens!, t => t.Word == SpeechWord.Heading);
-        Assert.Equal(["number.1"], ClipPhraser.PhraseSegments(call.Tokens!, key => key == "number.1", SynthWords.German)!.Select(s => s.ToString()));
+        // The headset: which way he turns and the compass point; the clips cannot say 180.
+        Assert.Contains(new SpeechToken(SpeechWord.Turn, 1), call.Tokens!);
+        Assert.Equal(["number.1", "turn.right", "compass.s"],
+            ClipPhraser.Phrase(call.Tokens!, key => key is "number.1" or "turn.right" or "turn.left" or "compass.s"));
+        Assert.Null(Say());
+    }
+
+    [Fact]
+    public void An_AI_leader_calls_the_outbound_leg_of_a_patrol_corner()
+    {
+        PatrolLoop();
+        Frame(10, 100_000, 208_000, 90);
+
+        Assert.Equal("Number one, turning to heading 360.", Say()!.Text);
+        Assert.Null(Say());
+    }
+
+    [Fact]
+    public void A_patrol_corner_on_the_nose_is_called_when_the_leg_runs_the_other_way()
+    {
+        PatrolLoop();
+        Frame(10, 100_500, 203_000, 270);
+
+        Assert.Equal("Number one, turning to heading 090.", Say()!.Text);
+    }
+
+    [Fact]
+    public void The_corner_that_closes_a_patrol_loop_is_called_on_the_way_in()
+    {
+        PatrolLoop();
+        Frame(10, 102_000, 200_000, 230);
+
+        Assert.Equal("Number one, turning to heading 090.", Say()!.Text);
+    }
+
+    [Fact]
+    public void A_patrol_corner_off_the_nose_stays_quiet()
+    {
+        PatrolLoop();
+        Frame(10, 100_500, 203_000, 220);
+
         Assert.Null(Say());
     }
 
@@ -74,7 +114,7 @@ public class UnaskedCallTests
 
         var call = Say();
 
-        Assert.Equal("Number one, heading 100.", call!.Text);
+        Assert.Equal("Number one, turning to heading 100.", call!.Text);
         Assert.Contains(call.Tokens!, t => t.Word == SpeechWord.Course && t.Value == 100);
     }
 
@@ -86,11 +126,11 @@ public class UnaskedCallTests
 
         var call = Say();
 
-        Assert.Equal("Route, heading 180.", call!.Text);
+        Assert.Equal("Route, turning to heading 180.", call!.Text);
         Assert.Equal("Route", call.SpeakerLabel);
-        Assert.Equal("Route", RadioChat.Line(call).Speaker);
+        Assert.Equal("[Route]", RadioChat.Line(call).Speaker);
         Assert.DoesNotContain(call.Tokens!, t => t.Word is SpeechWord.Callsign or SpeechWord.Speaker);
-        Assert.Null(ClipPhraser.PhraseSegments(call.Tokens!, _ => true, SynthWords.German));
+        Assert.True(call.Contact.IsPlayer); // the session keeps the player's own line off his headset
     }
 
     [Fact]
@@ -102,7 +142,7 @@ public class UnaskedCallTests
 
         var call = Say();
 
-        Assert.Equal("Route, heading 180.", call!.Text);
+        Assert.Equal("Route, turning to heading 180.", call!.Text);
         Assert.Equal(PlayerName, call.Contact.PilotName);
     }
 
@@ -134,7 +174,9 @@ public class UnaskedCallTests
         Assert.Null(Say());
         Track(46, leaderHeading: 272);
 
-        Assert.Equal("Number one, heading 270.", Say()!.Text);
+        var settled = Say();
+        Assert.Equal("Number one, heading 270.", settled!.Text);
+        Assert.DoesNotContain("turning", settled.Text);
         Assert.Null(Say());
     }
 
@@ -170,7 +212,7 @@ public class UnaskedCallTests
     {
         RouteMission(playerFormation: 2, leaderFormation: 1);
         Frame(10, 100_000, 208_000, 90);
-        Assert.Equal("Number one, heading 180.", Say()!.Text);
+        Assert.Equal("Number one, turning to heading 180.", Say()!.Text);
 
         _tracker.Apply(new MissionStarted(1, null, "next"));
         LogFlight(playerFormation: 2, leaderFormation: 1);
@@ -178,7 +220,7 @@ public class UnaskedCallTests
         _acmi.Feed(GridHeader + "#0\n");
         Frame(10, 100_000, 208_000, 90);
 
-        Assert.Equal("Number one, heading 180.", Say()!.Text);
+        Assert.Equal("Number one, turning to heading 180.", Say()!.Text);
     }
 
     [Fact]
@@ -189,7 +231,7 @@ public class UnaskedCallTests
         var off = new UnaskedCallSettings { Route = false, Contacts = true };
 
         Assert.Null(new UnaskedCalls().Consider(_tracker, See, _memory, off));
-        Assert.Equal("Number one, heading 180.", new UnaskedCalls().Consider(_tracker, See, _memory, new UnaskedCallSettings { Route = true })!.Text);
+        Assert.Equal("Number one, turning to heading 180.", new UnaskedCalls().Consider(_tracker, See, _memory, new UnaskedCallSettings { Route = true })!.Text);
 
         OpenFlight(playerFormation: 2, leaderFormation: 1, grid: false);
         SeeEnemy(10, 0, 600);
@@ -210,6 +252,43 @@ public class UnaskedCallTests
     }
 
     [Fact]
+    public void An_aircraft_flickering_in_and_out_of_sight_is_called_once_a_minute()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1, grid: false);
+        SeeEnemy(10, 0, 600);
+        Assert.NotNull(Say());
+
+        LoseEnemy(20);
+        Assert.Null(Say()); // "last seen" for the same aircraft is not news
+
+        SeeEnemy(40, 0, 600);
+        Assert.Null(Say()); // back in sight within the minute
+
+        LoseEnemy(50);
+        Assert.Null(Say());
+        SeeEnemy(80, 0, 600);
+        Assert.Contains("o'clock", Say()!.Text); // a minute on, it is a contact again
+    }
+
+    [Fact]
+    public void A_second_picture_call_waits_for_the_pace_and_is_not_lost()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1, grid: false);
+        SeeEnemy(10, 0, 600);
+        Assert.NotNull(Say());
+
+        SeeEnemy(15, 0, 600);
+        _acmi.Feed(Acmi.Object("f", 0, -900, 1000, "Pilot f", "Allies", "Yak-1 ser.69", heading: 90));
+        _tracker.Apply(_acmi);
+        Assert.Null(Say()); // five seconds after the last call
+
+        SeeEnemy(26, 0, 600);
+        _acmi.Feed(Acmi.Object("f", 0, -900, 1000, "Pilot f", "Allies", "Yak-1 ser.69", heading: 90));
+        _tracker.Apply(_acmi);
+        Assert.NotNull(Say());
+    }
+
+    [Fact]
     public void On_me_is_a_picture_change_and_a_fight_holds_the_route_call()
     {
         OpenFlight(playerFormation: 2, leaderFormation: 1, grid: false, overcast: true);
@@ -220,12 +299,12 @@ public class UnaskedCallTests
 
         Assert.Contains("on me", Say()!.Text);
 
-        _acmi.Feed("#12\n" + Acmi.Object("p", 0, 0, 1000, PlayerName, "Axis", heading: 0)
+        _acmi.Feed("#30\n" + Acmi.Object("p", 0, 0, 1000, PlayerName, "Axis", heading: 0)
             + Acmi.Object("w", 8_000, 0, 3000, LeaderName, "Axis", heading: 0)
             + Acmi.Object("e", 8_000, 5_000, 3000, "Pilot e", "Allies", "Yak-1 ser.69", heading: 90));
         _tracker.Apply(_acmi);
 
-        var moved = Say();
+        var moved = Say(); // he let go: news, once the picture calls' pace allows it
         Assert.NotNull(moved);
         Assert.DoesNotContain("on me", moved!.Text);
         Assert.Contains("o'clock", moved.Text);
@@ -245,7 +324,7 @@ public class UnaskedCallTests
         _acmi.Feed("#80\n-e\n#81\n");
         Frame(81, 100_000, 208_000, 90);
 
-        Assert.Equal("Number one, heading 180.", Say()!.Text);
+        Assert.Equal("Number one, turning to heading 180.", Say()!.Text);
     }
 
     private RadioReply? Say(UnaskedCallSettings? calls = null) =>
@@ -319,6 +398,89 @@ public class UnaskedCallTests
         _tracker = new ContactTracker(_clock);
         _tracker.SetPlan(MissionPlan.FromBlocks(MissionFileParser.Parse(new StringReader(mission))));
         LogFlight(playerFormation, leaderFormation);
+        _acmi = new AcmiStream();
+        _acmi.Feed(GridHeader + "#0\n");
+    }
+
+    /// <summary>
+    /// A 10 km square, A east to B, B north to C, C west to D, D south back to A.
+    /// A is 100000 N 200000 E. The repeated point is the corner whose outbound is east.
+    /// </summary>
+    private void PatrolLoop()
+    {
+        const string mission = """
+            Options
+            {
+              GuiMap = "stalingrad-summer-1942";
+              Time = 12:0:0;
+              Countries
+              {
+                101 : 1;
+                201 : 2;
+              }
+            }
+            Plane
+            {
+              Name = "Gert Knoll";
+              Index = 1;
+              Country = 201;
+              AILevel = 0;
+              Callsign = 8;
+              Callnum = 2;
+            }
+            Plane
+            {
+              Name = "Werner Hoffmann";
+              Index = 10;
+              Country = 201;
+              Callsign = 8;
+              Callnum = 1;
+            }
+            MCU_TR_Entity
+            {
+              Index = 21;
+              MisObjID = 10;
+            }
+            MCU_Waypoint
+            {
+              Index = 40;
+              Targets = [41];
+              Objects = [21];
+              XPos = 100000;
+              YPos = 1000;
+              ZPos = 200000;
+            }
+            MCU_Waypoint
+            {
+              Index = 41;
+              Targets = [42];
+              Objects = [21];
+              XPos = 100000;
+              YPos = 1000;
+              ZPos = 210000;
+            }
+            MCU_Waypoint
+            {
+              Index = 42;
+              Targets = [43];
+              Objects = [21];
+              XPos = 110000;
+              YPos = 1000;
+              ZPos = 210000;
+            }
+            MCU_Waypoint
+            {
+              Index = 43;
+              Targets = [40];
+              Objects = [21];
+              XPos = 110000;
+              YPos = 1000;
+              ZPos = 200000;
+            }
+            """;
+        _tracker = new ContactTracker(_clock);
+        _tracker.SetPlan(MissionPlan.FromBlocks(MissionFileParser.Parse(new StringReader(mission))));
+        LogFlight(playerFormation: 2, leaderFormation: 1);
         _acmi = new AcmiStream();
         _acmi.Feed(GridHeader + "#0\n");
     }
@@ -400,6 +562,15 @@ public class UnaskedCallTests
             + Acmi.Object("p", 0, 0, 1000, PlayerName, "Axis", heading: 0)
             + Acmi.Object("w", 0, 100, 1000, LeaderName, "Axis", heading: 0)
             + Acmi.Object("e", north, east, 1000, "Pilot e", "Allies", "Yak-1 ser.69", heading: 90));
+        _tracker.Apply(_acmi);
+    }
+
+    /// <summary>The enemy leaves the track (removal takes effect on the next frame) while the flight keeps flying.</summary>
+    private void LoseEnemy(double time)
+    {
+        _acmi.Feed($"#{time.ToString(CultureInfo.InvariantCulture)}\n-e\n#{(time + 1).ToString(CultureInfo.InvariantCulture)}\n"
+            + Acmi.Object("p", 0, 0, 1000, PlayerName, "Axis", heading: 0)
+            + Acmi.Object("w", 0, 100, 1000, LeaderName, "Axis", heading: 0));
         _tracker.Apply(_acmi);
     }
 

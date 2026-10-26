@@ -1,0 +1,83 @@
+# Builds the player's downloads: the installer and a portable zip.
+# Push a tag such as v0.2.0 to publish a GitHub Release; run it by hand (Actions tab) to get the files
+# as a workflow artifact without releasing anything.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Version
+        id: version
+        run: |
+          # v0.2.0 -> 0.2.0; a manual run uses Directory.Build.props
+          if ($env:GITHUB_REF_TYPE -eq 'tag') { $v = $env:GITHUB_REF_NAME -replace '^v', '' }
+          else { $v = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version }
+          "value=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        run: dotnet test --configuration Release
+
+      - name: Publish Il2Radio.exe
+        run: dotnet publish src/Il2Radio.App -p:Version=${{ steps.version.outputs.value }}
+
+      # Code signing goes here, before the exe is packed: sign publish\Il2Radio.exe, then the installer below.
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\Il2Radio.iss /DAppVersion=${{ steps.version.outputs.value }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Portable zip
+        run: |
+          $v = '${{ steps.version.outputs.value }}'
+          $stage = 'publish\portable'
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item publish\Il2Radio.exe $stage
+          Copy-Item README-PLAYER.md "$stage\README.txt"
+          Copy-Item LICENSE "$stage\LICENSE.txt"
+          Compress-Archive -Path "$stage\*" -DestinationPath "publish\IL2-Tactical-Radio-$v-portable.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: il2-tactical-radio-${{ steps.version.outputs.value }}
+          path: |
+            publish/IL2-Tactical-Radio-Setup-*.exe
+            publish/IL2-Tactical-Radio-*-portable.zip
+
+      - name: GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $v = '${{ steps.version.outputs.value }}'
+          $notes = @"
+          **Download** ``IL2-Tactical-Radio-Setup-$v.exe`` and run it, or take the portable zip and put ``Il2Radio.exe`` in a folder of its own.
+          Before your first flight, read the [player guide](https://github.com/${{ github.repository }}/blob/$env:GITHUB_REF_NAME/README-PLAYER.md): you also need RivaTuner Statistics Server, and the radio asks for administrator rights when it starts.
+
+          The files aren't code-signed yet, so Windows may show "Windows protected your PC": choose More info, then Run anyway.
+          "@
+          gh release create $env:GITHUB_REF_NAME `
+            "publish\IL2-Tactical-Radio-Setup-$v.exe" `
+            "publish\IL2-Tactical-Radio-$v-portable.zip" `
+            --title "IL-2 Tactical Radio $v" --notes $notes --generate-notes

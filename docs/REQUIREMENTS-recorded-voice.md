@@ -1,6 +1,6 @@
 # Requirement: game recordings only, chat for the rest
 
-26 October 2026. Decision for the spoken radio. How speech works today is in [ARCHITECTURE.md](ARCHITECTURE.md) (Audio, German phrase voice). What the German actors actually have on disk is in [FEASIBILITY.md](FEASIBILITY.md) (Recorded radio voices) and [WWII-RADIO-REALISM.md](WWII-RADIO-REALISM.md) (Recordings the radio does not use).
+26 October 2026. Decision for the spoken radio. **Built the same day**, with one amendment the player asked for: rather than silence, a few game phrases stand in for whole messages that have no recording ("Roger" for no contacts / with us / in formation, "turning left/right" plus the compass point for a course, "target destroyed" for an enemy down, the group word for "a few" / "many"). That relaxes rule 7 below for those four clips only. Their meaning was established by speech recognition on the English actors, not by a file name (FEASIBILITY.md, "Placeholder clips"); the German ones are still to be heard. Windows TTS is gone entirely, including `voice: "tts"` (rule 4), at the player's request; `voice: "off"` is chat only. How speech works today is in [ARCHITECTURE.md](ARCHITECTURE.md) (Audio, German phrase voice). What the German actors actually have on disk is in [FEASIBILITY.md](FEASIBILITY.md) (Recorded radio voices) and [WWII-RADIO-REALISM.md](WWII-RADIO-REALISM.md) (Recordings the radio does not use).
 
 ## Decision
 

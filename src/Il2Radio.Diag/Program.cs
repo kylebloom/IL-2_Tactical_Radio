@@ -32,7 +32,6 @@ switch (command)
         int port = int.TryParse(Option("--port"), out int p) ? p : ConfiguredPort(install) ?? 29373;
         TimeSpan? duration = int.TryParse(Option("--seconds"), out int secs) ? TimeSpan.FromSeconds(secs) : null;
         VoiceSelection? voices = args.Contains("--no-audio") ? null : Voices();
-        using (voices?.Synth as IDisposable)
         using (var voice = voices is null ? null : new RadioVoice(Volume(), voices))
         using (var meter = voice is null || Option("--radio-wait") == "off" ? null : new Il2AudioMeter(RadioWaitRatio()))
         using (var chat = ChatSinks.Start(ChatOptions.Parse(args).WithGameScreen(install).WithIl2Areas(install)))
@@ -44,6 +43,7 @@ switch (command)
                 Realism = ChosenRealism(),
                 UnaskedRoute = FlagOn("--unasked-route"),
                 UnaskedContacts = FlagOn("--unasked-contacts"),
+                UnaskedLosses = FlagOn("--unasked-losses"),
             }, voice);
             session.Attach(meter, chat);
             return await session.RunAsync();
@@ -53,11 +53,9 @@ switch (command)
     case "audio-meter":
         return AudioMeter();
     case "say":
-        return Say(Positional(1));
+        return Say();
     case "voice-check":
         return VoiceCheck();
-    case "piper-setup":
-        return await PiperSetupCmd();
     default:
         Console.WriteLine("""
             Il2Radio.Diag — feasibility diagnostics for an IL-2 Great Battles tactical radio
@@ -70,7 +68,7 @@ switch (command)
                                   Summarise a Tacview ACMI file and replay every radio command (default: newest in data\Tracks).
                                   --realism pilot (default): a pilot says only what he could know. precise: bearings and ranges from the track
               live [--port N] [--seconds S] [--volume V] [--voice V] [--no-audio] [--radio-wait on|off] [--radio-wait-ratio R]
-                                  [--realism pilot|precise] [--unasked-route on|off] [--unasked-contacts on|off]
+                                  [--realism pilot|precise] [--unasked-route on|off] [--unasked-contacts on|off] [--unasked-losses on|off]
                                   Run during a mission: telemetry + log tail + ACMI tail + contact table + radio
                                   --radio-wait (default on): hold replies while IL-2's own audio peaks R x above its floor (1.8)
                                   Chat text: --chat overlay|window|rtss|off  --chat-screen N  --chat-pos L,T,W,H  --chat-font PX
@@ -81,20 +79,14 @@ switch (command)
                                   --png renders the overlay's live, menu and radio-log views to images instead
               audio-meter [--seconds S] [--radio-wait-ratio R] [--process NAME]
                                   Print IL-2's audio peak, floor and busy state, to tune --radio-wait-ratio while AI pilots talk
-              say ["text"] [--country C] [--voice V] [--volume V] [--range R] [--wav file]
-                                  No text: sample replies in the voice for country C (201 German, 101 Soviet; default 201).
-                                  With text: speak it with TTS. R = 0..1 of radio range (more hiss further out).
-                                  Separate several transmissions with |; --wav saves instead of playing
+              say [--country C] [--voice V] [--volume V] [--range R] [--wav file]
+                                  Sample replies in the voice for country C (201 German, 101 Soviet; default 201).
+                                  R = 0..1 of radio range (more hiss further out); --wav saves instead of playing
               voice-check [--country C | --voice V] [--speaker N] [--play]
                                   List the clips a voice pack resolves to; --play plays each, with its key, to check by ear
-              piper-setup [--piper DIR] [--piper-voice NAME]
-                                  Install the German phrase voice (Piper): shows what, from where and how big, and
-                                  downloads only on Y (Yes / No / Later). DIR defaults to "piper" beside this program
 
-              --piper DIR [--piper-voice NAME]  (say, live) fill the German recordings' gaps (type names,
-                                  "nothing sighted") with an installed Piper voice. Never downloads
-
-              --voice auto|tts|<pack>  auto (default): recorded clips matching the speaker's nation, else TTS.
+              --voice auto|off|<pack>  auto (default): recorded clips matching the speaker's nation; anything
+                                  they can't say is left out (the chat has it). off: no voice
                                   <pack>: a voice.json path, its folder, or part of a pack name (e.g. ger)
 
               --game <path>       IL-2 install root (otherwise IL2_PATH or common Steam locations)
@@ -127,55 +119,18 @@ VoiceSelection Voices()
     foreach (string problem in voices.Problems)
         Console.WriteLine($"voice pack skipped: {problem}");
 
-    // An already installed German phrase voice (Diag never downloads; use piper-setup for that).
-    if (Option("--piper") is { } piperDir)
-    {
-        string voiceName = Option("--piper-voice") ?? Il2Radio.Core.Audio.PiperCatalog.DefaultVoice;
-        var piperVoice = Il2Radio.Core.Audio.PiperCatalog.Find(voiceName) ?? throw new InvalidOperationException($"unknown Piper voice {voiceName}");
-        var piperInstall = Il2Radio.Core.Audio.PiperInstaller.Find(piperDir, piperVoice)
-                           ?? throw new InvalidOperationException($"no complete Piper install with {voiceName} in {piperDir} (run piper-setup --piper {piperDir})");
-        voices.Synth = new PiperSynthesizer(piperInstall, 0.9);
-    }
     return voices;
-}
-
-// Asks before downloading Piper and a German voice into --piper <dir> (default: "piper" beside Diag), exactly as Il2Radio.exe does.
-async Task<int> PiperSetupCmd()
-{
-    var settings = new Il2Radio.Core.Settings.PiperSettings
-    {
-        Enabled = true,
-        Folder = Option("--piper"),
-        Voice = Option("--piper-voice") ?? Il2Radio.Core.Audio.PiperCatalog.DefaultVoice,
-    };
-    if (settings.Validate().FirstOrDefault() is { } problem)
-        return Fail(problem);
-    var (result, synth) = await PiperConsole.StartAsync(settings, install?.Root);
-    Console.WriteLine($"{result.Status}: {result.Message}");
-    if (synth is null)
-        return result.Status == Il2Radio.Core.Audio.PiperSetupStatus.Ready ? 0 : 1;
-    using (synth)
-    {
-        var audio = synth.Synthesize("vermutlich Jaks");
-        Console.WriteLine(audio is null ? $"Test phrase failed: {synth.LastError}" : $"Test phrase: {audio.Seconds:F2} s at {audio.SampleRate} Hz");
-        return audio is null ? 1 : 0;
-    }
 }
 
 int Country() => int.TryParse(Option("--country"), out int c) ? c : 201;
 
-int Say(string? text)
+int Say()
 {
     double range = double.TryParse(Option("--range"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double r) ? r : 0.3;
     VoiceSelection voices;
     try { voices = Voices(); } catch (InvalidOperationException ex) { return Fail(ex.Message); }
-    using var phraseVoice = voices.Synth as IDisposable;
 
-    // Free text has no tokens, so only TTS can say it; the samples carry tokens for clip voices too.
-    var transmissions = text is null
-        ? SampleTransmissions(range, Country())
-        : text.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-            .Select((line, i) => new Transmission(line, i + 1, range)).ToList();
+    var transmissions = SampleTransmissions(range, Country());
     Console.WriteLine($"Voice: {voices.Describe()}");
 
     if (Option("--wav") is { } wavPath)
@@ -187,7 +142,6 @@ int Say(string? text)
     }
 
     using var voice = new RadioVoice(Volume(), voices);
-    voice.WaitUntilReady(TimeSpan.FromSeconds(10));
     voice.Say(transmissions);
 
     // Wait for playback: roughly 80 ms per character plus squelch, generously bounded.
@@ -212,7 +166,7 @@ static List<Transmission> SampleTransmissions(double range, int country) =>
         [new(SpeechWord.Callsign, 8), new(SpeechWord.Speaker, 3), new(SpeechWord.Separated, 0), new(SpeechWord.Clock, 6), new(SpeechWord.Range, 4_000), new(SpeechWord.Vertical, 0)], country),
     new("Oriole one, steer one-one-zero, approximately 18 kilometres. We are at 2700 metres, heading zero-eight-zero.", 1, range,
         [new(SpeechWord.Callsign, 8), new(SpeechWord.Speaker, 1), new(SpeechWord.Steer, 110), new(SpeechWord.Range, 18_000), new(SpeechWord.Vertical, 2_400), new(SpeechWord.Altitude, 2_700), new(SpeechWord.Heading, 80)], country),
-    // Enemy contacts: the type name and "no contacts" have no game recordings (a Piper voice says them, with --piper).
+    // Enemy contacts: the type name has no game recording (the class word stands in), "no contacts" is the actors' "Roger".
     new("Oriole two, pair of Yaks, at your three o'clock, approximately 4 kilometres, high.", 2, range,
         [new(SpeechWord.Callsign, 8), new(SpeechWord.Speaker, 2), new(SpeechWord.ContactCount, 2), new(SpeechWord.ContactClass, -1), new(SpeechWord.ContactType, 2, "Yak"),
          new(SpeechWord.Clock, 3), new(SpeechWord.Range, 4_000), new(SpeechWord.Vertical, 800)], country),
@@ -224,7 +178,6 @@ int VoiceCheck()
 {
     VoiceSelection voices;
     try { voices = Voices(); } catch (InvalidOperationException ex) { return Fail(ex.Message); }
-    using var phraseVoice = voices.Synth as IDisposable;
     if (voices.For(Country()) is not { } clips)
         return Fail($"No voice pack for country {Country()} (searched {string.Join(", ", VoiceSelection.Folders)}). {(install is null ? "IL-2 install not found: pass --game." : "")}");
 
@@ -438,7 +391,7 @@ int AcmiCmd(string? path)
     tracker.Apply(acmi);
 
     Console.WriteLine($"\nRadio checks replayed at end of recording (t={acmi.CurrentTime:F0} s, {chunks.Count} log chunks, author {acmi.Author}, realism {realism}); player: {tracker.Player?.DisplayName ?? "(not identified)"}");
-    // How the German game pack would say each reply, with "quoted" parts for the Piper phrase voice (if installed).
+    // How the German game pack would say each reply: the clip keys it plays. The rest is on the chat only.
     var germanPack = replayVoices?.For(201)?.Pack;
     foreach (var command in Enum.GetValues<RadioCommand>())
     {
@@ -451,10 +404,8 @@ int AcmiCmd(string? path)
             {
                 int speaker = germanPack.SpeakerIndex(r.Contact.FormationIndex ?? 1);
                 bool HasClip(string key) => germanPack.ClipPath(key, speaker) is not null;
-                var clipsOnly = Il2Radio.Core.Audio.ClipPhraser.PhraseSegments(tokens, HasClip, null);
-                var withPiper = Il2Radio.Core.Audio.ClipPhraser.PhraseSegments(tokens, HasClip, Il2Radio.Core.Audio.SynthWords.German);
-                Console.WriteLine($"    voice (game clips):   {(clipsOnly is null ? "(TTS: clips can't say it)" : string.Join(" ", clipsOnly))}");
-                Console.WriteLine($"    voice (+ Piper, de):  {(withPiper is null ? "(TTS)" : string.Join(" ", withPiper))}");
+                var clips = Il2Radio.Core.Audio.ClipPhraser.Phrase(tokens, HasClip);
+                Console.WriteLine($"    voice (game clips):   {(clips is null ? "(chat only)" : string.Join(" ", clips))}");
             }
         }
         foreach (var x in result.Suppressed)

@@ -318,7 +318,7 @@ public class EnemyCommandTests
     }
 
     [Fact]
-    public void Type_level_calls_carry_the_type_and_side_for_a_german_phrase_voice()
+    public void Type_level_calls_carry_the_type_and_side_and_the_headset_says_the_class_word()
     {
         string[] pack = ["number.1", "pair", "group", "class.fighter", "class.fighters", "clock.3", "range.close", "range.1", "vertical.level", "vertical.above"];
         Frame(10, Enemy("e1", 0, 600), Enemy("e2", 50, 650));
@@ -328,11 +328,11 @@ public class EnemyCommandTests
 
         Assert.Contains(new SpeechToken(SpeechWord.ContactType, 2, "Yak"), contacts.Tokens!);
         Assert.DoesNotContain(contacts.Tokens!, t => t.Word == SpeechWord.ContactSide); // "pair of Yaks": the text names no side
-        Assert.Equal(["number.1", "pair", "\"Jaks\"", "clock.3", "range.close", "vertical.level"],
-            Audio.ClipPhraser.PhraseSegments(contacts.Tokens!, pack.Contains, Audio.SynthWords.German)!.Select(s => s.ToString()));
+        Assert.Equal(["number.1", "pair", "class.fighters", "clock.3", "range.close", "vertical.level"],
+            Audio.ClipPhraser.Phrase(contacts.Tokens!, pack.Contains));
         Assert.Contains("two Yaks, enemy", identify.Text);
-        Assert.Equal(["number.1", "pair", "\"Jaks Feind\"", "clock.3", "range.close", "vertical.level"],
-            Audio.ClipPhraser.PhraseSegments(identify.Tokens!, pack.Contains, Audio.SynthWords.German)!.Select(s => s.ToString()));
+        Assert.Equal(["number.1", "pair", "class.fighters", "clock.3", "range.close", "vertical.level"],
+            Audio.ClipPhraser.Phrase(identify.Tokens!, pack.Contains)); // "Yaks" and "enemy" stay on the chat
     }
 
     [Fact]
@@ -348,13 +348,15 @@ public class EnemyCommandTests
     }
 
     [Fact]
-    public void No_contacts_has_no_game_clip_and_falls_back_to_tts()
+    public void No_contacts_is_the_acknowledgement_or_the_number_alone()
     {
         Frame(10);
         var reply = Assert.Single(EnemyCommands.EnemyContacts(_tracker, SureSpotting).Replies);
 
         string[] pack = ["number.1"];
-        Assert.Null(Audio.ClipPhraser.Phrase(reply.Tokens!, pack.Contains));
+        Assert.Equal(["number.1"], Audio.ClipPhraser.Phrase(reply.Tokens!, pack.Contains));
+        string[] withAck = [.. pack, "ack"];
+        Assert.Equal(["number.1", "ack"], Audio.ClipPhraser.Phrase(reply.Tokens!, withAck.Contains));
     }
 
     [Theory]

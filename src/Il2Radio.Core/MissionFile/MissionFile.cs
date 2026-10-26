@@ -137,8 +137,9 @@ public sealed record MissionPlan(
 
     /// <summary>
     /// Waypoint polylines by planned-aircraft index, in mission-file metres. A chain follows each
-    /// waypoint's <c>Targets</c> link; a waypoint that nothing points at starts a path. This is the
-    /// briefed route, not a live position.
+    /// waypoint's <c>Targets</c> link; a waypoint that nothing points at starts a path. A cycle, such
+    /// as a patrol of attack areas that point at each other, is one path and repeats its first point
+    /// so the leg that closes it is part of the route. This is the briefed route, not a live position.
     /// </summary>
     public IReadOnlyDictionary<int, IReadOnlyList<IReadOnlyList<WorldPoint>>> Routes { get; init; }
         = new Dictionary<int, IReadOnlyList<IReadOnlyList<WorldPoint>>>();
@@ -239,15 +240,7 @@ public sealed record MissionPlan(
     private static List<IReadOnlyList<WorldPoint>> OrderPaths(List<WaypointNode> points)
     {
         var byIndex = points.GroupBy(p => p.Index).ToDictionary(g => g.Key, g => g.First());
-        var incoming = new HashSet<int>();
-        foreach (var point in byIndex.Values)
-        {
-            foreach (int target in point.Targets)
-            {
-                if (byIndex.ContainsKey(target))
-                    incoming.Add(target);
-            }
-        }
+        var incoming = Incoming(byIndex.Values, byIndex.Keys.ToHashSet());
 
         var heads = byIndex.Values.Where(p => !incoming.Contains(p.Index)).OrderBy(p => p.Index).ToList();
         if (heads.Count == 0 && byIndex.Count > 0)
@@ -256,34 +249,76 @@ public sealed record MissionPlan(
         var visited = new HashSet<int>();
         var paths = new List<IReadOnlyList<WorldPoint>>();
         foreach (var head in heads)
+            AddChain(byIndex, visited, paths, head);
+
+        while (true)
         {
-            var line = new List<WorldPoint>();
-            var point = head;
-            while (visited.Add(point.Index))
-            {
-                line.Add(point.Position);
-                WaypointNode? next = null;
-                foreach (int target in point.Targets)
-                {
-                    if (byIndex.TryGetValue(target, out var candidate) && !visited.Contains(candidate.Index))
-                    {
-                        next = candidate;
-                        break;
-                    }
-                }
-
-                if (next is null)
-                    break;
-                point = next;
-            }
-
-            if (line.Count > 0)
-                paths.Add(line);
+            var remaining = byIndex.Values.Where(p => !visited.Contains(p.Index)).OrderBy(p => p.Index).ToList();
+            if (remaining.Count == 0)
+                break;
+            var remainIds = remaining.Select(p => p.Index).ToHashSet();
+            var start = remaining.FirstOrDefault(p => !Incoming(remaining, remainIds).Contains(p.Index)) ?? remaining[0];
+            int before = visited.Count;
+            AddChain(byIndex, visited, paths, start);
+            if (visited.Count == before)
+                break;
         }
 
-        foreach (var point in byIndex.Values.Where(p => !visited.Contains(p.Index)).OrderBy(p => p.Index))
-            paths.Add([point.Position]);
         return paths;
+    }
+
+    private static HashSet<int> Incoming(IEnumerable<WaypointNode> points, HashSet<int> ids)
+    {
+        var incoming = new HashSet<int>();
+        foreach (var point in points)
+        {
+            foreach (int target in point.Targets)
+            {
+                if (ids.Contains(target))
+                    incoming.Add(target);
+            }
+        }
+
+        return incoming;
+    }
+
+    /// <summary>
+    /// One chain from <paramref name="start"/>. When the last point targets the first, the first
+    /// point is repeated so a patrol loop keeps the leg that closes it.
+    /// </summary>
+    private static void AddChain(
+        Dictionary<int, WaypointNode> byIndex,
+        HashSet<int> visited,
+        List<IReadOnlyList<WorldPoint>> paths,
+        WaypointNode start)
+    {
+        var line = new List<WaypointNode>();
+        var point = start;
+        while (visited.Add(point.Index))
+        {
+            line.Add(point);
+            WaypointNode? next = null;
+            foreach (int target in point.Targets)
+            {
+                if (byIndex.TryGetValue(target, out var candidate) && !visited.Contains(candidate.Index))
+                {
+                    next = candidate;
+                    break;
+                }
+            }
+
+            if (next is null)
+                break;
+            point = next;
+        }
+
+        if (line.Count == 0)
+            return;
+
+        var positions = line.Select(p => p.Position).ToList();
+        if (line[^1].Targets.Contains(line[0].Index))
+            positions.Add(line[0].Position);
+        paths.Add(positions);
     }
 
     private static IEnumerable<MissionBlock> Walk(IEnumerable<MissionBlock> blocks)

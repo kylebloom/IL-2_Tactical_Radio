@@ -46,6 +46,9 @@ public sealed class Contact(string key)
     public ContactStatus Status { get; internal set; } = ContactStatus.Spawned;
     public bool Damaged { get; internal set; }
 
+    /// <summary>How the mission log says this aircraft was lost; null while nothing says so.</summary>
+    public LossReport? Loss { get; internal set; }
+
     /// <summary>The despawn came from the Tacview track (object removed), not the mission log, so a reappearance can undo it.</summary>
     internal bool DespawnedByTrack { get; set; }
     public PositionFix? LastFix { get; internal set; }
@@ -69,6 +72,13 @@ public sealed class Contact(string key)
         : PilotName.Length > 0 ? PilotName
         : TypeName;
 }
+
+/// <summary>
+/// An aircraft lost, from the mission log. <see cref="Attacker"/> is the aircraft the kill is credited
+/// to; null for a collision, a crash, ground fire or a bail-out with no kill (IL-2 logs a collision as
+/// AID -1 on both aircraft and both pilots). <see cref="LogSeconds"/> is the first event's game time.
+/// </summary>
+public sealed record LossReport(double LogSeconds, Contact? Attacker, bool PilotKilled, bool BailedOut);
 
 /// <summary>
 /// Combines mission-log events, ACMI tracks and the mission plan into a list of aircraft contacts.
@@ -187,6 +197,10 @@ public sealed class ContactTracker(TimeProvider? time = null)
             case KillEvent kill when (Find(kill.TargetId) ?? (_pilotBots.Contains(kill.TargetId) ? FindPlaneOrCrew(kill.TargetId) : null)) is { } c:
                 c.Status = ContactStatus.Destroyed; // aircraft destroyed or its pilot killed: no longer answers
                 c.LastFix = new PositionFix(kill.Position, PositionSource.LogEvent, t, "destroyed");
+                var attacker = kill.AttackerId >= 0 ? FindPlaneOrCrew(kill.AttackerId) : null;
+                c.Loss = c.Loss is { } known
+                    ? known with { Attacker = known.Attacker ?? attacker, PilotKilled = known.PilotKilled || _pilotBots.Contains(kill.TargetId) }
+                    : new LossReport(t, attacker, _pilotBots.Contains(kill.TargetId), BailedOut: false);
                 break;
 
             case KillEvent kill when FindPlaneOrCrew(kill.TargetId) is { } c:
@@ -196,6 +210,7 @@ public sealed class ContactTracker(TimeProvider? time = null)
             case BotEjectedEvent ej when FindPlaneOrCrew(ej.ParentId) is { } c:
                 if (c.Status != ContactStatus.Destroyed)
                     c.Status = ContactStatus.BailedOut;
+                c.Loss = c.Loss is { } ejected ? ejected with { BailedOut = true } : new LossReport(t, null, PilotKilled: false, BailedOut: true);
                 break;
 
             case SortieEndedEvent end when Find(end.PlaneId) is { } c:
@@ -278,10 +293,11 @@ public sealed class ContactTracker(TimeProvider? time = null)
 
     private void ConfirmAircraft(ObjectSpawnedEvent spawn)
     {
-        var c = GetOrCreateByLogId(spawn.ObjectId);
+        string? pilot = spawn.Name != spawn.TypeName ? PilotNameOf(spawn.Name) : null;
+        var c = Find(spawn.ObjectId) ?? AdoptTracked(spawn.ObjectId, pilot) ?? GetOrCreateByLogId(spawn.ObjectId);
         if (c.TypeName.Length == 0) c.TypeName = spawn.TypeName;
-        if (spawn.Name != spawn.TypeName)
-            c.PilotName = PilotNameOf(spawn.Name);
+        if (pilot is not null)
+            c.PilotName = pilot;
         SetCountry(c, spawn.Country);
         if (Plan?.Player is { } p && p.PilotName.Length > 0 && p.PilotName == c.PilotName)
             c.IsPlayer = true;
@@ -356,6 +372,23 @@ public sealed class ContactTracker(TimeProvider? time = null)
     {
         var parts = logName.Split(',');
         return parts.Length == 3 && parts[1].All(char.IsDigit) && parts[2].All(char.IsDigit) ? parts[0] : logName;
+    }
+
+    /// <summary>
+    /// The track can show an aircraft before the next mission-log chunk names it. The logged aircraft
+    /// then takes over that contact, so its kill and its positions are one aircraft, and its key (what
+    /// sightings and the contact picture remember) does not change.
+    /// </summary>
+    private Contact? AdoptTracked(long logId, string? pilot)
+    {
+        if (string.IsNullOrEmpty(pilot))
+            return null;
+        var tracked = _contacts.Values.FirstOrDefault(x => x.LogId is null && x.AcmiId is not null && !x.IsPlayer && x.PilotName == pilot);
+        if (tracked is null)
+            return null;
+        tracked.LogId = logId;
+        _logIdToKey[logId] = tracked.Key;
+        return tracked;
     }
 
     private Contact? FindOrConfirm(long logId)

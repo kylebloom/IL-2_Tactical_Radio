@@ -135,6 +135,18 @@ public class FlightCommandTests
         Assert.Equal("Number one, you are with us.", Assert.Single(FlightCommands.Rejoin(_tracker).Replies).Text);
     }
 
+    [Theory]
+    [InlineData(900, true)]
+    [InlineData(1_300, false)] // in formation up to 1.5 km before 2026-10-26
+    public void In_formation_means_within_a_kilometre(double east, bool inFormation)
+    {
+        LogFlightMember("Heinz Koelzig", 1);
+        Frame(10, Player(), Mate("a", "Heinz Koelzig", 0, east, alt: 1020));
+
+        string text = Assert.Single(FlightCommands.FlightPosition(_tracker).Replies).Text;
+        Assert.Equal(inFormation, text.Contains("in formation", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Flight_position_reports_separated_members_after_the_main_group()
     {

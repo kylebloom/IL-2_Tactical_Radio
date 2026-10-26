@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using Il2Radio.Core;
-using Il2Radio.Core.Audio;
 using Il2Radio.Core.Settings;
 using Il2Radio.Windows;
 
@@ -90,70 +89,6 @@ internal static class StartupChecks
     }
 
     /// <summary>
-    /// The optional German phrase voice (Piper). Not answered yet, or on and missing: <paramref name="ask"/> is shown
-    /// the short consent text once (Yes / No / Later) and the download runs only on yes. Yes and no are passed to
-    /// <paramref name="remember"/> to be saved in settings.json; later is not saved. Off: one line saying how to get it.
-    /// Any outcome without the voice leaves the radio as it was: game recordings, class words, full text on screen.
-    /// Never asked when nothing would use it (voice "tts", or no German recordings, e.g. IL-2's audio not found).
-    /// </summary>
-    public static async Task<PiperSynthesizer?> PhraseVoice(AppSettings settings, VoiceSelection voices, Il2Install install,
-        Func<IReadOnlyList<string>, PiperAnswer>? ask, Action<PiperProgress>? progress, Action<string>? log,
-        Action<bool>? remember, CancellationToken cancel = default)
-    {
-        bool germanRecordings = voices.Voices.Any(v => v.Pack.Language.StartsWith("de", StringComparison.OrdinalIgnoreCase));
-        if (settings.Piper.Enabled != false && (voices.Mode == "tts" || !germanRecordings))
-        {
-            if (settings.Piper.Enabled == true)
-                Info("German phrase voice not used: it only fills gaps in the game's German pilot recordings, and none are in use");
-            return null;
-        }
-
-        var (result, synth) = await PiperConsole.StartAsync(settings.Piper, install.Root, ask, progress, log, cancel);
-        if (result.Remember is { } answer)
-            remember?.Invoke(answer);
-        bool? started = synth is null ? null : await StartsWithin(synth, TimeSpan.FromSeconds(10), cancel);
-        switch (result.Status)
-        {
-            case PiperSetupStatus.Off:
-                Info(result.Message);
-                break;
-            case PiperSetupStatus.NotInstalled:
-                Info(result.Message);
-                break;
-            case PiperSetupStatus.Ready when started is false:
-                Warn("The German phrase voice is installed but didn't start, so it is left out this time.",
-                    "An antivirus program may be blocking piper.exe (see Troubleshooting in the README).",
-                    $"Detail: {synth?.LastError ?? "no answer"}");
-                break;
-            case PiperSetupStatus.Ready:
-                Ok($"{result.Message} (aircraft names and \"nothing sighted\" in German)");
-                break;
-            default:
-                Warn(result.Message);
-                break;
-        }
-
-        voices.Synth = synth;
-        return synth;
-    }
-
-    /// <summary>
-    /// Whether Piper answered its warm-up phrase: true, false (it failed: blocked, crashed), or null when it is
-    /// still loading after <paramref name="wait"/> (a slow first model load; replies use it once it is up).
-    /// </summary>
-    private static async Task<bool?> StartsWithin(PiperSynthesizer synth, TimeSpan wait, CancellationToken cancel)
-    {
-        var warm = synth.WarmUp();
-        try
-        {
-            return await warm.WaitAsync(wait, cancel);
-        }
-        catch (TimeoutException)
-        {
-            return null;
-        }
-    }
-
     /// <summary>Whether the chosen chat output can be seen: RTSS must run; the overlay is hidden by exclusive fullscreen.</summary>
     public static void ChatOutput(ChatSettings chat, Il2Install install)
     {

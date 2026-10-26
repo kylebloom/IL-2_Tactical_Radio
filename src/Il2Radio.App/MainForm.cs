@@ -2,6 +2,7 @@ using Il2Radio.Core;
 using Il2Radio.Core.Audio;
 using Il2Radio.Core.Input;
 using Il2Radio.Core.Osd;
+using Il2Radio.Core.Radio;
 using Il2Radio.Core.Settings;
 using Il2Radio.Windows;
 
@@ -29,8 +30,12 @@ internal sealed class MainForm : Form
     private readonly FlightHost _host = new();
     private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
     private readonly TabPage _statusPage = new("Status") { Padding = new Padding(12) };
+    private readonly TabPage _helpPage = new("Help") { AutoScroll = true, Padding = new Padding(12) };
     private readonly TabPage _settingsPage = new("Settings") { AutoScroll = true, Padding = new Padding(8) };
-    private readonly Label _state = new() { Dock = DockStyle.Top, Height = 52, Text = "Starting…", Padding = new Padding(0, 0, 8, 8) };
+    private readonly List<(Label Label, HelpBlock Kind)> _helpBlocks = [];
+    private readonly Dictionary<string, Label> _helpKeys = new(StringComparer.Ordinal);
+    private bool _layingOutHelp;
+    private readonly Label _state = new() { Dock = DockStyle.Top, Height = 68, Text = "Starting…", Padding = new Padding(0, 0, 8, 8) };
     private readonly Label _mission = new() { AutoSize = true, Dock = DockStyle.Fill };
     private readonly Label _track = new() { AutoSize = true, Dock = DockStyle.Fill };
     private readonly Label _you = new() { AutoSize = true, Dock = DockStyle.Fill };
@@ -57,6 +62,7 @@ internal sealed class MainForm : Form
     private readonly ComboBox _realism = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
     private readonly CheckBox _unaskedRoute = new() { Text = "Call a new heading on a cruise leg", AutoSize = true, Checked = true };
     private readonly CheckBox _unaskedContacts = new() { Text = "Call when the contact picture changes", AutoSize = true, Checked = true };
+    private readonly CheckBox _unaskedLosses = new() { Text = "Call a loss the game's pilots don't", AutoSize = true, Checked = true };
     private readonly CheckBox _radioWait = new() { Text = "Hold replies while IL-2's own radio is talking", AutoSize = true };
     private readonly NumericUpDown _radioWaitRatio = Number(1.1m, 10m, 1.8m, 0.1m, 1);
     private readonly NumericUpDown _reminder = Number(0, 600, 60, 5);
@@ -77,18 +83,6 @@ internal sealed class MainForm : Form
     private readonly NumericUpDown _font = Number(6, 96, 16, 1);
     private readonly CheckBox _keepClear = new() { Text = "Keep the text out of IL-2's own message line and subtitles", AutoSize = true, Checked = true };
     private readonly Dictionary<string, TextBox> _keyBoxes = new(StringComparer.Ordinal);
-    private readonly CheckBox _piperEnabled = new() { Text = "Use it for words the game's pilots can't say", AutoSize = true };
-    private readonly ComboBox _piperVoice = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 280 };
-    private readonly TextBox _piperFolder = new();
-    private readonly NumericUpDown _piperPace = Number(0.5m, 2m, 0.9m, 0.05m, 2);
-    private readonly Button _piperRemove = new() { Text = "Remove the German voice", AutoSize = true, MinimumSize = new Size(180, 26) };
-
-    /// <summary>piper.enabled as loaded or last answered: null until the player has answered the question.</summary>
-    private bool? _piperAnswer;
-
-    /// <summary>The player changed the checkbox himself; an unanswered question then becomes his answer.</summary>
-    private bool _piperTouched;
-
     private readonly Button _apply = new() { Text = "Save and apply", Width = 120, Height = 28 };
     private readonly Button _reset = new() { Text = "Reset to defaults", Width = 140, Height = 28 };
     private readonly Button _quit = new() { Text = "Quit", Width = 88, Height = 28 };
@@ -96,11 +90,9 @@ internal sealed class MainForm : Form
     private bool _shown;
     private bool _closing;
     private bool _filling;
-    private bool _showDownload;
     private bool _createdDefaults;
     private CancellationTokenSource? _startup;
     private int _settingsBottom;
-    private DownloadForm? _download;
 
     public MainForm(string settingsPath)
     {
@@ -113,6 +105,7 @@ internal sealed class MainForm : Form
         _host.Ended += OnSessionEnded;
         BuildStatus();
         BuildSettings();
+        BuildHelp();
         BuildChrome();
         _volume.ValueChanged += (_, _) =>
         {
@@ -140,6 +133,7 @@ internal sealed class MainForm : Form
             return;
         _shown = true;
         await LoadAndStartAsync();
+        RelayoutHelp();
     }
 
     protected override async void OnFormClosing(FormClosingEventArgs e)
@@ -181,6 +175,7 @@ internal sealed class MainForm : Form
         buttons.Controls.Add(_reset);
         buttons.Controls.Add(_quit);
         _tabs.TabPages.Add(_statusPage);
+        _tabs.TabPages.Add(_helpPage);
         _tabs.TabPages.Add(_settingsPage);
         Controls.Add(_tabs);
         Controls.Add(_problems);
@@ -218,6 +213,115 @@ internal sealed class MainForm : Form
         _statusPage.Controls.Add(grid);
         _statusPage.Controls.Add(_state);
     }
+
+    /// <summary>
+    /// Help explains the radio for any air force, and when each call is the right one.
+    /// Key names are the ones currently in the Settings boxes, including edits not yet applied.
+    /// </summary>
+    private void BuildHelp()
+    {
+        void Section(string title) => AddHelp(title, HelpBlock.Section);
+        void Body(string text) => AddHelp(text, HelpBlock.Body);
+
+        Section("What this is");
+        foreach (string paragraph in RadioGuide.Purpose)
+            Body(paragraph);
+
+        Section("When to use each call");
+        Body("The key shown here is the one on the Settings tab.");
+        foreach (var call in RadioGuide.Calls)
+            AddHelpKey(call.Action, RadioCommands.Title(call.Command), call.When);
+
+        Section("Other keys");
+        Body("These do not call anyone.");
+        foreach (var key in RadioGuide.OtherKeys)
+            AddHelpKey(key.Action, key.Title, key.When);
+
+        Section("While you fly");
+        foreach (string paragraph in RadioGuide.Flying)
+            Body(paragraph);
+
+        Section("Version");
+        Body($"IL-2 Tactical Radio {AppVersion.Text}. Session reports in the logs folder next to the program record it too; please include one with a bug report.");
+
+        foreach (var box in _keyBoxes.Values)
+            box.TextChanged += (_, _) => RefreshHelpKeys();
+        _helpPage.Resize += (_, _) => RelayoutHelp();
+        _tabs.SelectedIndexChanged += (_, _) =>
+        {
+            if (_tabs.SelectedTab == _helpPage)
+                RelayoutHelp();
+        };
+        RefreshHelpKeys();
+    }
+
+    private void AddHelpKey(string action, string title, string when)
+    {
+        var heading = AddHelp(title, HelpBlock.Key);
+        _helpKeys[action] = heading;
+        AddHelp(when, HelpBlock.Body);
+    }
+
+    private Label AddHelp(string text, HelpBlock kind)
+    {
+        var label = new Label
+        {
+            Text = text,
+            AutoSize = true,
+            Font = kind == HelpBlock.Body ? Font : new Font(Font, FontStyle.Bold),
+        };
+        _helpPage.Controls.Add(label);
+        _helpBlocks.Add((label, kind));
+        return label;
+    }
+
+    private void RefreshHelpKeys()
+    {
+        foreach (var call in RadioGuide.Calls)
+            SetHelpKey(call.Action, RadioCommands.Title(call.Command));
+        foreach (var key in RadioGuide.OtherKeys)
+            SetHelpKey(key.Action, key.Title);
+        RelayoutHelp();
+    }
+
+    private void SetHelpKey(string action, string title)
+    {
+        if (_helpKeys.TryGetValue(action, out var label))
+            label.Text = $"{BoundKey(action)} — {title}";
+    }
+
+    private string BoundKey(string action) =>
+        _keyBoxes.TryGetValue(action, out var box) && !string.IsNullOrWhiteSpace(box.Text) ? box.Text.Trim() : "not set";
+
+    private void RelayoutHelp()
+    {
+        if (_layingOutHelp || _helpBlocks.Count == 0)
+            return;
+        _layingOutHelp = true;
+        try
+        {
+            int width = Math.Max(280, _helpPage.ClientSize.Width - 36);
+            int y = 8;
+            foreach (var (label, kind) in _helpBlocks)
+            {
+                if (kind == HelpBlock.Section)
+                    y += 10;
+                int height = TextRenderer.MeasureText(label.Text, label.Font, new Size(width, int.MaxValue),
+                    TextFormatFlags.WordBreak | TextFormatFlags.Left | TextFormatFlags.NoPrefix).Height;
+                label.AutoSize = false;
+                label.SetBounds(8, y, width, height);
+                y += height + (kind == HelpBlock.Key ? 2 : 8);
+            }
+
+            _helpPage.AutoScrollMinSize = new Size(0, y + 12);
+        }
+        finally
+        {
+            _layingOutHelp = false;
+        }
+    }
+
+    private enum HelpBlock { Section, Key, Body }
 
     private static void AddSpan(TableLayoutPanel grid, string text, int row)
     {
@@ -271,13 +375,14 @@ internal sealed class MainForm : Form
         volumeRow.Controls.Add(_volumeReadout);
         Row("Volume", volumeRow, 440, 36);
         Row("Voice", _voice, 280);
-        Hint("auto uses the game's pilot voices by nation. tts is always Windows text-to-speech. Or a voice pack's name.", ref y);
+        Hint("auto uses the game's pilot voices by nation; what they have no recording for stays on the radio text. off is text only. Or a voice pack's name.", ref y);
         _realism.Items.AddRange(AppSettings.RealismModes);
         Row("Realism", _realism, 160);
         Hint("pilot: he reports a position relative to you only when he can see you or is with you. Otherwise your flight gives its heading and altitude, and a pilot in a fight says the enemy is on him. precise: bearings and ranges from the track.", ref y);
         Check(_unaskedRoute);
         Check(_unaskedContacts);
-        Hint("Unasked calls. A cruise call names the new course in degrees, once per turn: your AI leader, or a \"Route\" line when you lead. A fight gives one line when a group is gained, lost, or on him. Turn both off to keep the radio answers-only.", ref y);
+        Check(_unaskedLosses);
+        Hint("Unasked calls. A cruise call names the new course in degrees, once per turn: your AI leader, or a \"Route\" line when you lead. A fight gives one line when a group is gained, lost, or on him. A loss is called by a flight mate who saw it, in the chat, unless the game's own pilots said it (their own kill, or a mate calling that he is hit). Turn all three off to keep the radio answers-only.", ref y);
         Check(_radioWait);
         Row("Talking threshold", _radioWaitRatio, 80);
         Hint("How far above its engine IL-2's audio must peak to count as talking. More than 1.", ref y);
@@ -327,32 +432,6 @@ internal sealed class MainForm : Form
             _keyBoxes[action] = box;
             Row(label, box, 120);
         }
-
-        Section("German phrase voice");
-        foreach (var voice in PiperCatalog.Voices)
-            _piperVoice.Items.Add(voice.Name);
-        Check(_piperEnabled);
-        _piperEnabled.CheckedChanged += (_, _) =>
-        {
-            if (!_filling)
-                _piperTouched = true;
-        };
-        Hint("Says aircraft names and \"nothing sighted\" in German, which the game's pilots have no recordings for. "
-             + "The radio asks once before downloading it (about 86 MB). Tick it and choose Save and apply to be asked again; "
-             + "untick it to stop using it.", ref y);
-        _piperRemove.Click += async (_, _) => await RemovePiperAsync();
-        Row("", _piperRemove, 200, 26);
-        Row("Voice", _piperVoice, 280);
-        var piperPath = new FlowLayoutPanel { Height = 28, WrapContents = false };
-        _piperFolder.Width = 340;
-        var browsePiper = new Button { Text = "Browse…", Width = 88, Height = 24 };
-        browsePiper.Click += (_, _) => BrowseFolder(_piperFolder, "Where to store the German voice (not inside the IL-2 folder)", reloadVoices: false);
-        piperPath.Controls.Add(_piperFolder);
-        piperPath.Controls.Add(browsePiper);
-        Row("Folder", piperPath, 440, 28);
-        Hint("Empty stores it in a piper folder beside the program, never in the IL-2 folder.", ref y);
-        Row("Speaking pace", _piperPace, 80);
-        Hint("Below 1 is faster. Radio calls are brisk.", ref y);
 
         Hint("Saved as settings.json next to the program. Save and apply restarts the radio here; the volume takes effect on the next transmission either way.", ref y);
         _settingsBottom = y;
@@ -432,13 +511,12 @@ internal sealed class MainForm : Form
 
         _apply.Enabled = false;
         _reset.Enabled = false;
-        _showDownload = true;
         _startup?.Dispose();
         _startup = new CancellationTokenSource();
         try
         {
             string? blocked = await _host.StartAsync(settings, AppContext.BaseDirectory, ShowStatus,
-                ConfirmOutputs, ConfirmPiper, OnPiperProgress, OnPiperLog, RememberPiper, _startup.Token);
+                ConfirmOutputs, _startup.Token);
             if (_closing || IsDisposed)
                 return;
             ShowNotices(StartupChecks.Results);
@@ -447,7 +525,7 @@ internal sealed class MainForm : Form
                 _state.Text = (_createdDefaults
                         ? "Running, with default settings in settings.json beside the program. "
                         : "Running. ")
-                    + "Leave this window open while you fly. Numpad . quits.";
+                    + "Leave this window open while you fly. Help explains each call.";
                 _createdDefaults = false;
                 _tabs.SelectedTab = _statusPage;
             }
@@ -472,9 +550,6 @@ internal sealed class MainForm : Form
         }
         finally
         {
-            _showDownload = false;
-            if (!IsDisposed)
-                CloseDownload();
             if (!_closing && !IsDisposed)
             {
                 _apply.Enabled = true;
@@ -499,7 +574,6 @@ internal sealed class MainForm : Form
         {
             var chat = settings.Chat ?? new ChatSettings();
             var keys = settings.Keys ?? new KeySettings();
-            var piper = settings.Piper ?? new PiperSettings();
             _il2Path.Text = settings.Il2Path ?? "";
             int percent = double.IsFinite(settings.Volume) ? (int)Math.Round(settings.Volume * 100) : 80;
             _volume.Value = Math.Clamp(percent, _volume.Minimum, _volume.Maximum);
@@ -509,6 +583,7 @@ internal sealed class MainForm : Form
             var unasked = settings.Unasked ?? new UnaskedSettings();
             _unaskedRoute.Checked = unasked.Route;
             _unaskedContacts.Checked = unasked.Contacts;
+            _unaskedLosses.Checked = unasked.Losses;
             _radioWait.Checked = settings.RadioWait;
             SetNumber(_radioWaitRatio, settings.RadioWaitRatio);
             SetNumber(_reminder, settings.RecordingReminderSeconds);
@@ -541,12 +616,6 @@ internal sealed class MainForm : Form
             foreach (var (action, key) in keys.All())
                 if (_keyBoxes.TryGetValue(action, out var box))
                     box.Text = key ?? "";
-            _piperEnabled.Checked = piper.Enabled == true;
-            _piperAnswer = piper.Enabled;
-            _piperTouched = false;
-            Select(_piperVoice, piper.Voice, PiperCatalog.Voices.Select(v => v.Name).ToArray());
-            _piperFolder.Text = piper.Folder ?? "";
-            SetNumber(_piperPace, piper.LengthScale);
         }
         finally
         {
@@ -560,7 +629,7 @@ internal sealed class MainForm : Form
         Volume = _volume.Value / 100.0,
         Voice = string.IsNullOrWhiteSpace(_voice.Text) ? "auto" : _voice.Text.Trim(),
         Realism = string.IsNullOrWhiteSpace(_realism.Text) ? "pilot" : _realism.Text.Trim().ToLowerInvariant(),
-        Unasked = new UnaskedSettings { Route = _unaskedRoute.Checked, Contacts = _unaskedContacts.Checked },
+        Unasked = new UnaskedSettings { Route = _unaskedRoute.Checked, Contacts = _unaskedContacts.Checked, Losses = _unaskedLosses.Checked },
         RadioWait = _radioWait.Checked,
         RadioWaitRatio = (double)_radioWaitRatio.Value,
         RecordingReminderSeconds = (int)_reminder.Value,
@@ -589,14 +658,6 @@ internal sealed class MainForm : Form
             Newer = Key("newer"),
             Quit = Key("quit"),
         },
-        Piper = new PiperSettings
-        {
-            // Unticked and never answered stays unanswered, so saving other settings doesn't count as "no".
-            Enabled = _piperEnabled.Checked ? true : _piperAnswer is null && !_piperTouched ? null : false,
-            Voice = _piperVoice.Text,
-            Folder = Blank(_piperFolder.Text),
-            LengthScale = (double)_piperPace.Value,
-        },
     };
 
     private void ReloadVoices(string? selected)
@@ -604,7 +665,7 @@ internal sealed class MainForm : Form
         string current = selected ?? _voice.Text;
         _voice.Items.Clear();
         _voice.Items.Add("auto");
-        _voice.Items.Add("tts");
+        _voice.Items.Add("off");
         try
         {
             string? typed = Blank(_il2Path.Text);
@@ -634,116 +695,11 @@ internal sealed class MainForm : Form
 
     private bool ConfirmOutputs(string question) => AskOnUi(() => PlayerDialogs.YesNo(this, "IL-2 exports", question));
 
-    private PiperAnswer ConfirmPiper(IReadOnlyList<string> lines) =>
-        AskOnUi(() => PlayerDialogs.YesNoLater(this, "German phrase voice", string.Join(Environment.NewLine, lines)));
-
     private T AskOnUi<T>(Func<T> ask)
     {
         if (!InvokeRequired)
             return ask();
         return (T)Invoke(ask)!;
-    }
-
-    /// <summary>
-    /// Saves the player's yes or no to the German-voice question as piper.enabled, keeping every other value in
-    /// settings.json as it is on disk, and shows it in the Settings tab. A failure only means he is asked again.
-    /// </summary>
-    private void RememberPiper(bool enabled)
-    {
-        if (IsDisposed)
-            return;
-        if (InvokeRequired)
-        {
-            Invoke(() => RememberPiper(enabled));
-            return;
-        }
-
-        _filling = true;
-        _piperEnabled.Checked = enabled;
-        _filling = false;
-        _piperAnswer = enabled;
-        _piperTouched = false;
-        try
-        {
-            string current = File.Exists(_settingsPath) ? File.ReadAllText(_settingsPath) : "";
-            File.WriteAllText(_settingsPath, AppSettings.WithPiperEnabled(current, enabled) + Environment.NewLine);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-        {
-            StartupChecks.Warn($"Couldn't save your answer in {_settingsPath} ({ex.Message}); you'll be asked again next time.");
-        }
-    }
-
-    /// <summary>
-    /// Settings, "Remove the German voice": stops the radio (Piper holds its files open), deletes what the installer
-    /// put in the voice's folder, saves piper.enabled = false and starts the radio again without it.
-    /// </summary>
-    private async Task RemovePiperAsync()
-    {
-        string folder = Path.GetFullPath(Blank(_piperFolder.Text) ?? PiperConsole.DefaultFolder);
-        if (!PlayerDialogs.YesNo(this, "Remove the German voice",
-                $"Stop using the German phrase voice and delete its files from {folder}?{Environment.NewLine}{Environment.NewLine}"
-                + "The radio restarts without it. You can add it again later by ticking it here and choosing Save and apply."))
-            return;
-
-        _apply.Enabled = false;
-        _reset.Enabled = false;
-        _piperRemove.Enabled = false;
-        await _host.StopAsync();
-        string outcome;
-        try
-        {
-            outcome = PiperInstaller.Remove(folder) ? "The German voice was removed." : "There were no German voice files to remove.";
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            outcome = $"Some files couldn't be deleted ({ex.Message}). The voice is turned off; you can delete {folder} yourself.";
-        }
-
-        _piperEnabled.Checked = false;
-        _piperTouched = true;
-        _piperRemove.Enabled = true;
-        MessageBox.Show(this, outcome, "IL-2 Tactical Radio", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        await SaveAndStartAsync(writeFile: true);
-    }
-
-    private void OnPiperProgress(PiperProgress progress)
-    {
-        if (IsDisposed || !_showDownload)
-            return;
-        if (InvokeRequired)
-        {
-            BeginInvoke(() => OnPiperProgress(progress));
-            return;
-        }
-
-        _download ??= new DownloadForm();
-        if (!_download.Visible)
-            _download.Show(this);
-        _download.Report(progress);
-    }
-
-    private void OnPiperLog(string line)
-    {
-        if (IsDisposed)
-            return;
-        if (InvokeRequired)
-        {
-            Invoke(() => OnPiperLog(line));
-            return;
-        }
-
-        StartupChecks.Info(line);
-        ShowNotices(StartupChecks.Results);
-    }
-
-    private void CloseDownload()
-    {
-        if (_download is null)
-            return;
-        _download.Close();
-        _download.Dispose();
-        _download = null;
     }
 
     private void ShowStatus(CompactStatus status)

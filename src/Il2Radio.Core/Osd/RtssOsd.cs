@@ -178,8 +178,10 @@ public static class RtssOsd
     {
         var line = visible.Line;
         string speaker = line.Speaker.Length > 0 ? Clean(line.Speaker) + ": " : "";
-        var wrapped = Wrap(Clean(line.Text), wrapColumns - speaker.Length);
-        string indent = new(' ', speaker.Length);
+        // "[16:44:52]  [Lumme 1] [Viktor Richter]: " is 40 columns: rows after the first indent only past
+        // the time, or the text would be squeezed into what is left of the row.
+        string indent = new(' ', Math.Min(speaker.Length, ChatTimeline.StampWidth));
+        var wrapped = Wrap(Clean(line.Text), wrapColumns - speaker.Length, wrapColumns - indent.Length);
         if (!tags)
             return speaker + string.Join("\n" + indent, wrapped);
 
@@ -223,14 +225,16 @@ public static class RtssOsd
     private static string Clean(string s) =>
         s.Replace('<', '(').Replace('>', ')').Replace('\r', ' ').Replace('\n', ' ').Replace('—', '-').Replace('–', '-');
 
-    private static List<string> Wrap(string text, int width)
+    /// <summary>Word-wraps to <paramref name="firstWidth"/> on the first row and <paramref name="width"/> after it.</summary>
+    private static List<string> Wrap(string text, int firstWidth, int width)
     {
+        firstWidth = Math.Max(firstWidth, 20);
         width = Math.Max(width, 20);
         var lines = new List<string>();
         var current = new StringBuilder();
         foreach (string word in text.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
-            if (current.Length > 0 && current.Length + 1 + word.Length > width)
+            if (current.Length > 0 && current.Length + 1 + word.Length > (lines.Count == 0 ? firstWidth : width))
             {
                 lines.Add(current.ToString());
                 current.Clear();

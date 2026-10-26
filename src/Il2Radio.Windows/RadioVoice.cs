@@ -1,8 +1,5 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
-using System.Security;
-using System.Speech.AudioFormat;
-using System.Speech.Synthesis;
 using Il2Radio.Core.Audio;
 using Il2Radio.Core.Radio;
 
@@ -11,25 +8,22 @@ namespace Il2Radio.Windows;
 /// <summary>
 /// One transmission: who speaks (selects the voice), how far away they are (selects the hiss), and
 /// the speaker's IL-2 country (selects recorded clips of that nation). <see cref="Tokens"/> lets a clip
-/// voice say it; without them, or when the clips can't say everything, <see cref="Text"/> is spoken by TTS.
+/// voice say it. Without them, or when the clips can say none of it, nothing is played and
+/// <see cref="Text"/> lives on the chat alone.
 /// </summary>
 internal sealed record Transmission(string Text, int SpeakerId, double RangeFraction, IReadOnlyList<SpeechToken>? Tokens = null, int Country = -1);
 
 /// <summary>
-/// Speaks radio replies with recorded clips (<see cref="VoiceSelection"/>) or Windows text-to-speech,
-/// runs them through <see cref="RadioEffect"/>, and plays them one at a time on a background thread.
-/// A new request drops transmissions not yet started, so pressing a key twice never stacks up chatter.
+/// Speaks radio replies with recorded clips (<see cref="VoiceSelection"/>), runs them through
+/// <see cref="RadioEffect"/>, and plays them one at a time on a background thread. A new request drops
+/// transmissions not yet started, so pressing a key twice never stacks up chatter. A transmission the clips
+/// cannot say still takes its turn: <see cref="Speaking"/> fires with no duration, so its chat line
+/// appears where the voice would have started it.
 /// </summary>
 internal sealed class RadioVoice : IDisposable
 {
     private const int SampleRate = 16_000;
     private const int GapBetweenCallsMs = 400;
-
-    // Per-speaker character: pitch and rate offsets so wingmen are distinguishable with one installed voice.
-    private static readonly (string Pitch, int Rate)[] Characters =
-    [
-        ("-8%", 0), ("+6%", 1), ("-15%", -1), ("+12%", 0), ("0%", 2), ("-4%", -1), ("+3%", 1), ("-11%", 0),
-    ];
 
     private readonly ConcurrentQueue<(int Generation, Transmission Item)> _queue = new();
     private readonly SemaphoreSlim _signal = new(0);
@@ -37,13 +31,12 @@ internal sealed class RadioVoice : IDisposable
     private readonly Thread _worker;
     private RadioEffectSettings _effect; // replaced when the volume changes, read afresh for each transmission
     private readonly VoiceSelection _voices;
-    private readonly ManualResetEventSlim _ready = new();
     private int _generation;
 
     public RadioVoice(double volume, VoiceSelection? voices = null)
     {
         _effect = new RadioEffectSettings { Volume = Math.Clamp(volume, 0, 1) };
-        _voices = voices ?? VoiceSelection.TtsOnly;
+        _voices = voices ?? VoiceSelection.None;
         _worker = new Thread(Run) { IsBackground = true, Name = "radio-voice" };
         _worker.Start();
     }
@@ -61,15 +54,12 @@ internal sealed class RadioVoice : IDisposable
         set => _effect = _effect with { Volume = Math.Clamp(value, 0, 1) };
     }
 
-    /// <summary>The Windows TTS voice used when no clip voice can speak a transmission (null: none installed).</summary>
-    public string? VoiceName { get; private set; }
-
     public string? LastError { get; private set; }
 
-    /// <summary>What spoke each transmission ("voice: clip keys" or "TTS voice: text"), for diagnostics.</summary>
+    /// <summary>What spoke each transmission ("voice: clip keys", or "chat only: text"), for diagnostics.</summary>
     public ConcurrentQueue<string> History { get; } = new();
 
-    /// <summary>Raised on the voice thread just before a transmission starts playing, with its duration.</summary>
+    /// <summary>Raised on the voice thread just before a transmission starts playing, with its duration (zero when no clip could say it).</summary>
     public event Action<Transmission, TimeSpan>? Speaking;
 
     /// <summary>
@@ -91,9 +81,6 @@ internal sealed class RadioVoice : IDisposable
     public bool Idle => _queue.IsEmpty && Volatile.Read(ref _playing) == 0;
 
     private int _playing;
-
-    /// <summary>Blocks until the worker has looked for a TTS voice (so <see cref="VoiceName"/> is meaningful).</summary>
-    public void WaitUntilReady(TimeSpan timeout) => _ready.Wait(timeout);
 
     /// <summary>
     /// Press-to-talk cue: a mic key click and a short carrier burst, played at once at the radio
@@ -143,10 +130,6 @@ internal sealed class RadioVoice : IDisposable
 
     private void Run()
     {
-        using var synth = CreateSynthesizer();
-        VoiceName = synth?.Voice.Name;
-        _ready.Set();
-
         while (!_stop.IsCancellationRequested)
         {
             try
@@ -165,9 +148,16 @@ internal sealed class RadioVoice : IDisposable
             try
             {
                 var effect = _effect;
-                var (wav, description) = Render(synth, entry.Item, effect, _voices);
+                var (wav, description) = Render(entry.Item, effect, _voices);
                 if (entry.Generation != Volatile.Read(ref _generation))
                     continue; // superseded (e.g. by a key click) while rendering
+                if (wav is null)
+                {
+                    // Nothing the recordings can say: the chat line appears in its turn, and the channel stays quiet.
+                    History.Enqueue(description);
+                    Speaking?.Invoke(entry.Item, TimeSpan.Zero);
+                    continue;
+                }
                 WaitForClearChannel(entry.Generation);
                 if (entry.Generation != Volatile.Read(ref _generation))
                     continue; // superseded while waiting
@@ -199,66 +189,36 @@ internal sealed class RadioVoice : IDisposable
         Interlocked.Add(ref _heldTicks, (DateTime.UtcNow - start).Ticks);
     }
 
-    /// <summary>The installed TTS voice to fall back on (male, English preferred), or null if there is none.</summary>
-    private static SpeechSynthesizer? CreateSynthesizer()
-    {
-        var synth = new SpeechSynthesizer();
-        var voice = synth.GetInstalledVoices()
-            .Where(v => v.Enabled)
-            .OrderByDescending(v => v.VoiceInfo.Gender == VoiceGender.Male)
-            .ThenByDescending(v => v.VoiceInfo.Culture.TwoLetterISOLanguageName == "en")
-            .FirstOrDefault();
-        if (voice is null)
-        {
-            synth.Dispose();
-            return null;
-        }
-
-        synth.SelectVoice(voice.VoiceInfo.Name);
-        return synth;
-    }
-
     /// <summary>
-    /// Speaks one transmission and applies the radio effect; returns a WAV file image and what spoke it.
-    /// Recorded clips are tried first. Clips flagged as pre-processed already carry their own band-limiting,
-    /// compression and hiss, so they get the squelch, a gentle drive and only the range-dependent hiss.
+    /// Speaks one transmission from recorded clips and applies the radio effect; returns a WAV file image
+    /// (null when no clip can say any of it) and what spoke it. Clips flagged as pre-processed already carry
+    /// their own band-limiting, compression and hiss, so they get the squelch, a gentle drive and only the
+    /// range-dependent hiss.
     /// </summary>
-    private static (byte[] Wav, string Description) Render(SpeechSynthesizer? synth, Transmission t, RadioEffectSettings effect, VoiceSelection voices)
+    private static (byte[]? Wav, string Description) Render(Transmission t, RadioEffectSettings effect, VoiceSelection voices)
     {
-        short[] speech;
-        string description;
-        if (t.Tokens is { } tokens && voices.For(t.Country) is { } clips && clips.Render(tokens, t.SpeakerId, SampleRate, voices.Synth) is { } utterance)
-        {
-            speech = utterance.Samples;
-            if (clips.Pack.PreProcessed)
-                effect = effect with { Drive = 1.0, NoiseLevel = 0.01 };
-            description = $"{clips.Pack.Name} #{clips.Pack.SpeakerIndex(t.SpeakerId) + 1}: {string.Join(" ", utterance.Keys)}";
-        }
-        else
-        {
-            if (synth is null)
-                throw new InvalidOperationException("no Windows text-to-speech voice installed, and no voice pack could say this");
-            var (pitch, rate) = Characters[Math.Abs(t.SpeakerId) % Characters.Length];
-            speech = Synthesize(synth, t.Text, pitch, rate);
-            description = $"TTS {synth.Voice.Name}: {t.Text}";
-        }
+        if (t.Tokens is not { } tokens || voices.For(t.Country) is not { } clips || clips.Render(tokens, t.SpeakerId, SampleRate) is not { } utterance)
+            return (null, $"chat only: {t.Text}");
 
-        short[] radio = RadioEffect.Apply(speech, SampleRate, effect.ForRange(t.RangeFraction), seed: t.SpeakerId);
+        if (clips.Pack.PreProcessed)
+            effect = effect with { Drive = 1.0, NoiseLevel = 0.01 };
+        string description = $"{clips.Pack.Name} #{clips.Pack.SpeakerIndex(t.SpeakerId) + 1}: {string.Join(" ", utterance.Keys)}";
+        short[] radio = RadioEffect.Apply(utterance.Samples, SampleRate, effect.ForRange(t.RangeFraction), seed: t.SpeakerId);
         return (RadioEffect.ToWav(radio, SampleRate), description);
     }
 
-    /// <summary>Renders transmissions to a WAV file instead of playing them (for checking the sound offline).</summary>
+    /// <summary>Renders transmissions to a WAV file instead of playing them (for checking the sound offline). A chat-only one adds no audio.</summary>
     public static IReadOnlyList<string> RenderToFile(IReadOnlyList<Transmission> transmissions, string path, double volume, VoiceSelection? voices = null)
     {
-        using var synth = CreateSynthesizer();
         var effect = new RadioEffectSettings { Volume = Math.Clamp(volume, 0, 1) };
         var pcm = new List<byte>();
         var descriptions = new List<string>();
         foreach (var t in transmissions)
         {
-            var (wav, description) = Render(synth, t, effect, voices ?? VoiceSelection.TtsOnly);
+            var (wav, description) = Render(t, effect, voices ?? VoiceSelection.None);
             descriptions.Add(description);
-            pcm.AddRange(wav.Skip(44)); // strip each header, concatenate samples
+            if (wav is not null)
+                pcm.AddRange(wav.Skip(44)); // strip each header, concatenate samples
         }
 
         var samples = new short[pcm.Count / 2];
@@ -269,22 +229,6 @@ internal sealed class RadioVoice : IDisposable
 
     /// <summary>Plays a WAV image now, on the calling thread.</summary>
     public static void PlayNow(byte[] wav) => PlaySync(wav);
-
-    private static short[] Synthesize(SpeechSynthesizer synth, string text, string pitch, int rate)
-    {
-        using var pcm = new MemoryStream();
-        synth.SetOutputToAudioStream(pcm, new SpeechAudioFormatInfo(SampleRate, AudioBitsPerSample.Sixteen, AudioChannel.Mono));
-        synth.Rate = rate;
-        var prompt = new PromptBuilder();
-        prompt.AppendSsmlMarkup($"<prosody pitch=\"{pitch}\">{SecurityElement.Escape(text)}</prosody>");
-        synth.Speak(prompt);
-        synth.SetOutputToNull();
-
-        var bytes = pcm.ToArray();
-        var samples = new short[bytes.Length / 2];
-        Buffer.BlockCopy(bytes, 0, samples, 0, samples.Length * 2);
-        return samples;
-    }
 
     private static void PlaySync(byte[] wav)
     {
@@ -299,7 +243,6 @@ internal sealed class RadioVoice : IDisposable
         PlaySound(null, IntPtr.Zero, 0); // stop anything still playing
         _signal.Dispose();
         _stop.Dispose();
-        _ready.Dispose();
     }
 
     private const uint SND_SYNC = 0x0000, SND_ASYNC = 0x0001, SND_NODEFAULT = 0x0002, SND_MEMORY = 0x0004;

@@ -126,7 +126,14 @@
     "range.10": "{speaker}/varRange/10_km.ogg",
     "range.far": "{speaker}/varRange/long.ogg",
     "vertical.above": "{speaker}/varDir/toHigh.ogg",
-    "vertical.below": "{speaker}/varDir/toLow.ogg"
+    "vertical.below": "{speaker}/varDir/toLow.ogg",
+    // Placeholders for messages with no recording of their own. Meanings from Windows speech recognition on the
+    // English actors (same script, file for file): roger "Roger" 0.70-0.90, trnleft/trnright "turning left/right"
+    // 0.61-0.74, rep_trgdestr "target destroyed" 0.61. The other nations are assumed to match; not yet heard.
+    "ack": "{speaker}/const/roger.ogg",
+    "turn.left": "{speaker}/const/trnleft.ogg",
+    "turn.right": "{speaker}/const/trnright.ogg",
+    "destroyed": "{speaker}/const/rep_trgdestr.ogg"
   },
   // What the callsign clips say, shown in the chat in place of the English table's word so text and voice agree.
   // The German actors say German words for the original Russian list (data\GUI\DefaultCallsigns.rus), not the

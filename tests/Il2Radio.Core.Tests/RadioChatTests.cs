@@ -63,7 +63,7 @@ public class RadioChatTests
         RadioChat.Lines(command, RadioCommands.Execute(command, _tracker), _tracker.Player);
 
     [Fact]
-    public void Request_comes_first_from_the_player_then_each_reply_verbatim_from_its_speaker()
+    public void Request_comes_first_from_the_player_then_each_reply_from_its_callsign_and_name()
     {
         LogFlightMember("Heinz Koelzig", 1);
         LogFlightMember("Ernst Lignitz", 6);
@@ -73,10 +73,52 @@ public class RadioChatTests
         var lines = RadioChat.Lines(RadioCommand.FriendlyPositions, result, _tracker.Player);
 
         Assert.Equal(3, lines.Count);
-        Assert.Equal(new ChatLine(ChatLineKind.Request, PlayerName, "All friendlies, report positions.", 2, TimeSpan.Zero), lines[0]);
+        Assert.Equal(new ChatLine(ChatLineKind.Request, $"[Number 4] [{PlayerName}]", "All friendlies, report positions.", 2, TimeSpan.Zero), lines[0]);
         Assert.All(lines.Skip(1), l => Assert.Equal(ChatLineKind.Reply, l.Kind));
-        Assert.Equal(result.Replies.Select(r => r.Text), lines.Skip(1).Select(l => l.Text));
-        Assert.Equal(["Ernst Lignitz", "Heinz Koelzig"], lines.Skip(1).Select(l => l.Speaker));
+        Assert.Equal(["[Number 6] [Ernst Lignitz]", "[Number 1] [Heinz Koelzig]"], lines.Skip(1).Select(l => l.Speaker));
+        Assert.Equal(result.Replies.Select(r => r.Text), lines.Skip(1).Select(l => l.Spoken));
+    }
+
+    [Fact]
+    public void The_chat_leaves_out_the_callsign_the_speaker_says_first()
+    {
+        LogFlightMember("Heinz Koelzig", 1);
+        Frame(10, Player(), Mate("a", "Heinz Koelzig", 0, 17_000));
+        var reply = Assert.Single(RadioCommands.Execute(RadioCommand.FlightPosition, _tracker).Replies);
+        Assert.StartsWith("Number one, ", reply.Text);
+
+        var line = RadioChat.Line(reply);
+
+        Assert.Equal("[Number 1] [Heinz Koelzig]", line.Speaker);
+        Assert.Equal(char.ToUpperInvariant(reply.Text["Number one, ".Length]) + reply.Text["Number one, ".Length..][1..], line.Text);
+        Assert.Equal(reply.Text, line.Spoken);
+    }
+
+    [Fact]
+    public void A_callsign_from_the_plan_is_shown_with_its_number_in_digits()
+    {
+        var tracker = new ContactTracker(_clock) { CallsignWords = (_, number) => number == 9 ? "Lumme" : null };
+        tracker.SetPlan(MissionPlan.FromBlocks(MissionFileParser.Parse(new StringReader($$"""
+            Options
+            {
+              Countries
+              {
+                201 : 2;
+              }
+            }
+            Plane
+            {
+              Name = "Viktor Richter";
+              Country = 201;
+              Callsign = 9;
+              Callnum = 1;
+            }
+            """))));
+        tracker.Apply(new ObjectSpawnedEvent(0, 1, "Bf 109 F-4", 201, "Viktor Richter", -1, WorldPoint.FromIl2(0, 50, 0)));
+        tracker.Apply(new ObjectSpawnedEvent(0, 2, "BotPilot_Bf109_GER41", 201, "BotPilot_Bf109_GER41", 1, WorldPoint.FromIl2(0, 50, 0)));
+        var viktor = Assert.Single(tracker.Contacts);
+
+        Assert.Equal("[Lumme 1] [Viktor Richter]", RadioChat.Speaker(viktor));
     }
 
     [Fact]
@@ -89,7 +131,7 @@ public class RadioChatTests
         var lines = Exchange(RadioCommand.FriendlyPositions);
 
         Assert.Equal(RadioChat.FirstReplyDelay, lines[1].Delay);
-        Assert.Equal(lines[1].Delay + RadioChat.EstimatedAirtime(lines[1].Text), lines[2].Delay);
+        Assert.Equal(lines[1].Delay + RadioChat.EstimatedAirtime(lines[1].Spoken!), lines[2].Delay);
     }
 
     [Fact]
@@ -112,7 +154,7 @@ public class RadioChatTests
 
         var lines = RadioChat.Lines(RadioCommand.Rejoin, empty, player: null);
 
-        Assert.Equal("You", lines[0].Speaker);
+        Assert.Equal("[You]", lines[0].Speaker);
         Assert.Equal("no reply: nobody can answer", lines[1].Text);
     }
 }
@@ -127,7 +169,7 @@ public class RadioChatFeedbackTests
     {
         var line = RadioChat.RequestLine(RadioCommand.FlightPosition, player: null);
 
-        Assert.Equal(new ChatLine(ChatLineKind.Request, "You", "Flight, report your position.", -1, TimeSpan.Zero), line);
+        Assert.Equal(new ChatLine(ChatLineKind.Request, "[You]", "Flight, report your position.", -1, TimeSpan.Zero), line);
     }
 
     [Fact]
@@ -142,8 +184,38 @@ public class RadioChatFeedbackTests
         var replies = RadioChat.Replies(new RadioResult(ReplyOutcome.NoReply, [], []), "position snapshot failed");
         timeline.Post(replies, T0.AddSeconds(1.2));
 
-        Assert.Equal(["All friendlies, report positions.", "no reply: position snapshot failed"],
-            timeline.Snapshot(T0.AddSeconds(2)).Select(v => v.Line.Text));
+        var shown = timeline.Snapshot(T0.AddSeconds(2));
+        Assert.Equal("All friendlies, report positions.", shown[0].Line.Text);
+        Assert.EndsWith(" no reply: position snapshot failed", shown[1].Line.Text);
+    }
+
+    [Fact]
+    public void Every_live_line_starts_with_the_mission_time()
+    {
+        var timeline = new ChatTimeline();
+        var clock = new MissionClock();
+        clock.Sync(new DateTime(1942, 8, 25, 6, 30, 0), T0, authoritative: true);
+        timeline.MissionTime = clock;
+        timeline.Post([new ChatLine(ChatLineKind.Reply, "[Lumme 1] [Viktor Richter]", "Heading 260.", 2, TimeSpan.Zero),
+            new ChatLine(ChatLineKind.System, "", "no reply", -1, TimeSpan.Zero)], T0);
+
+        var shown = timeline.Snapshot(T0.AddSeconds(1));
+
+        Assert.Equal("[06:30:00]  [Lumme 1] [Viktor Richter]", shown[0].Line.Speaker);
+        Assert.Equal("[06:30:00]  no reply", shown[1].Line.Text);
+    }
+
+    [Fact]
+    public void A_shortened_reply_still_appears_when_the_voice_says_the_full_transmission()
+    {
+        var timeline = new ChatTimeline();
+        var line = new ChatLine(ChatLineKind.Reply, "[Lumme 1] [Viktor Richter]", "Heading 260.", 2, TimeSpan.Zero) { Spoken = "Lumme one, heading 260." };
+        timeline.Post([line], T0, syncToVoice: true);
+        Assert.Empty(timeline.Snapshot(T0.AddSeconds(1)));
+
+        timeline.Spoken("Lumme one, heading 260.", T0.AddSeconds(1));
+
+        Assert.Equal("Heading 260.", Assert.Single(timeline.Snapshot(T0.AddSeconds(1))).Line.Text);
     }
 
     [Theory]

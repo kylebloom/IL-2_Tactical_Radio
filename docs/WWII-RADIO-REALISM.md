@@ -20,9 +20,9 @@ Five calls from the numpad, with `realism: pilot` as the default in the player's
 | Numpad 4 | "Flight, report contacts." | The flight, or any friendly in range when flying alone |
 | Numpad 5 | "Flight, identify nearest contact." | The same observers, one contact |
 
-The player's line is English text plus a microphone click. It is not spoken. Replies are IL-2's own pilot recordings for the speaker's nation, with the optional German phrase voice filling words those recordings have no clip for. The on-screen text stays English.
+The player's line is English text plus a microphone click. It is not spoken. Replies are IL-2's own pilot recordings for the speaker's nation. Words those recordings have no clip for stay on the screen (since 2026-10-26 nothing else speaks; before that a German phrase voice filled them). The on-screen text stays English.
 
-In pilot mode a speaker puts something on the player's clock only when he can see the player, or when a flight mate is inside 1.5 km. Otherwise he gives his own eight-point heading and his altitude to the nearest 500 m, and says he cannot see the player. A pilot in a fight he cannot place on the player says the enemy is on him. Ranges are close, a few kilometres, or far. Counts are exact for one aircraft, or for up to four once their shape is visible, and otherwise "a few" or "many". A look is remembered for 60 seconds as "last seen", at the place of that look.
+In pilot mode a speaker puts something on the player's clock only when he can see the player, or when a flight mate is inside 1 km (1.5 km before 2026-10-26). Otherwise he gives his own eight-point heading and his altitude to the nearest 500 m, and says he cannot see the player. A pilot in a fight he cannot place on the player says the enemy is on him. Ranges are close, a few kilometres, or far. Counts are exact for one aircraft, or for up to four once their shape is visible, and otherwise "a few" or "many". A look is remembered for 60 seconds as "last seen", at the place of that look.
 
 Aircraft within 2 km and 600 m answer as one group, through the lowest formation number. Anything outside 40 km is silence. The channel is half-duplex: a new key cuts off whatever is still playing. Hiss grows as the speaker approaches that 40 km. Destroyed aircraft stay silent. Enemy aircraft never transmit.
 
@@ -79,7 +79,7 @@ Code words are the wrong fix for this gap. "Indianer, drei Uhr" would sound rese
 
 ### 4. The calls a net actually carried unasked are the trouble calls
 
-Built 2026-10-26, narrower than this finding. `unasked.route` and `unasked.contacts` (both on by default) are the two calls added: a cruise course, said once per turn, and one contact line when the picture changes. Damage, wounds and bail-outs stay with the game. The course is the briefed next leg while the flight is still on its chain, or the AI leader's nose after a gentle turn. It is the true bearing to the nearest 5°, three figures, north as 360: the chat says "heading 185". There is no variation in the mission grid, so it is not the compass course in the cockpit. A relative amount ("15 degrees starboard") is the wrong shape for this call. That form is a small correction, the side-word on this net was links or rechts, and "starboard" is RAF language. The later Reich-defence words for a 10° nudge are not used. The headset says his own callsign and number. The degrees stay on the chat: the pilot recordings have `cn_01`–`cn_20` and no zero, so 180 cannot be assembled, and the phrase voice is not used for this call. The eight-point compass clips are not a stand-in. Contact reports stay on that compass. It is not the game's "follow me" order, and it stays quiet while a contact is in sight.
+Built 2026-10-26, narrower than this finding. `unasked.route` and `unasked.contacts` (both on by default) are the two calls added: a cruise course, said once per turn, and one contact line when the picture changes. Damage, wounds and bail-outs stay with the game. The course is the briefed next leg while the flight is still on its chain, or the AI leader's nose after a gentle turn. It is the true bearing to the nearest 5°, three figures, north as 360: the chat says "turning to heading 185" for a corner still ahead, and "heading 185" once he is already on it. There is no variation in the mission grid, so it is not the compass course in the cockpit. A relative amount ("15 degrees starboard") is the wrong shape for this call. That form is a small correction, the side-word on this net was links or rechts, and "starboard" is RAF language. The later Reich-defence words for a 10° nudge are not used. The headset says his own callsign and number. The degrees stay on the chat: the pilot recordings have `cn_01`–`cn_20` and no zero, so 180 cannot be assembled, and the phrase voice is not used for this call. The eight-point compass clips are not a stand-in. Contact reports stay on that compass. It is not the game's "follow me" order, and it stays quiet while a contact is in sight.
 
 The brief asked for no chatter, so each of the calls above is its own setting. The transmissions standing orders expected, and which are still not built, are the trouble calls: I am under attack, I am hit, I am bailing out. Patrol chat, "follow me", and formation changes are the game's own radio menu. A second program saying them would talk over the game.
 
@@ -95,11 +95,11 @@ The same hit is also an eyesight fact: an aircraft that has just shot at the fli
 
 ### 5. Inside the formation, "nine o'clock" is a long way to say "on your left"
 
-Within 1.5 km the flight says "you are in formation" or gives a clock. The same pilot actors have `toLeft`, `toRight`, `toBack` and `toCourse`, and the manifest does not use them (VERIFIED, file list against `voices/il2-ger.json`). At a few hundred metres those are the words a wingman uses. Clock position remains the right language for a contact, and for a flight seen across a gap.
+Within 1 km the flight says "you are in formation" or gives a clock. The same pilot actors have `toLeft`, `toRight`, `toBack` and `toCourse`, and the manifest does not use them (VERIFIED, file list against `voices/il2-ger.json`). At a few hundred metres those are the words a wingman uses. Clock position remains the right language for a contact, and for a flight seen across a gap.
 
 `ord_rejoin` is the game's own "rejoin" order. Numpad 3 currently answers with a place and a heading. If that clip is actually the rejoin order, it belongs in the answer a separated pilot hears. Listen before mapping it. A clip named `ord_rejoin` might be the leader giving the order, which is the wrong direction for a reply to the player.
 
-"Du bist in Formation", which the phrase voice says for the in-formation token, is an English shape. "Du bist bei uns" is already the other token, and it is the better German. Small, and only worth doing when those lines are next touched.
+"Du bist in Formation" was the phrase voice's German for the in-formation token. With that voice gone (2026-10-26) the headset says the actors' "Roger" and the chat keeps the English.
 
 ### 6. Every aircraft, at every height, has the same 40 km and the same hiss
 
@@ -129,9 +129,9 @@ That is reasonable for a 1942 Bf 109, which carried the FuG 7, with finding 1 do
 
 ### 10. The headset drops the altitude the text got right
 
-When a pilot cannot see the player, the text gives his altitude to the nearest 500 m. The pilot recordings have no altitude figures. The phrase voice is deliberately not asked to say them, so that Piper's share stays the words the clips cannot say at all. Tank-crew clips do have 50–5000 m, in a different voice, and using them would put a gunner in a fighter's mouth.
+When a pilot cannot see the player, the text gives his altitude to the nearest 500 m. The pilot recordings have no altitude figures. Since 2026-10-26 only the recordings speak, so the figure has nowhere else to go. Tank-crew clips do have 50–5000 m, in a different voice, and using them would put a gunner in a fighter's mouth.
 
-Leave this until the present Piper inserts have been heard in a flight. The roadmap already has that listen open. If the voice change is acceptable, one rounded altitude phrase is the piece most worth adding, because it is the number a separated wingman would actually pass. Until then the number stays on screen, which is an honest place for it.
+The number stays on screen, which is an honest place for it. Only a German pilot recording of altitude figures would change that, and the pilot actors have none.
 
 ### 11. Wording, once the calls themselves are right
 
@@ -166,7 +166,7 @@ The longer callsign takes `acs_*` and `acn_*` are still unexplained, as in FEASI
 5. **Noisier HF, and a shorter reach at low level**, still with a hard cap. Variant-specific VHF only when that variant is actually in the sortie.
 6. **A course to the field** only after a take-off has shown that IL-2 world positions and ACMI positions are the same grid.
 
-Leave out, for this theatre: Reich-defence code words, a controller who reads `_gen.Mission`, enemy transmissions on the German frequency, IFF, and any fuel or ammunition call. The phrase voice's plain German is the right register to keep.
+Leave out, for this theatre: Reich-defence code words, a controller who reads `_gen.Mission`, enemy transmissions on the German frequency, IFF, and any fuel or ammunition call. The actors' own plain phrases are the right register to keep.
 
 ## Sources
 

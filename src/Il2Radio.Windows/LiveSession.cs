@@ -46,6 +46,12 @@ internal sealed record LiveOptions
     /// <summary>One call when the flight's contact picture changes.</summary>
     public bool UnaskedContacts { get; init; } = true;
 
+    /// <summary>A flight mate who saw it calls a loss the game's own pilots do not.</summary>
+    public bool UnaskedLosses { get; init; } = true;
+
+    /// <summary>Any unasked call is on, so the track is read without a numpad press.</summary>
+    public bool AnyUnasked => UnaskedRoute || UnaskedContacts || UnaskedLosses;
+
     /// <summary>The app's start-up check lines, kept in the compact view (otherwise its alerts are listed).</summary>
     public IReadOnlyList<string> StartupResults { get; init; } = [];
 
@@ -163,7 +169,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         while (!cts.IsCancellationRequested)
         {
             Poll();
-            if (options.UnaskedRoute || options.UnaskedContacts)
+            if (options.AnyUnasked)
                 _ = PollUnaskedAsync();
             Render();
             for (int i = 0; i < 20 && !cts.IsCancellationRequested; i++)
@@ -341,7 +347,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             try { PollTextLogs(); } catch (Exception ex) { Note($"text log: {ex.Message}"); }
             try { PollAcmi(); } catch (Exception ex) { Note($"acmi: {ex.Message}"); }
             try { PollRecording(); } catch (Exception ex) { Note($"recording: {ex.Message}"); }
-            if (!_acmiLocked && (options.UnaskedRoute || options.UnaskedContacts) && Volatile.Read(ref _requestInFlight) == 0)
+            if (!_acmiLocked && options.AnyUnasked && Volatile.Read(ref _requestInFlight) == 0)
                 unasked = _unasked.Consider(_tracker, Radio(), _sightings, CallSettings());
             var now = DateTime.UtcNow;
             var mission = RunningMissionStartUtc(now);
@@ -430,16 +436,16 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
 
     private RadioSettings Radio() => new() { Realism = options.Realism };
 
-    private UnaskedCallSettings CallSettings() => new() { Route = options.UnaskedRoute, Contacts = options.UnaskedContacts };
+    private UnaskedCallSettings CallSettings() => new() { Route = options.UnaskedRoute, Contacts = options.UnaskedContacts, Losses = options.UnaskedLosses };
 
     private void DeliverUnasked(RadioReply reply)
     {
-        // A course is chat text. Speak only when some other token has a clip, so a route line
-        // (course alone) is not read out by the phrase voice or by Windows text-to-speech.
-        bool speak = reply.Tokens?.Any(t => t.Word != SpeechWord.Course) == true;
+        // The route prompt is the player's own line: chat only, never in his headset. Everything else takes
+        // its turn on the voice queue, which shows a line no clip can say when its turn comes.
+        bool speak = voice is not null && !reply.Contact.IsPlayer;
         if (speak)
-            voice?.Say([TransmissionOf(reply)], interrupt: false);
-        _chat?.Post([RadioChat.Line(reply)], syncToVoice: speak && voice is not null);
+            voice!.Say([TransmissionOf(reply)], interrupt: false);
+        _chat?.Post([RadioChat.Line(reply)], syncToVoice: speak);
         lock (_gate)
             _lastExchange = $"[{DateTime.Now:HH:mm:ss}] {reply.Text}\n";
         Note($"unasked: \"{reply.Text}\"", monitorOnly: true);
@@ -950,6 +956,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         lock (_gate)
         {
             sb.AppendLine($"# Live session evidence ({_startedUtc:u} → {DateTime.UtcNow:u})\n");
+            sb.AppendLine($"- Program version: {AppVersion.Text}");
             sb.AppendLine(_udpPort is int udpPort
                 ? $"- UDP telemetry on port {udpPort}: motion packets {_motionPackets}, state packets {_statePackets}, vehicle `{_vehicleName ?? "?"}`"
                 : "- UDP telemetry: not listened to");

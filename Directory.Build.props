@@ -1,0 +1,13 @@
+<Project>
+
+  <!--
+    One version for every project. A release overrides it from the tag:
+    dotnet publish src/Il2Radio.App -p:Version=0.2.0 (see .github/workflows/release.yml).
+  -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Authors>Kyle Bloom</Authors>
+    <Copyright>Copyright (c) 2026 Kyle Bloom</Copyright>
+  </PropertyGroup>
+
+</Project>

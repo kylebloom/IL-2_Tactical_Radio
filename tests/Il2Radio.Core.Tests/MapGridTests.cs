@@ -88,4 +88,131 @@ public class MapGridTests
         var path = Assert.Single(plan.Routes[20]);
         Assert.Equal([10, 30], path.Select(p => p.East).ToArray());
     }
+
+    [Fact]
+    public void A_waypoint_cycle_is_a_closed_route()
+    {
+        var plan = MissionPlan.FromBlocks(MissionFileParser.Parse(new StringReader(Cycle())));
+
+        var path = Assert.Single(plan.Routes[20]);
+        Assert.Equal([10, 50, 50, 10, 10], path.Select(p => p.East).ToArray());
+        Assert.Equal([1, 1, 80, 80, 1], path.Select(p => p.North).ToArray());
+    }
+
+    [Fact]
+    public void A_waypoint_cycle_beside_another_chain_stays_one_route()
+    {
+        var plan = MissionPlan.FromBlocks(MissionFileParser.Parse(new StringReader("""
+            MCU_TR_Entity
+            {
+              Index = 21;
+              MisObjID = 20;
+            }
+            MCU_Waypoint
+            {
+              Index = 40;
+              Targets = [41];
+              Objects = [21];
+              XPos = 1;
+              YPos = 0;
+              ZPos = 10;
+            }
+            MCU_Waypoint
+            {
+              Index = 41;
+              Targets = [42];
+              Objects = [21];
+              XPos = 1;
+              YPos = 0;
+              ZPos = 50;
+            }
+            MCU_Waypoint
+            {
+              Index = 42;
+              Targets = [43];
+              Objects = [21];
+              XPos = 80;
+              YPos = 0;
+              ZPos = 50;
+            }
+            MCU_Waypoint
+            {
+              Index = 43;
+              Targets = [40];
+              Objects = [21];
+              XPos = 80;
+              YPos = 0;
+              ZPos = 10;
+            }
+            MCU_Waypoint
+            {
+              Index = 50;
+              Targets = [51];
+              Objects = [21];
+              XPos = 5;
+              YPos = 0;
+              ZPos = 1;
+            }
+            MCU_Waypoint
+            {
+              Index = 51;
+              Targets = [];
+              Objects = [21];
+              XPos = 5;
+              YPos = 0;
+              ZPos = 9;
+            }
+            """)));
+
+        Assert.Equal(2, plan.Routes[20].Count);
+        var open = plan.Routes[20].Single(p => p.Count == 2);
+        var loop = plan.Routes[20].Single(p => p.Count == 5);
+        Assert.Equal([1, 9], open.Select(p => p.East).ToArray());
+        Assert.Equal([10, 50, 50, 10, 10], loop.Select(p => p.East).ToArray());
+        Assert.Equal([1, 1, 80, 80, 1], loop.Select(p => p.North).ToArray());
+    }
+
+    private static string Cycle() => """
+        MCU_TR_Entity
+        {
+          Index = 21;
+          MisObjID = 20;
+        }
+        MCU_Waypoint
+        {
+          Index = 40;
+          Targets = [41];
+          Objects = [21];
+          XPos = 1;
+          YPos = 0;
+          ZPos = 10;
+        }
+        MCU_Waypoint
+        {
+          Index = 41;
+          Targets = [42];
+          Objects = [21];
+          XPos = 1;
+          YPos = 0;
+          ZPos = 50;
+        }
+        MCU_Waypoint
+        {
+          Index = 42;
+          Targets = [43];
+          Objects = [21];
+          XPos = 80;
+          YPos = 0;
+          ZPos = 50;
+        }
+        MCU_Waypoint
+        {
+          Index = 43;
+          Targets = [40];
+          Objects = [21];
+          XPos = 80;
+          YPos = 0;
+          ZPos = 10;
+        }
+        """;
 }

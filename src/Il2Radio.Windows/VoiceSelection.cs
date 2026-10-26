@@ -4,8 +4,9 @@ namespace Il2Radio.Windows;
 
 /// <summary>
 /// Which voice speaks a transmission. <c>auto</c>: recorded clips for the speaker's nation when a pack
-/// covers it (user packs before the game's own), otherwise Windows TTS. <c>tts</c>: always TTS.
-/// Anything else names one pack (manifest path, folder, or part of its name) used for every nation.
+/// covers it (user packs before the game's own); a speaker no pack covers is chat only. <c>off</c>: chat
+/// only, the key click still plays. Anything else names one pack (manifest path, folder, or part of its
+/// name) used for every nation.
 /// </summary>
 internal sealed class VoiceSelection
 {
@@ -24,14 +25,8 @@ internal sealed class VoiceSelection
     public IReadOnlyList<ClipVoice> Voices => _voices;
     public IReadOnlyList<string> Problems { get; }
 
-    /// <summary>
-    /// The optional phrase voice (Piper) that fills what a clip voice of its language can't say: type names,
-    /// "nothing sighted". Never used for TTS-only speakers or packs in another language. Null: none.
-    /// </summary>
-    public IPhraseSynthesizer? Synth { get; set; }
-
-    /// <summary>A new TTS-only selection each time, so setting <see cref="Synth"/> on one never leaks into another.</summary>
-    public static VoiceSelection TtsOnly => new("tts", [], null, []);
+    /// <summary>No voice packs: every transmission is chat only.</summary>
+    public static VoiceSelection None => new("off", [], null, []);
 
     /// <summary>Folders searched for manifests: ./voices, then voices next to the executable.</summary>
     public static IReadOnlyList<string> Folders =>
@@ -41,8 +36,8 @@ internal sealed class VoiceSelection
     public static VoiceSelection Create(string? mode, string? il2Root)
     {
         mode = string.IsNullOrWhiteSpace(mode) ? "auto" : mode.Trim();
-        if (mode.Equals("tts", StringComparison.OrdinalIgnoreCase))
-            return TtsOnly;
+        if (mode.Equals("off", StringComparison.OrdinalIgnoreCase))
+            return None;
 
         var problems = new List<string>();
         var packs = new List<VoicePack>();
@@ -99,7 +94,7 @@ internal sealed class VoiceSelection
         }
     }
 
-    /// <summary>The clip voice for a speaker of this IL-2 country, or null for text-to-speech.</summary>
+    /// <summary>The clip voice for a speaker of this IL-2 country, or null when no pack speaks for it (chat only).</summary>
     public ClipVoice? For(int country) =>
         _forced ?? (country > 0 ? _voices.FirstOrDefault(v => v.Pack.Countries.Count > 0 && v.Pack.SpeaksFor(country))
                                   ?? _voices.FirstOrDefault(v => v.Pack.Countries.Count == 0)
@@ -107,18 +102,15 @@ internal sealed class VoiceSelection
 
     /// <summary>
     /// The callsign word the voice for this country says (its manifest's <c>words</c>), so the on-screen text
-    /// names the same callsign; null when that voice is TTS (which reads the text) or its pack doesn't say.
+    /// names the same callsign; null when no pack speaks for that country or its pack doesn't say.
     /// </summary>
     public string? CallsignWord(int country, int callsign) => For(country)?.Pack.Word($"callsign.{callsign}");
 
     public string Describe() => Mode switch
     {
-        "tts" => "Windows text-to-speech only",
-        "auto" when _voices.Count == 0 => "Windows text-to-speech (no voice packs found)",
-        "auto" => $"by nation: {string.Join("; ", _voices.Select(v => $"{v.Pack.Name} [{(v.Pack.Countries.Count == 0 ? "any" : string.Join(",", v.Pack.Countries))}]"))}{SynthNote}; TTS fallback",
-        _ => $"{Mode} for every speaker{SynthNote}; TTS fallback",
+        "off" => "off: chat only",
+        "auto" when _voices.Count == 0 => "chat only (no voice packs found; is the IL-2 folder set?)",
+        "auto" => $"by nation: {string.Join("; ", _voices.Select(v => $"{v.Pack.Name} [{(v.Pack.Countries.Count == 0 ? "any" : string.Join(",", v.Pack.Countries))}]"))}; what they can't say is chat only",
+        _ => $"{Mode} for every speaker; what it can't say is chat only",
     };
-
-    private string SynthNote =>
-        Synth is { } s && _voices.Any(v => v.CanUse(s)) ? $"; {s.Name} fills gaps in {string.Join(", ", _voices.Where(v => v.CanUse(s)).Select(v => v.Pack.Name))}" : "";
 }

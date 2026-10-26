@@ -23,6 +23,25 @@ public class AppSettingsTests
     }
 
     [Fact]
+    public void An_older_file_with_the_removed_german_voice_still_loads_and_is_not_written_back()
+    {
+        var (parsed, problems) = AppSettings.Parse("""{ "piper": { "enabled": true, "voice": "de_DE-thorsten-medium", "folder": null, "lengthScale": 0.9 } }""");
+
+        Assert.Empty(problems);
+        Assert.DoesNotContain("piper", new AppSettings().ToJson());
+        Assert.Equal("auto", parsed.Voice);
+    }
+
+    [Fact]
+    public void Text_to_speech_is_no_longer_a_voice()
+    {
+        var (_, problems) = AppSettings.Parse("""{ "voice": "tts" }""");
+
+        Assert.Contains(problems, p => p.StartsWith("voice \"tts\"", StringComparison.Ordinal));
+        Assert.Empty(AppSettings.Parse("""{ "voice": "off" }""").Problems);
+    }
+
+    [Fact]
     public void Written_defaults_name_every_setting_including_unset_ones()
     {
         string json = new AppSettings().ToJson();
@@ -42,6 +61,17 @@ public class AppSettingsTests
         Assert.Empty(problems);
         Assert.False(parsed.Unasked.Route);
         Assert.True(parsed.Unasked.Contacts);
+    }
+
+    [Fact]
+    public void The_installers_file_with_only_the_IL2_folder_is_valid()
+    {
+        // installer\Il2Radio.iss (WriteSettings) writes exactly this on a first install.
+        var (parsed, problems) = AppSettings.Parse("{\r\n  \"il2Path\": \"D:\\\\SteamLibrary\\\\steamapps\\\\common\\\\IL-2 Sturmovik Battle of Stalingrad\"\r\n}\r\n");
+
+        Assert.Empty(problems);
+        Assert.Equal(@"D:\SteamLibrary\steamapps\common\IL-2 Sturmovik Battle of Stalingrad", parsed.Il2Path);
+        Assert.Equal(new AppSettings().Volume, parsed.Volume);
     }
 
     [Fact]

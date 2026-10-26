@@ -142,16 +142,23 @@ public sealed class AcmiStream
             _pending.Insert(0, continued.Replace("\n", "\\\n"));
     }
 
-    /// <summary>Local north/east/altitude position in the ACMI frame.</summary>
+    /// <summary>
+    /// Local north/east/altitude position in the ACMI frame. East is scaled by one latitude for the
+    /// whole stream, the first one seen. IL-2 writes absolute degrees (about 43° E at Stalingrad), so
+    /// scaling each aircraft by its own latitude moves it east or west with every metre it flies
+    /// north: 0.3° apart in latitude came out 9 km short of 45 km (VERIFIED, 2026-10-26 Career track).
+    /// </summary>
     public WorldPoint? PositionOf(AcmiObject obj)
     {
         if (!obj.HasPosition)
             return null;
-        double latitude = ReferenceLatitude + obj.Latitude;
+        _eastScale ??= MetresPerDegree * Math.Cos((ReferenceLatitude + obj.Latitude) * Math.PI / 180.0);
         double north = obj.Latitude * MetresPerDegree;
-        double east = obj.Longitude * MetresPerDegree * Math.Cos(latitude * Math.PI / 180.0);
+        double east = obj.Longitude * _eastScale.Value;
         return new WorldPoint(north, east, double.IsNaN(obj.Altitude) ? 0 : obj.Altitude, CoordinateFrame.Acmi);
     }
+
+    private double? _eastScale;
 
     private void ParseLine(string line)
     {
