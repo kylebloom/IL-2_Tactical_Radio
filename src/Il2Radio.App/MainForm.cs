@@ -28,14 +28,24 @@ internal sealed class MainForm : Form
 
     private readonly string _settingsPath;
     private readonly FlightHost _host = new();
-    private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
-    private readonly TabPage _statusPage = new("Status") { Padding = new Padding(12) };
-    private readonly TabPage _helpPage = new("Help") { AutoScroll = true, Padding = new Padding(12) };
-    private readonly TabPage _settingsPage = new("Settings") { AutoScroll = true, Padding = new Padding(8) };
+    private readonly PageHost _tabs = new() { Dock = DockStyle.Fill };
+    private readonly TabPage _statusPage = Page("Status", 16, scroll: false);
+    private readonly TabPage _helpPage = Page("Help", 12, scroll: true);
+    private readonly TabPage _settingsPage = Page("Settings", 8, scroll: true);
+    private readonly HeaderBanner _header = new();
+    private readonly NavStrip _nav;
     private readonly List<(Label Label, HelpBlock Kind)> _helpBlocks = [];
     private readonly Dictionary<string, Label> _helpKeys = new(StringComparer.Ordinal);
     private bool _layingOutHelp;
-    private readonly Label _state = new() { Dock = DockStyle.Top, Height = 68, Text = "Starting…", Padding = new Padding(0, 0, 8, 8) };
+    private readonly Label _state = new()
+    {
+        Dock = DockStyle.Top,
+        Height = 44,
+        Text = "Starting…",
+        Padding = new Padding(0, 0, 8, 4),
+        Font = Brand.Ui(10.5f),
+        ForeColor = Brand.Ink,
+    };
     private readonly Label _mission = new() { AutoSize = true, Dock = DockStyle.Fill };
     private readonly Label _track = new() { AutoSize = true, Dock = DockStyle.Fill };
     private readonly Label _you = new() { AutoSize = true, Dock = DockStyle.Fill };
@@ -52,11 +62,13 @@ internal sealed class MainForm : Form
         ReadOnly = true,
         ScrollBars = ScrollBars.Vertical,
         Visible = false,
-        ForeColor = Color.DarkRed,
+        BorderStyle = BorderStyle.None,
+        BackColor = Brand.ProblemBack,
+        ForeColor = Brand.ProblemText,
     };
 
     private readonly TextBox _il2Path = new();
-    private readonly TrackBar _volume = new() { Minimum = 0, Maximum = 100, TickFrequency = 10, Width = 220, Height = 32 };
+    private readonly TrackBar _volume = new() { Minimum = 0, Maximum = 100, TickFrequency = 10, Width = 220, Height = 32, BackColor = Brand.Paper };
     private readonly Label _volumeReadout = new() { AutoSize = true, Padding = new Padding(8, 8, 0, 0) };
     private readonly ComboBox _voice = new() { DropDownStyle = ComboBoxStyle.DropDown, Width = 280 };
     private readonly ComboBox _realism = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
@@ -97,11 +109,15 @@ internal sealed class MainForm : Form
     public MainForm(string settingsPath)
     {
         _settingsPath = settingsPath;
-        Text = "IL-2 Tactical Radio";
-        Font = new Font("Segoe UI", 9f);
+        _nav = new NavStrip(_tabs);
+        Text = Brand.Name;
+        Icon = Brand.AppIcon() ?? Icon;
+        Font = Brand.Ui(9f);
+        BackColor = Brand.Paper;
+        ForeColor = Brand.Ink;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(760, 640);
-        MinimumSize = new Size(700, 520);
+        ClientSize = new Size(780, 760);
+        MinimumSize = new Size(720, 640);
         _host.Ended += OnSessionEnded;
         BuildStatus();
         BuildSettings();
@@ -124,6 +140,15 @@ internal sealed class MainForm : Form
         _quit.Click += (_, _) => Close();
         _apply.Enabled = false;
         _reset.Enabled = false;
+        Brand.Primary(_apply);
+        Brand.Secondary(_reset);
+        Brand.Secondary(_quit);
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Brand.DarkCaption(Handle);
     }
 
     protected override async void OnShown(EventArgs e)
@@ -154,6 +179,7 @@ internal sealed class MainForm : Form
         e.Cancel = true;
         _closing = true;
         Text = "IL-2 Tactical Radio — stopping";
+        SetState(RadioState.Starting, "Stopping");
         _apply.Enabled = false;
         try { _startup?.Cancel(); }
         catch (ObjectDisposedException) { }
@@ -167,9 +193,15 @@ internal sealed class MainForm : Form
         var buttons = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
-            Height = 48,
-            Padding = new Padding(8),
+            Height = 52,
+            Padding = new Padding(12, 10, 12, 8),
             FlowDirection = FlowDirection.LeftToRight,
+            BackColor = Brand.Footer,
+        };
+        buttons.Paint += (_, e) =>
+        {
+            using var pen = new Pen(Brand.Rule);
+            e.Graphics.DrawLine(pen, 0, 0, buttons.Width, 0);
         };
         buttons.Controls.Add(_apply);
         buttons.Controls.Add(_reset);
@@ -180,19 +212,40 @@ internal sealed class MainForm : Form
         Controls.Add(_tabs);
         Controls.Add(_problems);
         Controls.Add(buttons);
+        Controls.Add(_nav);
+        Controls.Add(_header);
     }
+
+    private void SetState(RadioState state, string text) => _nav.SetState(state, text);
+
+    private static TabPage Page(string title, int padding, bool scroll) => new(title)
+    {
+        AutoScroll = scroll,
+        Padding = new Padding(padding),
+        UseVisualStyleBackColor = false,
+        BackColor = Brand.Paper,
+    };
 
     private void BuildStatus()
     {
         var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         string[] captions = ["Mission", "Track", "You", "Chat", "Audio"];
         Label[] values = [_mission, _track, _you, _chat, _audio];
         for (int i = 0; i < captions.Length; i++)
         {
             grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            grid.Controls.Add(new Label { Text = captions[i], AutoSize = true, Dock = DockStyle.Fill, Padding = new Padding(0, 4, 0, 4) }, 0, i);
+            grid.Controls.Add(new Label
+            {
+                Text = captions[i].ToUpperInvariant(),
+                AutoSize = true,
+                Dock = DockStyle.Fill,
+                Padding = new Padding(0, 5, 0, 4),
+                Font = Brand.Semibold(8f),
+                ForeColor = Brand.Muted,
+            }, 0, i);
+            values[i].Padding = new Padding(0, 4, 0, 4);
             grid.Controls.Add(values[i], 1, i);
         }
 
@@ -264,12 +317,15 @@ internal sealed class MainForm : Form
 
     private Label AddHelp(string text, HelpBlock kind)
     {
-        var label = new Label
-        {
-            Text = text,
-            AutoSize = true,
-            Font = kind == HelpBlock.Body ? Font : new Font(Font, FontStyle.Bold),
-        };
+        var label = kind == HelpBlock.Section
+            ? new SectionRule(text)
+            : new Label
+            {
+                Text = text,
+                AutoSize = true,
+                Font = kind == HelpBlock.Body ? Font : Brand.Semibold(9.5f),
+                ForeColor = kind == HelpBlock.Body ? Brand.Ink : Brand.SkyTop,
+            };
         _helpPage.Controls.Add(label);
         _helpBlocks.Add((label, kind));
         return label;
@@ -308,6 +364,8 @@ internal sealed class MainForm : Form
                     y += 10;
                 int height = TextRenderer.MeasureText(label.Text, label.Font, new Size(width, int.MaxValue),
                     TextFormatFlags.WordBreak | TextFormatFlags.Left | TextFormatFlags.NoPrefix).Height;
+                if (kind == HelpBlock.Section)
+                    height += label.Padding.Bottom + 6;
                 label.AutoSize = false;
                 label.SetBounds(8, y, width, height);
                 y += height + (kind == HelpBlock.Key ? 2 : 8);
@@ -326,7 +384,7 @@ internal sealed class MainForm : Form
     private static void AddSpan(TableLayoutPanel grid, string text, int row)
     {
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var label = new Label { Text = text, AutoSize = true, Dock = DockStyle.Fill, Font = new Font("Segoe UI", 9f, FontStyle.Bold), Padding = new Padding(0, 8, 0, 2) };
+        var label = new SectionRule(text) { Dock = DockStyle.Fill, Height = 30 };
         grid.Controls.Add(label, 0, row);
         grid.SetColumnSpan(label, 2);
     }
@@ -337,9 +395,8 @@ internal sealed class MainForm : Form
         void Section(string title)
         {
             y += 8;
-            var label = new Label { Text = title, AutoSize = true, Left = 8, Top = y, Font = new Font(Font, FontStyle.Bold) };
-            _settingsPage.Controls.Add(label);
-            y += 24;
+            _settingsPage.Controls.Add(new SectionRule(title) { Left = 8, Top = y, Width = 688 });
+            y += 32;
         }
 
         Control Row(string caption, Control control, int width = 440, int height = 24)
@@ -363,6 +420,7 @@ internal sealed class MainForm : Form
         var pathRow = new FlowLayoutPanel { Height = 28, WrapContents = false, FlowDirection = FlowDirection.LeftToRight };
         _il2Path.Width = 340;
         var browseIl2 = new Button { Text = "Browse…", Width = 88, Height = 24 };
+        Brand.Secondary(browseIl2);
         browseIl2.Click += (_, _) => BrowseFolder(_il2Path, "Select the IL-2 folder (it contains data\\startup.cfg)", reloadVoices: true);
         pathRow.Controls.Add(_il2Path);
         pathRow.Controls.Add(browseIl2);
@@ -425,10 +483,10 @@ internal sealed class MainForm : Form
         Hint("Click a box and press the key. Backspace clears it (the action is left unbound). IL-2 still receives the key, so pick one it doesn't use.", ref y);
         foreach (var (label, action) in KeyRows)
         {
-            var box = new TextBox { ReadOnly = true, ShortcutsEnabled = false, BackColor = SystemColors.Window };
+            var box = new TextBox { ReadOnly = true, ShortcutsEnabled = false, BackColor = Color.White, Font = Brand.Semibold(9) };
             box.KeyDown += CaptureKey;
-            box.GotFocus += (_, _) => box.BackColor = SystemColors.Info;
-            box.LostFocus += (_, _) => box.BackColor = SystemColors.Window;
+            box.GotFocus += (_, _) => box.BackColor = KeyFocus;
+            box.LostFocus += (_, _) => box.BackColor = Color.White;
             _keyBoxes[action] = box;
             Row(label, box, 120);
         }
@@ -459,6 +517,7 @@ internal sealed class MainForm : Form
             ShowProblems([$"Can't read or create {_settingsPath}: {ex.Message}"]);
             _tabs.SelectedTab = _settingsPage;
             _state.Text = "Not running.";
+            SetState(RadioState.Stopped, "Not running");
             _apply.Enabled = true;
             _reset.Enabled = true;
             return;
@@ -470,6 +529,7 @@ internal sealed class MainForm : Form
             ShowProblems(problems);
             _tabs.SelectedTab = _settingsPage;
             _state.Text = "Not running.";
+            SetState(RadioState.Stopped, "Not running");
             _mission.Text = "Settings need fixing before the radio can start. Fix them, or reset to defaults, then Save and apply.";
             _apply.Enabled = true;
             _reset.Enabled = true;
@@ -511,6 +571,7 @@ internal sealed class MainForm : Form
 
         _apply.Enabled = false;
         _reset.Enabled = false;
+        SetState(RadioState.Starting, "Starting");
         _startup?.Dispose();
         _startup = new CancellationTokenSource();
         try
@@ -526,12 +587,14 @@ internal sealed class MainForm : Form
                         ? "Running, with default settings in settings.json beside the program. "
                         : "Running. ")
                     + "Leave this window open while you fly. Help explains each call.";
+                SetState(RadioState.Running, "Radio on");
                 _createdDefaults = false;
                 _tabs.SelectedTab = _statusPage;
             }
             else
             {
                 _state.Text = "Not running.";
+                SetState(RadioState.Stopped, "Not running");
                 _mission.Text = blocked;
                 _track.Text = "";
                 _you.Text = "";
@@ -545,6 +608,7 @@ internal sealed class MainForm : Form
         catch (Exception ex) when (!_closing && !IsDisposed)
         {
             _state.Text = "The radio could not start.";
+            SetState(RadioState.Error, "Error");
             _exchange.Text = ex.ToString();
             _tabs.SelectedTab = _statusPage;
         }
@@ -748,6 +812,7 @@ internal sealed class MainForm : Form
             if (error is not null)
             {
                 _state.Text = "The radio stopped because of an error.";
+                SetState(RadioState.Error, "Error");
                 _exchange.Text = error.ToString();
                 return;
             }
@@ -813,12 +878,15 @@ internal sealed class MainForm : Form
             Top = y,
             Width = 480,
             Height = lines * 16,
-            ForeColor = SystemColors.GrayText,
+            ForeColor = Brand.Muted,
         };
         _settingsPage.Controls.Add(label);
         y += label.Height + 6;
     }
 
+    private static readonly Color KeyFocus = Color.FromArgb(0xFB, 0xEF, 0xD6);
+
+    /// <summary>Start-up checks, the last radio call and notes: white boxes in a monospaced face, like a radio log.</summary>
     private static TextBox ReadOnlyBox() => new()
     {
         Multiline = true,
@@ -827,6 +895,9 @@ internal sealed class MainForm : Form
         Dock = DockStyle.Fill,
         BorderStyle = BorderStyle.FixedSingle,
         TabStop = false,
+        BackColor = Color.White,
+        ForeColor = Brand.Ink,
+        Font = Brand.Mono(9f),
     };
 
     private static NumericUpDown Number(decimal min, decimal max, decimal value, decimal increment, int decimals = 0) => new()

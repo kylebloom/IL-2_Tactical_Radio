@@ -8,6 +8,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Il2Radio.Core\Il2Radio.Core.csproj" />
     <ProjectReference Include="..\Il2Radio.Windows\Il2Radio.Windows.csproj" />
+    <EmbeddedResource Include="app.ico" LogicalName="Il2Radio.App.app.ico" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -19,6 +20,8 @@
     <Product>IL-2 Tactical Radio</Product>
     <!-- requireAdministrator: live positions are read through Volume Shadow Copy snapshots -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- app.ico is rendered from Brand.cs by tools/BrandArt; the window loads the embedded copy -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>

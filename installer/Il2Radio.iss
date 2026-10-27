@@ -40,6 +40,7 @@ LicenseFile=..\LICENSE
 OutputDir={#PublishDir}
 OutputBaseFilename=IL2-Tactical-Radio-Setup-{#AppVersion}
 UninstallDisplayIcon={app}\{#AppExe}
+SetupIconFile=..\src\Il2Radio.App\app.ico
 UninstallDisplayName={#AppName}
 WizardStyle=modern
 Compression=lzma2

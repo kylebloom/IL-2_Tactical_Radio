@@ -18,7 +18,10 @@ internal sealed class ConsentDialog : Form
     public ConsentDialog(string title, string text)
     {
         Text = title;
-        Font = new Font("Segoe UI", 9f);
+        Icon = Brand.AppIcon() ?? Icon;
+        Font = Brand.Ui(9f);
+        BackColor = Brand.Paper;
+        ForeColor = Brand.Ink;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
@@ -34,21 +37,35 @@ internal sealed class ConsentDialog : Form
             Text = text,
             Dock = DockStyle.Fill,
             BorderStyle = BorderStyle.None,
-            BackColor = SystemColors.Window,
+            BackColor = Brand.Paper,
+            ForeColor = Brand.Ink,
         };
-        var no = new Button { Text = "No", DialogResult = DialogResult.No, AutoSize = true, MinimumSize = new Size(88, 28) };
-        var yes = new Button { Text = "Yes", DialogResult = DialogResult.Yes, AutoSize = true, MinimumSize = new Size(88, 28) };
+        var no = new Button { Text = "No", DialogResult = DialogResult.No, AutoSize = true, MinimumSize = new Size(88, 30) };
+        var yes = new Button { Text = "Yes", DialogResult = DialogResult.Yes, AutoSize = true, MinimumSize = new Size(88, 30) };
+        // Both plain: the dialog asks for consent, so neither answer is pushed.
+        Brand.Secondary(no);
+        Brand.Secondary(yes);
         var buttons = new FlowLayoutPanel
         {
             Dock = DockStyle.Bottom,
             FlowDirection = FlowDirection.RightToLeft,
-            Height = 44,
-            Padding = new Padding(8),
+            Height = 50,
+            Padding = new Padding(10),
+            BackColor = Brand.Footer,
         };
+        var body = new Panel { Dock = DockStyle.Fill, Padding = new Padding(16, 14, 12, 8) };
+        body.Controls.Add(box);
         buttons.Controls.Add(no);
         buttons.Controls.Add(yes);
-        Controls.Add(box);
+        Controls.Add(body);
         Controls.Add(buttons);
         CancelButton = no;
+        Shown += (_, _) => box.Select(0, 0);
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Brand.DarkCaption(Handle);
     }
 }
