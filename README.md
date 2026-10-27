@@ -1,4 +1,6 @@
-# IL-2 Tactical Radio (feasibility PoC)
+# IL-2 Tactical Radio
+
+**[Download the latest release](https://github.com/kylebloom/AI_Friendly_Radio/releases/latest)**: the installer or a portable zip, then follow the [player guide](README-PLAYER.md).
 
 A companion app for IL-2 Sturmovik: Great Battles single-player Career Mode. It adds a few realistic radio requests, such as asking friendly aircraft for their positions. It runs outside the game and only reads data IL-2 already exports, so it works with Mods Off and doesn't touch game files or the game process.
 
