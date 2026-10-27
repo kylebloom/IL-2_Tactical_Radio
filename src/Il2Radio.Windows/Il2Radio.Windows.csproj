@@ -4,6 +4,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Il2Radio.Core\Il2Radio.Core.csproj" />
+    <!-- the in-game text output (chat "ingame"); its host DLL is built by overlay\build.ps1 -->
+    <ProjectReference Include="..\..\overlay\dotnet\OverlayKit.Client\OverlayKit.Client.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -450,7 +450,7 @@ internal sealed class MainForm : Form
         Section("Radio text");
         _chatOutput.Items.AddRange(ChatSettings.Outputs);
         Row("Show text", _chatOutput, 160);
-        Hint("rtss is inside the game, including fullscreen. overlay needs windowed IL-2. window is an ordinary window. off shows nothing.", ref y);
+        Hint("rtss is inside the game, including fullscreen. ingame is too, without RTSS, by loading the radio's own overlay into IL-2 (experimental). overlay needs windowed IL-2. window is an ordinary window. off shows nothing.", ref y);
         foreach (string preset in new[] { "left-middle", "top-left", "top-right", "bottom-left", "bottom-right", "default" })
             _rtssPosition.Items.Add(preset);
         Row("RTSS position", _rtssPosition, 200);

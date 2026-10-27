@@ -152,10 +152,12 @@ public sealed record UnaskedSettings
 /// <summary>Where the radio text goes and how it looks.</summary>
 public sealed record ChatSettings
 {
-    public static readonly string[] Outputs = ["rtss", "overlay", "window", "off"];
+    public static readonly string[] Outputs = ["rtss", "ingame", "overlay", "window", "off"];
 
     /// <summary>
     /// rtss: RivaTuner Statistics Server's on-screen display, which works in exclusive fullscreen.
+    /// ingame: our own OverlayKit host DLL, loaded into Il-2.exe, draws the text into the game's
+    /// frames (fullscreen too, no RTSS; experimental).
     /// overlay: a click-through window over the game (windowed mode only). window: an ordinary
     /// window, e.g. on a second screen. off: no text.
     /// </summary>

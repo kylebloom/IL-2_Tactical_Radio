@@ -88,7 +88,6 @@ internal static class StartupChecks
         return null;
     }
 
-    /// <summary>
     /// <summary>Whether the chosen chat output can be seen: RTSS must run; the overlay is hidden by exclusive fullscreen.</summary>
     public static void ChatOutput(ChatSettings chat, Il2Install install)
     {
@@ -104,6 +103,9 @@ internal static class StartupChecks
             case "overlay" when StartupConfig.Load(install.StartupCfg).Get("graphics", "fullscreen") == "1":
                 Warn("IL-2 runs in exclusive fullscreen, which hides the overlay window.",
                     "Choose RTSS for the radio text, or play IL-2 windowed.");
+                break;
+            case "ingame":
+                Ok("Radio text drawn inside IL-2 by the radio's own overlay (experimental; loaded into Il-2.exe when it runs)");
                 break;
             case "off":
                 Ok("Radio text is off");

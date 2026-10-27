@@ -71,7 +71,7 @@ switch (command)
                                   [--realism pilot|precise] [--unasked-route on|off] [--unasked-contacts on|off] [--unasked-losses on|off]
                                   Run during a mission: telemetry + log tail + ACMI tail + contact table + radio
                                   --radio-wait (default on): hold replies while IL-2's own audio peaks R x above its floor (1.8)
-                                  Chat text: --chat overlay|window|rtss|off  --chat-screen N  --chat-pos L,T,W,H  --chat-font PX
+                                  Chat text: --chat overlay|window|rtss|ingame|off  --chat-screen N  --chat-pos L,T,W,H  --chat-font PX
                                              --rtss-pos X,Y  --rtss-columns N   (rtss: RivaTuner OSD, works in exclusive fullscreen)
                                              --keep-clear on|off   (default on: stay out of IL-2's message line and subtitles)
               chat-test [--seconds S] [--png file] [chat options]

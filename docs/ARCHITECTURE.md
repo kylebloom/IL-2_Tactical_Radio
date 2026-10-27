@@ -15,6 +15,7 @@ How the IL-2 tactical radio works, for anyone (human or agent) changing it. Read
 | `src/Il2Radio.App` (net10.0-windows) | The player's program, `Il2Radio.exe`: a window for flight status and settings, start-up checks, then `LiveSession` in its compact view. Published as one self-contained file. |
 | `src/Il2Radio.Diag` (net10.0-windows) | The developer console: the full `live` monitor, offline replays and checks, all driven by command-line flags. |
 | `tests/Il2Radio.Core.Tests` | xUnit tests for Core, including a real Career `.mlg` fixture. |
+| `overlay/` | OverlayKit, a reusable in-game renderer with no IL-2 code: the native host DLL (`overlaykit64.dll`, C++, built by `overlay/build.ps1`), the .NET client `OverlayKit.Client` (referenced by `Il2Radio.Windows`), a demo client and a stand-in D3D11 test host. See `overlay/README.md`. |
 | `voices/` | Voice-pack manifests. File names only; they point into the user's IL-2 install. See `voices/README.md`. |
 
 ## Data flow during a flight (`Il2Radio.exe` or `Il2Radio.Diag live`)
@@ -127,6 +128,10 @@ Numpad key (GetAsyncKeyState) ─► Keyed event: request line + mic click (imme
   - Writes into RivaTuner Statistics Server's documented shared memory (`RTSSSharedMemoryV2`): claims a slot named "IL-2 Tactical Radio", writes text with `<C=RRGGBB>` colours and, on each row, a `<B=-columns,-1>` bar (IL-2's 42 % black, one character-row tall and as wide as that row, fading with the row), releases the slot on exit. `<B=0,0>` is the whole OSD layer, not the text.
   - RTSS draws it into the game's frames.
   - Position comes from a per-slot `<P=x,y>` tag (`RtssPlacement`, presets, margin, zoom read from RTSS).
+- `Windows/InGameChat` (`ingame`, experimental): **the fullscreen path without RTSS.**
+  - Loads OverlayKit's host DLL into `Il-2.exe` once it runs (`OverlayInjector`, retried every 3 s for a new IL-2 process), waits for it to report frames, then renders the lines with `ChatOverlay.DrawLines` (the window overlay's exact look) onto a premultiplied bitmap at the game's back-buffer size and publishes it as one `OverlayLayer` named "IL-2 Tactical Radio".
+  - Placement uses the overlay's screen fractions (`chat.windowArea`, kept clear of IL-2's text) and its 1080-line font size, scaled to the back buffer. It redraws only when the visible text or fade changes (50 ms tick).
+  - Disposing the sink removes the layer at once. The DLL stays in IL-2 until the game exits and draws nothing without layers.
 - `Windows/ChatOverlay`: a click-through, layered, topmost window styled like IL-2's message line (`Il2ChatStyle`). **IL-2 in exclusive fullscreen hides it whenever the game has focus (verified)**, so it's for windowed mode or a second screen.
 - `Core/Osd/Il2ScreenAreas`: estimated areas of IL-2's own message line and subtitles, which both outputs keep clear of.
 

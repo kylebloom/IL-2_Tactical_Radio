@@ -5,6 +5,10 @@
     <Project Path="src/Il2Radio.Diag/Il2Radio.Diag.csproj" />
     <Project Path="src/Il2Radio.Windows/Il2Radio.Windows.csproj" />
   </Folder>
+  <Folder Name="/overlay/">
+    <Project Path="overlay/dotnet/OverlayKit.Client/OverlayKit.Client.csproj" />
+    <Project Path="overlay/dotnet/OverlayKit.Demo/OverlayKit.Demo.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Il2Radio.Core.Tests/Il2Radio.Core.Tests.csproj" />
   </Folder>

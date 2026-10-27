@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Client side of OverlayKit: publish layers (premultiplied BGRA bitmaps) for overlaykit64.dll to draw
+    inside a Direct3D 11 game, and load that DLL into the game. No dependency on any one game or app.
+    The native DLL is built by overlay\build.ps1 and embedded here when present.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>OverlayKit</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\bin\overlaykit64.dll" LogicalName="overlaykit64.dll" Condition="Exists('..\..\bin\overlaykit64.dll')" />
+  </ItemGroup>
+
+</Project>

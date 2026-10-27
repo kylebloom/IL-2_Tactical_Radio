@@ -32,6 +32,10 @@ jobs:
           else { $v = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version }
           "value=$v" >> $env:GITHUB_OUTPUT
 
+      # overlaykit64.dll (chat output "ingame") is embedded in OverlayKit.Client, so it must exist before the .NET build.
+      - name: Build OverlayKit host DLL
+        run: ./overlay/build.ps1 -HostOnly
+
       - name: Test
         run: dotnet test --configuration Release
 

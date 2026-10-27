@@ -158,7 +158,7 @@ The evidence file answers: does the `.mlg` grow during flight, do text logs rota
 | `serverinput` (an external trigger for mission logic) | DServer remote console only, same as above. | VERIFIED (same readme) |
 | `MCU_TR_Subtitle` in the Career mission | Career already uses them: this machine's `_gen.Mission` has 5 (e.g. `PLAYER_DESTROYED`, `LCText = 247` → `_gen.eng` "Your aircraft is critically damaged…"), with `SubtitleInfo { Duration, FontSize, HAlign, VAlign, R/G/BColor }`. **But** the text is a fixed localisation entry, it can only fire from mission logic, single-player has no external trigger, and the replies depend on live geometry, so they cannot be written in advance. It would also mean rewriting the generated mission (probably `_gen.msnbin`, which the game likely loads; SPECULATIVE) between generation and take-off. `&` and `<` also break subtitles. Rejected. | VERIFIED (local `_gen.Mission` / `_gen.eng`); COMMUNITY ([subtitle quirks](https://forum.il2sturmovik.com/topic/53595-the-mystery-of-the-disappearing-subtitle-translator)) |
 | `MCU_Icon` | Map icons and lines, not messages. | VERIFIED (531 in `_gen.Mission`) |
-| Memory writes, DLL injection, D3D11 `Present` hooks (how Steam/Discord/RTSS draw in-game) | Excluded by project rule: process injection, and a possible anti-cheat concern in multiplayer builds. | (rule) |
+| Memory writes, DLL injection, D3D11 `Present` hooks (how Steam/Discord/RTSS draw in-game) | Excluded by project rule: process injection, and a possible anti-cheat concern in multiplayer builds. **Revised 2026-10-27:** a `Present` hook of our own is now allowed as an opt-in exception (memory writes stay excluded). See "Own in-game renderer" below. | (rule) |
 | Community tools | None found that put text into single-player chat. SRS's overlay is a separate window, and its guide says it "does not appear in Full-Screen mode or in VR". | COMMUNITY ([SRS guide](https://forum.il2-series.com/topic/73-installation-and-usage-of-srs-for-il-2-voice-comms-app-by-jason-williams/), [SRS overlay in VR](https://forum.il2sturmovik.com/topic/76980-srs-overlay-in-vr/)) |
 
 ### Alternative implemented: chat-styled overlay (`live --chat …`, `chat-test`)
@@ -228,6 +228,23 @@ The client scans slots from **1**, leaving slot 0 to the primary client (Afterbu
 - **VERIFIED** against the real RTSS on this machine (shared memory v2.21, IL-2 hooked): the app entry for `Il-2.exe` was found with zoom 2, and the `<P>` position was computed for 2560×1440. Not yet verified by eye in IL-2. The inference that the `<P>` zoom equals `dwOSDPixel` is based on both being described as the OSD zoom; if positions look scaled, pass `--rtss-zoom`.
 
 **Press feedback:** `LiveSession.Keyed` fires as soon as a numpad key is accepted, before the ~1.2 s snapshot. It shows the player's call line at once (the RTSS output updates immediately; the overlay ticks every 50 ms) and plays `RadioVoice.PlayKeyClick()`: a ~3 ms click plus ~200 ms of carrier through `RadioEffect`, at the radio volume. Because `PlaySound` has a single channel, the click cuts off any playing transmission and drops queued ones, like keying over the channel. When the request then can't refresh positions (no track, no admin rights, snapshot error), the chat says why ("no reply: position snapshot failed"). A player-side recorded request clip was not added; a click is enough for now.
+
+### Own in-game renderer: OverlayKit (`--chat ingame`, built 2026-10-27)
+**Why:** needing RTSS was a real limit for players. The window overlay needs windowed IL-2, and a second monitor can't be assumed. The user decided to do what RTSS does ourselves and to make the result reusable for other add-ons. The project rule was changed to allow this one exception (CLAUDE.md).
+
+**What it does:** `overlay/` (see `overlay/README.md`). A 64-bit C++ DLL is loaded into the game with `LoadLibraryW` on a remote thread. It patches DXGI's swap-chain vtable (`Present`, slot 8; `Present1`, slot 22) and composites client bitmaps from named shared memory before each frame is presented. It saves and restores the game's pipeline state with `SwapDeviceContextState`. It never reads or writes the game's memory beyond DXGI's vtable entries. No third-party code: hooking, shaders (compiled at load with `D3DCompile`) and the protocol are our own.
+
+**VERIFIED (2026-10-27, `OverlayKitTestHost`, development PC):**
+- Hooks install, and layers draw at the right place, 1:1 and alpha-blended.
+- Works in flip-model and legacy swap chains.
+- The radio's `InGameChat` renders the same lines and style as the window overlay at 1920×1080.
+
+All of this was confirmed from the host's own back-buffer capture.
+
+**NOT VERIFIED:**
+- IL-2: exclusive fullscreen, back-buffer format, frame-time cost, and running alongside RTSS.
+- Whether IL-2's multiplayer client objects to a foreign DLL. The radio is for single-player Career, and the DLL must not be loaded for multiplayer.
+- The test host's own exclusive-fullscreen mode. It wasn't run, because IL-2 was open on the only monitor.
 
 ## Recorded radio voices (researched 2026-10-25)
 

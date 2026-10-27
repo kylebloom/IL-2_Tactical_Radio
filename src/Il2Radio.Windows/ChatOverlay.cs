@@ -66,8 +66,12 @@ internal sealed class ChatOverlay : IChatSink
         _timeline.Snapshot(now).Select(v => (v.Line, v.Alpha)).ToList();
 
     /// <summary>The overlay's area in screen fractions, narrowed to keep clear of IL-2's own text.</summary>
-    private static (ScreenRect Rect, IReadOnlyList<Il2TextArea> Avoided) OverlayRect(ChatOptions options) =>
+    internal static (ScreenRect Rect, IReadOnlyList<Il2TextArea> Avoided) OverlayRect(ChatOptions options) =>
         Il2ScreenAreas.KeepClear(ScreenRect.FromSize(options.Left, options.Top, options.Width, options.Height), options.Areas);
+
+    /// <summary>Draws the lines as the overlay does, onto a transparent bitmap of <paramref name="size"/> (also used by <see cref="InGameChat"/>).</summary>
+    internal static void DrawLines(Graphics g, Font font, List<(ChatLine Line, float Alpha)> lines, Size size) =>
+        ChatForm.Draw(g, font, lines, size);
 
     /// <summary>
     /// Renders the overlay's live view of <paramref name="exchange"/> (oldest lines fading), the

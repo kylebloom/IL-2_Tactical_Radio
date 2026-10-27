@@ -11,6 +11,7 @@ public enum ChatMode
     Overlay, // transparent, click-through window above the game (hidden by exclusive fullscreen)
     Window,  // ordinary window, e.g. on a second monitor
     Rtss,    // RivaTuner Statistics Server OSD: drawn inside the game's frames, works in exclusive fullscreen
+    InGame,  // our own OverlayKit host DLL in Il-2.exe: drawn inside the game's frames without RTSS
 }
 
 /// <summary>Where the radio log goes and how it looks. Window position and size are fractions of the chosen screen.</summary>
@@ -31,7 +32,8 @@ public sealed record ChatOptions(
     (int Width, int Height)? RtssCell = null,
     bool KeepClear = true,
     IReadOnlyList<Il2TextArea>? Il2Areas = null,
-    KeyBindings? Keys = null)
+    KeyBindings? Keys = null,
+    string InGameExe = "Il-2.exe")
 {
     /// <summary>The radio keys, for the menu and the log's paging hint.</summary>
     public KeyBindings KeyMap => Keys ?? KeyBindings.Default;
@@ -49,9 +51,10 @@ public sealed record ChatOptions(
     public static readonly (int Width, int Height) DefaultRtssCell = (9, 16);
 
     /// <summary>
-    /// Reads --chat overlay|window|rtss|off, --chat-screen N, --chat-pos L,T,W,H (fractions),
+    /// Reads --chat overlay|window|rtss|ingame|off, --chat-screen N, --chat-pos L,T,W,H (fractions),
     /// --chat-font PX, --rtss-pos PRESET|X,Y, --rtss-margin PX, --rtss-columns N, --rtss-zoom Z,
-    /// --rtss-screen WxH, --rtss-cell W,H, --keep-clear on|off.
+    /// --rtss-screen WxH, --rtss-cell W,H, --keep-clear on|off, --ingame-exe NAME (the process --chat ingame
+    /// draws in; for testing against OverlayKitTestHost.exe).
     /// </summary>
     public static ChatOptions Parse(string[] args)
     {
@@ -60,7 +63,7 @@ public sealed record ChatOptions(
         var inv = System.Globalization.CultureInfo.InvariantCulture;
 
         if (Value("--chat") is { } mode)
-            options = options with { Mode = Enum.TryParse<ChatMode>(mode, ignoreCase: true, out var m) ? m : throw new ArgumentException($"--chat {mode}: expected overlay, window, rtss or off") };
+            options = options with { Mode = Enum.TryParse<ChatMode>(mode, ignoreCase: true, out var m) ? m : throw new ArgumentException($"--chat {mode}: expected overlay, window, rtss, ingame or off") };
         if (int.TryParse(Value("--chat-screen"), out int screen))
             options = options with { Screen = screen };
         if (float.TryParse(Value("--chat-font"), inv, out float font))
@@ -78,6 +81,8 @@ public sealed record ChatOptions(
             options = options with { RtssCell = (cellW, cellH) };
         if (Value("--keep-clear") is { } keepClear)
             options = options with { KeepClear = keepClear.ToLowerInvariant() switch { "on" => true, "off" => false, _ => throw new ArgumentException($"--keep-clear {keepClear}: expected on or off") } };
+        if (Value("--ingame-exe") is { } exe)
+            options = options with { InGameExe = exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? exe : exe + ".exe" };
         return options;
     }
 
@@ -165,6 +170,7 @@ internal static class ChatSinks
         ChatMode.Off => null,
         _ when !Environment.UserInteractive => null,
         ChatMode.Rtss => new RtssChat(options),
+        ChatMode.InGame => new InGameChat(options),
         _ => new ChatOverlay(options),
     };
 
