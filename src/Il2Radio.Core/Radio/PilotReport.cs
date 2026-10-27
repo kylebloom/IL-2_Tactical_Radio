@@ -91,7 +91,7 @@ internal static class PilotReport
     /// </summary>
     public static bool KnowsWhereYouAre(ContactGroup group, Contact player, PositionFix playerFix, ContactTracker tracker, RadioSettings settings) =>
         group.Members.Any(m =>
-            (m.Contact.InPlayerFlight && m.Relative.RangeMetres <= settings.InFormationMetres)
+            (m.Contact.InPlayerFlight && settings.InFormation(m.Relative))
             || CanSeePlayer(m, player, playerFix, tracker, settings));
 
     public static bool CanSeePlayer(LiveContact observer, Contact player, PositionFix playerFix, ContactTracker tracker, RadioSettings settings)

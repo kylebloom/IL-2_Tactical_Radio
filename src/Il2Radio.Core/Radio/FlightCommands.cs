@@ -25,7 +25,7 @@ public static class FlightCommands
             var speaker = g.Speaker.Contact;
             string text;
             List<SpeechToken> tokens = [.. SpeechToken.Identify(speaker)];
-            if (g.NearestRangeMetres <= settings.InFormationMetres)
+            if (g.InFormation(settings))
             {
                 text = $"{RadioPhrases.Who(speaker)}, you are in formation with us.";
                 tokens.Add(new(SpeechWord.InFormation));
@@ -101,7 +101,7 @@ public static class FlightCommands
 
         var main = groups[0];
         var speaker = main.Speaker.Contact;
-        bool withUs = main.NearestRangeMetres <= settings.InFormationMetres;
+        bool withUs = main.InFormation(settings);
         bool pilot = settings.Realism == RadioRealism.Pilot;
         bool knows = !pilot || PilotReport.KnowsWhereYouAre(main, picture.Player, picture.PlayerFix, tracker, settings);
         string text;

@@ -152,7 +152,20 @@ public sealed class UnaskedCalls
     private const double LostSightMaxMetres = PilotReport.FarBeyondMetres;
 
     private const double BreakDegreesPerSecond = 10;
-    private const double SettleSeconds = 5;
+
+    /// <summary>
+    /// A new course is held this long (track seconds) before it is called. With a look about every 11 s that is three
+    /// looks, not two: in the 2026-10-27 escort the leader weaved ±50° over the Ju 52s, two looks either side of the
+    /// top of an S-turn showed the same nose, and "heading 165" was called 11 s before "turning right. Follow me."
+    /// </summary>
+    public const double SettleSeconds = 15;
+
+    /// <summary>A leader who has reversed his turn within this long (track seconds) is weaving.</summary>
+    public const double WeaveMemorySeconds = 60;
+
+    /// <summary>A weaving leader's swing off his course is a break-off only once it has held this long (track seconds) without coming back.</summary>
+    public const double BreakOffHoldSeconds = 8;
+
     private const double MinSampleSeconds = 0.4;
 
     private int _mission = -1;
@@ -175,6 +188,9 @@ public sealed class UnaskedCalls
     private PendingCorner? _pendingCorner;
     private bool _brokeOff;
     private double _turnSinceCourse;
+    private int _lastStepSide;
+    private double _lastReversalAt = double.NegativeInfinity;
+    private BreakHeld? _breakHeld;
 
     private double? _aheadSince;
     private double _aheadLeaderNose;
@@ -202,6 +218,7 @@ public sealed class UnaskedCalls
             _pendingCorner = null;
             _brokeOff = false;
             _turnSinceCourse = 0;
+            ForgetWeave();
             _aheadSince = null;
             _aheadCalledAt = double.NegativeInfinity;
             _playerSeenAt = double.NegativeInfinity;
@@ -263,7 +280,8 @@ public sealed class UnaskedCalls
     /// (<see cref="TurnedToward"/>): the game's pilots spot before our visibility model does, and a leader
     /// who swings onto an enemy has seen it. That enemy is then remembered as seen by him, so a contact
     /// request agrees with what he said. A contact only a distant mate has does not make it his fight.
-    /// With neither, he says only "turning left. Follow me."
+    /// With neither, he says only "turning left. Follow me.", and from a weaving leader only once the swing holds
+    /// (<see cref="Meant"/>).
     /// </summary>
     private RadioReply? BreakOff(RadioPicture flight, IReadOnlyList<RadioReply> groups, ContactTracker tracker, RadioSettings settings, SightingMemory memory)
     {
@@ -273,15 +291,23 @@ public sealed class UnaskedCalls
             return null;
         double turned = TurnSoFar(nose);
         if (Math.Abs(turned) < BreakOffDegrees)
+        {
+            _breakHeld = null;
             return null;
+        }
         if (_pendingCorner is { } corner && Delta(nose, corner.OutboundDegrees) < Delta(corner.NoseWhenFound, corner.OutboundDegrees))
             return null; // the briefed turn, which the corner call says
 
-        _brokeOff = true;
-        _pendingCorner = null;
         int side = turned < 0 ? -1 : 1;
         bool engaging = EnemyNearLeader(ai, groups);
-        if (!engaging && TurnedToward(ai, nose - turned, nose, side, tracker, settings) is { } target)
+        var target = engaging ? null : TurnedToward(ai, nose - turned, nose, side, tracker, settings);
+        if (!engaging && target is null && !Meant(ai.Fix.SourceTime, side, Math.Abs(turned)))
+            return null;
+
+        _brokeOff = true;
+        _breakHeld = null;
+        _pendingCorner = null;
+        if (target is not null)
         {
             memory.Sync(tracker);
             memory.Set(target.Contact.Key, new SightingMemory.Sighting(
@@ -308,6 +334,39 @@ public sealed class UnaskedCalls
         groups.Any(g => g.Tokens?.Any(t => t.Word == SpeechWord.LastSeen) != true
             && g.Members.Any(c => c.LastFix is { } fix
                 && Navigation.Relative(leader.Fix.Position, fix.Position) is { RangeMetres: <= EngageInferMetres }));
+
+    /// <summary>
+    /// A swing off his course with no enemy to explain it is a turn he means. A steady leader means it at once.
+    /// One who has reversed his turn within <see cref="WeaveMemorySeconds"/> is weaving, as an escort does over its
+    /// bombers, and means it only when the swing has held <see cref="BreakOffHoldSeconds"/> on that side without
+    /// coming back more than <see cref="SettleDegrees"/>. In the 2026-10-27 escort every weave was a "follow me".
+    /// </summary>
+    private bool Meant(double now, int side, double off)
+    {
+        if (now < _lastReversalAt)
+            ForgetWeave(); // a new track file starts its clock again
+        if (now - _lastReversalAt > WeaveMemorySeconds)
+            return true;
+
+        if (_breakHeld is not { } held || held.Side != side || now < held.Since || off < held.Peak - SettleDegrees)
+        {
+            _breakHeld = new(now, side, off);
+            return false;
+        }
+
+        _breakHeld = held with { Peak = Math.Max(held.Peak, off) };
+        return now - held.Since >= BreakOffHoldSeconds;
+    }
+
+    /// <summary>A weaving leader's swing off his course, waiting to show it holds.</summary>
+    private sealed record BreakHeld(double Since, int Side, double Peak);
+
+    private void ForgetWeave()
+    {
+        _lastStepSide = 0;
+        _lastReversalAt = double.NegativeInfinity;
+        _breakHeld = null;
+    }
 
     /// <summary>Airborne, and at least one other living mate is within <see cref="WithFlightMetres"/>. The player counts.</summary>
     private static bool CanLead(RadioPicture flight, LiveContact leader) =>
@@ -388,7 +447,7 @@ public sealed class UnaskedCalls
         bool ahead = fromLeader.RangeMetres >= AheadMetres
             && Delta(fromLeader.BearingDegrees, leaderNose) <= AheadConeDegrees
             && Delta(playerNose, leaderNose) <= AheadSameWayDegrees
-            && flight.Live.All(l => l.Relative.RangeMetres > settings.InFormationMetres);
+            && !flight.Live.Any(l => settings.InFormation(l.Relative));
         if (!ahead)
         {
             _aheadSince = null;
@@ -456,6 +515,7 @@ public sealed class UnaskedCalls
     /// <see cref="RepeatSeconds"/> unless one of them has just come onto a pilot ("on me") or let go of
     /// him; a lost look alone is not news. Picture calls are at least <see cref="PictureGapSeconds"/>
     /// apart, except for a new "on me". A held-back change is looked at again on the next look.
+    /// "The same aircraft" is the same planned flight where the plan names it (<see cref="PictureMark"/>).
     /// </summary>
     private RadioReply? Novel(List<RadioReply> groups, double now)
     {
@@ -630,6 +690,7 @@ public sealed class UnaskedCalls
             Announce(course);
             _pendingSpeak = false;
             _awaitingSettle = false;
+            ForgetWeave();
             return;
         }
 
@@ -652,11 +713,20 @@ public sealed class UnaskedCalls
             _awaitingSettle = false;
             _brokeOff = false;
             _pendingCorner = null;
+            ForgetWeave();
             return;
         }
 
         double rate = Delta(heading, _lastHeading) / dt;
-        _turnSinceCourse += Signed(heading - _lastHeading);
+        double step = Signed(heading - _lastHeading);
+        _turnSinceCourse += step;
+        if (Math.Abs(step) >= SettleDegrees)
+        {
+            int stepSide = step < 0 ? -1 : 1;
+            if (_lastStepSide != 0 && stepSide != _lastStepSide)
+                _lastReversalAt = now;
+            _lastStepSide = stepSide;
+        }
         _lastHeading = heading;
         _lastHeadingTime = now;
 
@@ -831,10 +901,17 @@ public sealed class UnaskedCalls
         { SpeakerLabel = "Route" };
     }
 
+    /// <summary>
+    /// What a picture call was about. An aircraft the plan gives a callsign is marked by its flight, so a different
+    /// part of the same formation is the same aircraft. Spotting is diced per aircraft: in the 2026-10-27 flight each
+    /// look saw a different few of the nine Ju 52s, and "many unidentified transports" was called again 22 s later,
+    /// then "pair of unidentified transports" for the same nine.
+    /// </summary>
     private readonly record struct PictureMark(string Targets, bool OnMe, bool Held)
     {
         public static PictureMark Of(RadioReply reply) => new(
-            string.Join("|", reply.Members.Select(m => m.Key).OrderBy(k => k, StringComparer.Ordinal)),
+            string.Join("|", reply.Members.Select(m => m.Callsign > 0 ? $"flight:{m.Coalition}:{m.Callsign}" : m.Key)
+                .Distinct().OrderBy(k => k, StringComparer.Ordinal)),
             reply.Tokens?.Any(t => t.Word == SpeechWord.OnMe) == true,
             reply.Tokens?.Any(t => t.Word == SpeechWord.LastSeen) == true);
     }

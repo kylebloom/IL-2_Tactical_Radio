@@ -79,11 +79,24 @@ public class TrackRecordingWatchTests
     }
 
     [Fact]
-    public void Joining_a_mission_long_running_without_a_track_reminds_at_once()
+    public void Joining_a_mission_long_running_without_a_track_reminds_a_minute_after_first_seeing_it()
     {
         var watch = new TrackRecordingWatch(TimeSpan.FromSeconds(60));
 
-        Assert.True(watch.Update(At(900), Start, recording: false));
+        Assert.False(watch.Update(At(900), Start, recording: false));
+        Assert.True(watch.Update(At(960), Start, recording: false));
+    }
+
+    // 2026-10-27: restarted 21 minutes into a recorded mission, the program reminded on its first poll,
+    // four seconds before it found the track IL-2 was still writing.
+    [Fact]
+    public void Joining_a_recorded_mission_does_not_remind_before_the_track_is_found()
+    {
+        var watch = new TrackRecordingWatch(TimeSpan.FromSeconds(60));
+
+        Assert.False(watch.Update(At(1_298), Start, recording: false));
+        Assert.False(watch.Update(At(1_302), Start, recording: true));
+        Assert.False(watch.Update(At(1_400), Start, recording: true));
     }
 
     [Fact]
@@ -103,7 +116,8 @@ public class TrackRecordingWatchTests
         var watch = new TrackRecordingWatch(TimeSpan.FromSeconds(60));
 
         Assert.False(watch.Update(At(100), null, recording: false));
-        Assert.True(watch.Update(At(120), Start, recording: false));
+        Assert.False(watch.Update(At(120), Start, recording: false));
+        Assert.True(watch.Update(At(180), Start, recording: false));
         Assert.False(watch.Update(At(200), null, recording: false)); // paused: the log stops
         Assert.False(watch.Update(At(400), Start, recording: false));
     }

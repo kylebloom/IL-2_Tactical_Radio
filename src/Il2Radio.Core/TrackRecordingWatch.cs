@@ -4,7 +4,10 @@ namespace Il2Radio.Core;
 /// Decides when to remind the player to start track recording (LCtrl+R). Live positions only exist
 /// while a Tacview track records, and IL-2 doesn't start one by itself. One reminder per stretch of
 /// a mission without recording: when the mission has run <c>grace</c> without one, or that long
-/// after recording stopped.
+/// after recording stopped. A mission first seen after its grace was already over gets a grace of its
+/// own from then: a session started mid-mission has not looked for the track yet. In the 2026-10-27 flight
+/// the program was restarted 21 minutes into a recorded mission and reminded on its first poll, four
+/// seconds before it found the track IL-2 was still writing.
 /// </summary>
 public sealed class TrackRecordingWatch(TimeSpan grace)
 {
@@ -25,7 +28,7 @@ public sealed class TrackRecordingWatch(TimeSpan grace)
         if (missionStartUtc is { } start && start != _mission)
         {
             _mission = start;
-            _notRecordingSince = start;
+            _notRecordingSince = nowUtc - start <= grace ? start : nowUtc;
             _reminded = false;
         }
 

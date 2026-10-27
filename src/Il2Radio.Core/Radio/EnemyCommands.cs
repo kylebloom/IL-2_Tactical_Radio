@@ -502,7 +502,7 @@ public static class EnemyCommands
     }
 
     private static bool WithPlayer(LiveContact reporter, LookResult look, ContactTracker tracker, RadioSettings settings) =>
-        reporter.Relative.RangeMetres <= settings.InFormationMetres
+        settings.InFormation(reporter.Relative)
         || PilotReport.CanSeePlayer(reporter, look.Player, look.PlayerFix, tracker, settings);
 
     /// <summary>

@@ -147,6 +147,22 @@ public class FlightCommandTests
         Assert.Equal(inFormation, text.Contains("in formation", StringComparison.Ordinal));
     }
 
+    // 2026-10-27: "you are in formation with us" from a leader 476 m away and 716 m above.
+    [Theory]
+    [InlineData(1_250, true)]
+    [InlineData(1_716, false)]
+    [InlineData(300, false)]
+    public void In_formation_also_means_within_three_hundred_metres_in_height(double alt, bool inFormation)
+    {
+        LogFlightMember("Heinz Koelzig", 1);
+        Frame(10, Player(), Mate("a", "Heinz Koelzig", 0, 476, alt: alt));
+
+        string position = Assert.Single(FlightCommands.FlightPosition(_tracker).Replies).Text;
+        string rejoin = Assert.Single(FlightCommands.Rejoin(_tracker).Replies).Text;
+        Assert.Equal(inFormation, position.Contains("in formation", StringComparison.Ordinal));
+        Assert.Equal(inFormation, rejoin.Contains("with us", StringComparison.Ordinal));
+    }
+
     [Fact]
     public void Flight_position_reports_separated_members_after_the_main_group()
     {

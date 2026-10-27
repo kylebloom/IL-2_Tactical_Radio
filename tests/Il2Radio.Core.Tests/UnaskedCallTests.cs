@@ -199,10 +199,127 @@ public class UnaskedCallTests
         Track(40, leaderHeading: 270);
         Assert.Null(Say());
         Track(46, leaderHeading: 272);
+        Assert.Null(Say()); // not yet held long enough to be a course
+        Track(56, leaderHeading: 271);
 
         var settled = Say();
         Assert.Equal("Number one, heading 270.", settled!.Text);
         Assert.DoesNotContain("turning", settled.Text);
+        Assert.Null(Say());
+    }
+
+    // 2026-10-27: the escort leader weaved ±50° over the Ju 52s. Looks either side of the top of an S-turn
+    // were taken for a new course ("heading 165"), and every swing was a "follow me".
+    [Fact]
+    public void A_weaving_leader_calls_neither_a_course_nor_a_turn_until_he_means_one()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1);
+        double[] weave = [220, 220, 220, 190, 180, 230, 275, 230, 170, 210, 265, 215];
+        for (int i = 0; i < weave.Length; i++)
+        {
+            Track(i * 11, leaderHeading: weave[i]);
+            Assert.Null(Say());
+        }
+
+        Track(132, leaderHeading: 300);
+        Assert.Null(Say()); // a swing like the others, until it holds
+        Track(143, leaderHeading: 320);
+        Assert.Equal("Number one, turning right. Follow me.", Say()!.Text);
+        Track(154, leaderHeading: 321);
+        Assert.Null(Say());
+        Track(165, leaderHeading: 320);
+        Assert.Equal("Number one, heading 320.", Say()!.Text);
+    }
+
+    [Fact]
+    public void Two_looks_either_side_of_the_top_of_a_turn_are_not_a_course()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1);
+        Track(0, leaderHeading: 220);
+        Track(11, leaderHeading: 220);
+        Track(22, leaderHeading: 200);
+        Assert.Null(Say());
+        Track(33, leaderHeading: 185);
+        Assert.Null(Say());
+        Track(44, leaderHeading: 186); // the same nose on the way back
+        Assert.Null(Say());
+        Track(55, leaderHeading: 215);
+
+        Assert.DoesNotContain("heading", Say()?.Text ?? "");
+    }
+
+    // 2026-10-27: each look saw a different few of the nine Ju 52s, and the same formation was called
+    // "many unidentified transports" twice 22 s apart, then "pair".
+    [Fact]
+    public void A_different_part_of_the_same_planned_flight_is_not_a_new_contact()
+    {
+        _tracker = new ContactTracker(_clock);
+        var planes = string.Join("\n", Enumerable.Range(1, 4).Select(n => $$"""
+            Plane
+            {
+              Name = "Pilot e{{n}}";
+              Index = {{100 + n}};
+              Country = 101;
+              Callsign = 12;
+              Callnum = {{n}};
+            }
+            """));
+        _tracker.SetPlan(MissionPlan.FromBlocks(MissionFileParser.Parse(new StringReader($$"""
+            Options
+            {
+              GuiMap = "stalingrad-summer-1942";
+              Time = 12:0:0;
+              Countries
+              {
+                101 : 1;
+                201 : 2;
+              }
+            }
+            Plane
+            {
+              Name = "{{PlayerName}}";
+              Index = 1;
+              Country = 201;
+              AILevel = 0;
+            }
+            Plane
+            {
+              Name = "{{LeaderName}}";
+              Index = 10;
+              Country = 201;
+            }
+            {{planes}}
+            """))));
+        LogFlight(playerFormation: 2, leaderFormation: 1);
+        _acmi = new AcmiStream();
+        _acmi.Feed(Acmi.Header + "#0\n");
+
+        // Out of sight is out of the track here: spotting is sure, so only what the track holds is seen.
+        var present = new HashSet<int>();
+        void Look(double time, params int[] seen)
+        {
+            string frame = $"#{time.ToString(CultureInfo.InvariantCulture)}\n"
+                + string.Concat(present.Except(seen).Select(n => $"-e{n}\n"))
+                + $"#{(time + 1).ToString(CultureInfo.InvariantCulture)}\n" // removal takes effect on the next frame
+                + Acmi.Object("p", 0, 0, 1000, PlayerName, "Axis", heading: 0)
+                + Acmi.Object("w", 0, 100, 1000, LeaderName, "Axis", heading: 0)
+                + string.Concat(seen.Select(n =>
+                    Acmi.Object($"e{n}", 5_000 + 50 * n, 5_000, 1000, $"Pilot e{n}", "Allies", "Yak-1 ser.69", heading: 90)));
+            present.Clear();
+            present.UnionWith(seen);
+            _acmi.Feed(frame);
+            _tracker.Apply(_acmi);
+        }
+
+        Look(10, 1, 2, 3);
+        Assert.NotNull(Say());
+        Assert.Equal(12, _tracker.Contacts.Single(c => c.PilotName == "Pilot e1").Callsign);
+
+        Look(32, 4); // another of them, the first three out of sight
+        var e4 = Assert.Single(EnemyCommands.EnemyContacts(_tracker, See, _memory).Replies.SelectMany(r => r.Members));
+        Assert.Equal(("Pilot e4", 12, 1), (e4.PilotName, e4.Callsign, e4.Coalition));
+        Assert.Null(Say());
+        Look(55, 1, 4);
         Assert.Null(Say());
     }
 
@@ -416,6 +533,8 @@ public class UnaskedCallTests
         Frame(31, 101_500, 209_500, 12);
         Assert.Equal("Number one, turning left. Follow me.", Say()!.Text); // 78° off his course, the way he turned
         Frame(41, 103_000, 209_600, 4); // drifting a few degrees: holding the new course
+        Assert.Null(Say());
+        Frame(51, 104_500, 209_700, 5);
 
         var call = Say();
         Assert.Equal("Number one, heading 005.", call!.Text);
@@ -438,6 +557,8 @@ public class UnaskedCallTests
         Frame(90, 99_500, 217_500, 175);
         Assert.Equal("Number one, turning right. Follow me.", Say()!.Text);
         Frame(96, 99_000, 217_500, 178);
+        Assert.Null(Say());
+        Frame(106, 98_000, 217_500, 179);
 
         Assert.Equal("Number one, heading 180.", Say()!.Text); // what he flies, not the old corner
     }

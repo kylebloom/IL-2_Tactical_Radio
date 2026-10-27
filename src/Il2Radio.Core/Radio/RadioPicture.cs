@@ -45,6 +45,16 @@ public sealed record RadioSettings
     /// </summary>
     public double InFormationMetres { get; init; } = 1_000;
 
+    /// <summary>
+    /// ...and no further than this above or below him. In the 2026-10-27 flight the player, down with the Ju 52s,
+    /// was told "you are in formation with us" by a leader 476 m away and 716 m above.
+    /// </summary>
+    public double InFormationHeightMetres { get; init; } = 300;
+
+    /// <summary>A mate this close to the player, across and in height, is flying with him.</summary>
+    public bool InFormation(RelativePosition relative) =>
+        relative.RangeMetres <= InFormationMetres && Math.Abs(relative.AltitudeDeltaMetres) <= InFormationHeightMetres;
+
     /// <summary>Spotting and identification model used by the enemy-contact commands.</summary>
     public VisibilitySettings Visibility { get; init; } = new();
 }
@@ -92,6 +102,9 @@ internal sealed record ContactGroup(IReadOnlyList<LiveContact> Members, WorldPoi
         ?? Members.OrderBy(m => m.Relative.RangeMetres).First();
 
     public double NearestRangeMetres => Members.Min(m => m.Relative.RangeMetres);
+
+    /// <summary>One of them is in formation with the player (<see cref="RadioSettings.InFormation"/>).</summary>
+    public bool InFormation(RadioSettings settings) => Members.Any(m => settings.InFormation(m.Relative));
 
     public double MaxAgeSeconds => Members.Max(m => m.AgeSeconds);
 }
