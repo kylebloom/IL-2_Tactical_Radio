@@ -36,7 +36,7 @@ internal sealed class ChatOverlay : IChatSink
 
     public void Spoken(string text) => _timeline.Spoken(text, DateTime.UtcNow);
 
-    public void ToggleMenu(IReadOnlyList<ChatLine> menu) => _timeline.ToggleMenu(menu, DateTime.UtcNow);
+    public void ShowMenu(RadioMenuView? menu) => ChatSinks.ShowMenu(_timeline, menu);
 
     public void Scroll(int pages) => _timeline.Scroll(pages, DateTime.UtcNow);
 
@@ -104,8 +104,11 @@ internal sealed class ChatOverlay : IChatSink
         }
 
         Save("");
-        timeline.ToggleMenu(options.KeyMap.Menu, at);
+        var menu = new RadioMenu(RadioMenu.Default);
+        menu.MenuKey(at);
+        ChatSinks.ShowMenu(timeline, menu.View, at);
         Save("-menu");
+        timeline.CloseMenu();
         timeline.Scroll(+1, at);
         Save("-log");
         return written;

@@ -101,6 +101,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     private readonly TrackRecordingWatch _recordingWatch = new(options.RecordingReminder);
     private readonly MissionClock _missionClock = new();
     private IChatSink? _chat;
+    private RadioMenuInput? _menu; // only with a chat output: the menu has nowhere to show otherwise
     private DateTime? _gameOrigin; // in-game date and time at tick 0, from the mission log
     private TimeSpan _latestLogTime = TimeSpan.MinValue;
 
@@ -173,7 +174,17 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             Render();
             for (int i = 0; i < 20 && !cts.IsCancellationRequested; i++)
             {
-                foreach (var key in options.Keys.Pressed())
+                var pressed = options.Keys.Pressed().ToList();
+                var digits = options.Keys.PressedDigits().ToList(); // polled every tick so a press is never stale
+                if (_menu is not null)
+                {
+                    (pressed, var chosen) = _menu.Handle(pressed, digits, DateTime.UtcNow);
+                    if (chosen.Command is { } command)
+                        _ = RequestAsync(command);
+                    else if (chosen.Action != RadioMenuAction.None)
+                        ChatKey?.Invoke(chosen.Action == RadioMenuAction.LogOlder ? RadioKey.Older : RadioKey.Newer);
+                }
+                foreach (var key in pressed)
                     HandleKey(key, cts);
                 await Task.Delay(50);
             }
@@ -190,7 +201,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     {
         if (key == RadioKey.Quit)
             cts.Cancel();
-        else if (key is RadioKey.Menu or RadioKey.Older or RadioKey.Newer)
+        else if (key is RadioKey.Older or RadioKey.Newer)
             ChatKey?.Invoke(key);
         else if (key switch
                  {
@@ -204,7 +215,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             _ = RequestAsync(command);
     }
 
-    /// <summary>Raised for the chat's own keys: the command menu and paging the radio log.</summary>
+    /// <summary>Raised for the chat's own keys: paging the radio log (by key or from the menu).</summary>
     public event Action<RadioKey>? ChatKey;
 
     /// <summary>Raised as soon as a radio key is accepted, before positions are refreshed: immediate press feedback.</summary>
@@ -265,7 +276,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         if (voice is not null)
             voice.Speaking += (transmission, _) => chat.Spoken(transmission.Text);
         ChatStatus = () => chat.Status;
-        ChatKey += key => ChatSinks.HandleKey(chat, key, options.Keys);
+        ChatKey += key => ChatSinks.HandleKey(chat, key);
+        _menu = new RadioMenuInput(chat, options.Keys);
         Alert += text => chat.Post([new ChatLine(ChatLineKind.System, "", text, -1, TimeSpan.Zero)]);
     }
 

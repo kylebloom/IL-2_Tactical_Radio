@@ -34,7 +34,7 @@ This is the one supported way to fly with the radio. You don't need anything els
    | Numpad 3 | Separated: ask your flight to help you rejoin |
    | Numpad 4 | Ask your flight what enemy or unknown aircraft it can see |
    | Numpad 5 | Ask your flight to identify the nearest aircraft it can see |
-   | Numpad 0 | Show or hide this list in game |
+   | Numpad 0 | Open the radio menu in game (choose with Numpad 1–5) |
    | Numpad 7 / 9 | Page back / forward through earlier radio messages |
    | Numpad . | Quit (also writes a session report to `logs\` next to the program) |
 
@@ -124,7 +124,7 @@ The UDP telemetry port can only point to one listener. If you use SRS or a bass-
 | Numpad 3 | Separated, request rejoin | "Oriole one, at your four o'clock, far, above you. Heading east, altitude 2500 metres." |
 | Numpad 4 | Request enemy contacts | "Oriole two, four Yaks, at your four o'clock, a few kilometres, high." |
 | Numpad 5 | Identify nearest contact | "Oriole two, contact at your two o'clock, close: a Messerschmitt, enemy, heading east." |
-| Numpad 0 | Show or hide the command list in the chat output | |
+| Numpad 0 | Open the radio menu: numpad digits choose an entry or open a submenu (they don't fire their own calls while it is open), Numpad 0 steps back and closes it at the top, Numpad . closes it | |
 | Numpad 7 / 9 | Page back / forward through the radio log (paging forward past the newest page returns to the live lines) | |
 | Numpad . | Quit (writes the evidence file) | |
 
@@ -197,7 +197,7 @@ IL-2 offers no way for an external program to write into its chat in single-play
 - **On key press:** your call ("[Lumme 4] [Gert Knoll]: All friendlies, report positions.") appears straight away, and you hear a mic key click and a short carrier burst at the radio volume. This cuts off any transmission still playing.
 - **Replies:** each reply appears under the pilot's name as the voice starts speaking it. The line is the whole report; a reply the recordings can say nothing of still appears in its turn, with no sound.
 - **No answer:** if nobody can answer, one line says why, e.g. "no reply: position snapshot needs administrator rights".
-- Lines fade out after 14 s; Numpad 7 and 9 page through the whole exchange history (the last 200 lines). Each line is stamped with the mission clock, the same time as the watch in the cockpit, once the mission log or a track has been read. Pausing the game pauses the clock. Numpad 0 lists the radio keys. Both views close after 14 s without a key, or when you make a new call.
+- Lines fade out after 14 s; Numpad 7 and 9 page through the whole exchange history (the last 200 lines). Each line is stamped with the mission clock, the same time as the watch in the cockpit, once the mission log or a track has been read. Pausing the game pauses the clock. Numpad 0 opens the radio menu (with `ingame` text it is a panel of its own above the log; other outputs show it in the log's place). Both views close after 14 s without a key, or when you make a new call.
 - **Look:** measured from IL-2's own "Game is Paused" message. Each line has its own black box at 42 % opacity, sized to the text, with light grey (#E0E0DC) Arial text in a single colour, speaker included. The box is 2.6 cap heights tall with 1.45 cap heights of side padding. The tool's own notes ("no reply") are dimmer. RTSS gets the same colours and, behind each row, a black strip at that same 42 %, one character-row tall and only as wide as that row. It thins as the row fades. Text size and any extra shadow still come from RTSS's OSD settings.
 - **Keeping clear of IL-2's text:** the overlay and the RTSS text stay out of IL-2's bottom-left message line and the subtitle rows that the planned Career mission uses (read from `_gen.Mission`). By default the overlay is narrowed to end left of the centre subtitles, and the RTSS text is limited in columns and rows (the monitor header says so). `--keep-clear off` disables this. The areas are estimates (`Il2ScreenAreas`).
 

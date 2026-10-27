@@ -42,9 +42,9 @@ internal sealed class RtssChat : IChatSink
 
     public void Spoken(string text) => _timeline.Spoken(text, DateTime.UtcNow);
 
-    public void ToggleMenu(IReadOnlyList<ChatLine> menu)
+    public void ShowMenu(RadioMenuView? menu)
     {
-        _timeline.ToggleMenu(menu, DateTime.UtcNow);
+        ChatSinks.ShowMenu(_timeline, menu);
         ThreadPool.QueueUserWorkItem(_ => Update());
     }
 

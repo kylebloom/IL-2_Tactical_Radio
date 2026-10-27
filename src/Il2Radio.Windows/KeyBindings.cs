@@ -12,7 +12,7 @@ public enum RadioKey
     Rejoin,            // Numpad 3
     EnemyContacts,     // Numpad 4
     IdentifyContact,   // Numpad 5
-    Menu,              // Numpad 0: show or hide the command list in the chat output
+    Menu,              // Numpad 0: open the radio menu, step back a level, close it at the top
     Older,             // Numpad 7: page back through the radio log
     Newer,             // Numpad 9: page forward; past the newest page returns to the live lines
     Quit,              // Numpad . (Del)
@@ -33,7 +33,6 @@ public sealed class KeyBindings
         _bindings = bindings.ToArray();
         _wasDown = new bool[_bindings.Length];
         NumLock = _bindings.Any(b => VirtualKeys.NeedsNumLock(b.VirtualKey));
-        Menu = BuildMenu();
     }
 
     /// <summary>The numpad layout: Num1–Num5 commands, Num0 menu, Num7/Num9 log, Num. quit.</summary>
@@ -92,30 +91,26 @@ public sealed class KeyBindings
     public string HistoryHint =>
         (Label(RadioKey.Older) is { } older ? $" · {older} older" : "") + (Label(RadioKey.Newer) is { } newer ? $" · {newer} newer" : "");
 
-    /// <summary>The command list the menu key shows in the chat output, one line per bound key.</summary>
-    public IReadOnlyList<ChatLine> Menu { get; }
+    private const int VK_NUMPAD1 = 0x61;
+    private readonly bool[] _digitWasDown = new bool[9];
 
-    private List<ChatLine> BuildMenu()
+    /// <summary>Whether this action is bound to a numpad digit, which the open radio menu reads as a choice instead.</summary>
+    public bool IsNumpadDigit(RadioKey key) =>
+        _bindings.Any(b => b.Key == key && b.VirtualKey >= VK_NUMPAD1 && b.VirtualKey < VK_NUMPAD1 + 9);
+
+    /// <summary>Numpad digits 1–9 that went down since the previous call, for the radio menu. Call every tick so a press is never stale.</summary>
+    public IEnumerable<int> PressedDigits()
     {
-        string closes = Label(RadioKey.Menu) is { } menu ? $" · {menu} closes" : "";
-        var lines = new List<ChatLine> { new(ChatLineKind.System, "", $"Radio commands{(NumLock ? " (Num Lock on)" : "")}{closes}", -1, TimeSpan.Zero) };
-        foreach (var (key, action) in new[]
-                 {
-                     (RadioKey.FriendlyPositions, RadioCommands.Title(RadioCommand.FriendlyPositions)),
-                     (RadioKey.FlightPosition, RadioCommands.Title(RadioCommand.FlightPosition)),
-                     (RadioKey.Rejoin, RadioCommands.Title(RadioCommand.Rejoin)),
-                     (RadioKey.EnemyContacts, RadioCommands.Title(RadioCommand.EnemyContacts)),
-                     (RadioKey.IdentifyContact, RadioCommands.Title(RadioCommand.IdentifyContact)),
-                     (RadioKey.Older, "Radio log, older"),
-                     (RadioKey.Newer, "Radio log, newer"),
-                     (RadioKey.Quit, "Quit the radio"),
-                 })
-        {
-            if (Label(key) is { } label)
-                lines.Add(new ChatLine(ChatLineKind.Info, label, action, -1, TimeSpan.Zero));
-        }
+        if (!OperatingSystem.IsWindows())
+            yield break;
 
-        return lines;
+        for (int i = 0; i < 9; i++)
+        {
+            bool down = (GetAsyncKeyState(VK_NUMPAD1 + i) & 0x8000) != 0;
+            if (down && !_digitWasDown[i])
+                yield return i + 1;
+            _digitWasDown[i] = down;
+        }
     }
 
     /// <summary>Returns keys that went down since the previous call.</summary>

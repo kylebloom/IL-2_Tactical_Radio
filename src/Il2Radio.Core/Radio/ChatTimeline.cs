@@ -90,6 +90,30 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
     }
 
     /// <summary>
+    /// Shows <paramref name="menu"/> (the interactive <see cref="RadioMenu"/>'s current level) in place of
+    /// the live lines for the hold time, replacing any menu already shown.
+    /// </summary>
+    public void ShowMenu(IReadOnlyList<ChatLine> menu, DateTime nowUtc)
+    {
+        lock (_gate)
+        {
+            _menu = menu;
+            _view = View.Menu;
+            _viewUntilUtc = nowUtc.AddSeconds(holdSeconds);
+        }
+    }
+
+    /// <summary>Returns to the live lines if the menu is showing.</summary>
+    public void CloseMenu()
+    {
+        lock (_gate)
+        {
+            if (_view == View.Menu)
+                _view = View.Live;
+        }
+    }
+
+    /// <summary>
     /// Pages through the history: positive is older, negative newer. The first step back shows the
     /// newest page; stepping forward past it returns to the live lines. The view closes by itself
     /// after the hold time without a key.

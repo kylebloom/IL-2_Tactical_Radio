@@ -23,6 +23,9 @@ internal sealed class InGameChat : IChatSink
     private readonly System.Threading.Timer _timer;
     private readonly object _gate = new();
     private OverlayLayer? _layer;
+    private OverlayLayer? _menuLayer;
+    private volatile RadioMenuView? _menuView;
+    private volatile bool _menuDirty;
     private Bitmap? _bitmap;
     private Font? _font;
     private (int Width, int Height) _screen;
@@ -47,7 +50,12 @@ internal sealed class InGameChat : IChatSink
 
     public void Spoken(string text) => _timeline.Spoken(text, DateTime.UtcNow);
 
-    public void ToggleMenu(IReadOnlyList<ChatLine> menu) => _timeline.ToggleMenu(menu, DateTime.UtcNow);
+    /// <summary>The menu is a panel of its own above the radio log, so the log stays readable while choosing.</summary>
+    public void ShowMenu(RadioMenuView? menu)
+    {
+        _menuView = menu;
+        _menuDirty = true;
+    }
 
     public void Scroll(int pages) => _timeline.Scroll(pages, DateTime.UtcNow);
 
@@ -68,6 +76,8 @@ internal sealed class InGameChat : IChatSink
                 return;
             if ((host.Width, host.Height) != _screen)
                 Resize(host.Width, host.Height);
+            if (_menuDirty)
+                PresentMenu();
 
             var lines = _timeline.Snapshot(DateTime.UtcNow).Select(v => (v.Line, v.Alpha)).ToList();
             string frame = string.Join("\n", lines.Select(l => $"{l.Line.Speaker}|{l.Line.Text}|{l.Alpha:F2}"));
@@ -131,9 +141,49 @@ internal sealed class InGameChat : IChatSink
         _font = new Font(Il2ChatStyle.FontFamily, _options.FontPixels * height / 1080f, FontStyle.Regular, GraphicsUnit.Pixel);
         _screen = (width, height);
         _lastFrame = "\0"; // redraw at the new size
+        _menuDirty = true;
 
         _layer ??= new OverlayLayer(OwnerName, GameExe);
         _layer.Place(OverlayAnchor.TopLeft, (int)(width * rect.Left), (int)(height * rect.Top));
+    }
+
+    /// <summary>Draws the menu panel with its bottom just above the radio log's area (or hides it).</summary>
+    private void PresentMenu()
+    {
+        _menuDirty = false;
+        if (_font is null)
+            return;
+        _menuLayer ??= new OverlayLayer(OwnerName + " menu", GameExe) { ZOrder = 1 };
+        if (_menuView is not { } view)
+        {
+            _menuLayer.Visible = false;
+            return;
+        }
+
+        using var panel = RadioMenuPanel.Render(view, _font);
+        var rect = ChatOverlay.OverlayRect(_options).Rect;
+        int gap = (int)(_screen.Height * 0.01);
+        int x = (int)(_screen.Width * rect.Left);
+        int y = Math.Max(gap, (int)(_screen.Height * rect.Top) - panel.Height - gap);
+        Publish(_menuLayer, panel);
+        _menuLayer.Place(OverlayAnchor.TopLeft, x, y);
+        _menuLayer.Visible = true;
+    }
+
+    private static void Publish(OverlayLayer layer, Bitmap bitmap)
+    {
+        var data = bitmap.LockBits(new Rectangle(Point.Empty, bitmap.Size), ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
+        try
+        {
+            unsafe
+            {
+                layer.Update(new ReadOnlySpan<byte>((void*)data.Scan0, data.Stride * data.Height), data.Width, data.Height, data.Stride);
+            }
+        }
+        finally
+        {
+            bitmap.UnlockBits(data);
+        }
     }
 
     private void Present(List<(ChatLine Line, float Alpha)> lines)
@@ -150,18 +200,7 @@ internal sealed class InGameChat : IChatSink
             g.Clear(Color.Transparent);
             ChatOverlay.DrawLines(g, _font, lines, _bitmap.Size);
         }
-        var data = _bitmap.LockBits(new Rectangle(Point.Empty, _bitmap.Size), ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
-        try
-        {
-            unsafe
-            {
-                _layer.Update(new ReadOnlySpan<byte>((void*)data.Scan0, data.Stride * data.Height), data.Width, data.Height, data.Stride);
-            }
-        }
-        finally
-        {
-            _bitmap.UnlockBits(data);
-        }
+        Publish(_layer, _bitmap);
         _layer.Visible = true;
     }
 
@@ -175,6 +214,7 @@ internal sealed class InGameChat : IChatSink
         }
         _timer.Dispose();
         _layer?.Dispose(); // the host stops drawing it at once; the DLL itself stays in IL-2 until it exits
+        _menuLayer?.Dispose();
         _bitmap?.Dispose();
         _font?.Dispose();
     }

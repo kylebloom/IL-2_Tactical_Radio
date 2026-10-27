@@ -23,7 +23,7 @@ public sealed record ChatOptions(
     float Width = 0.42f,
     float Height = 0.30f,
     float FontPixels = 16f,
-    double HoldSeconds = 14,
+    double HoldSeconds = ChatSinks.HoldSeconds,
     int MaxLines = 8,
     RtssPlacement? RtssPlacement = null,
     int RtssColumns = 72,
@@ -146,8 +146,8 @@ internal interface IChatSink : IDisposable
     /// <summary>The voice started speaking this reply text.</summary>
     void Spoken(string text);
 
-    /// <summary>Shows the command list instead of the live lines, or hides it again.</summary>
-    void ToggleMenu(IReadOnlyList<ChatLine> menu);
+    /// <summary>Shows the radio menu's current level, or hides it (null).</summary>
+    void ShowMenu(RadioMenuView? menu);
 
     /// <summary>Pages through the radio log: positive is older, negative newer.</summary>
     void Scroll(int pages);
@@ -174,19 +174,30 @@ internal static class ChatSinks
         _ => new ChatOverlay(options),
     };
 
+    /// <summary>How long the radio log's other views (the menu, a page of history) stay without a key.</summary>
+    public const double HoldSeconds = 14;
+
     /// <summary>A timeline with the outputs' shared settings.</summary>
     public static ChatTimeline Timeline(ChatOptions options) =>
         new(options.HoldSeconds, maxLines: options.MaxLines) { HistoryHint = options.KeyMap.HistoryHint };
 
-    /// <summary>Acts on the chat keys (menu and log paging); other keys are not the chat's.</summary>
-    public static void HandleKey(IChatSink chat, RadioKey key, KeyBindings keys)
+    /// <summary>Acts on the log-paging keys; other keys are not the chat's.</summary>
+    public static void HandleKey(IChatSink chat, RadioKey key)
     {
         switch (key)
         {
-            case RadioKey.Menu: chat.ToggleMenu(keys.Menu); break;
             case RadioKey.Older: chat.Scroll(+1); break;
             case RadioKey.Newer: chat.Scroll(-1); break;
         }
+    }
+
+    /// <summary>The timeline-based outputs show the menu in the radio log's place.</summary>
+    public static void ShowMenu(ChatTimeline timeline, RadioMenuView? menu, DateTime? nowUtc = null)
+    {
+        if (menu is null)
+            timeline.CloseMenu();
+        else
+            timeline.ShowMenu(menu.ToChatLines(), nowUtc ?? DateTime.UtcNow);
     }
 
     /// <summary>
@@ -225,6 +236,7 @@ internal static class ChatSinks
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); }; // so the RTSS slot is released
 
         var keys = options.KeyMap;
+        var menu = new RadioMenuInput(chat, keys);
         Console.WriteLine($"Showing a sample radio exchange every 20 s for {seconds} s ({options.Mode}). {keys.Legend}; Ctrl+C also stops.");
         string? status = null;
         var next = DateTime.MinValue;
@@ -237,12 +249,17 @@ internal static class ChatSinks
             }
             if (chat.Status is { } s && s != status)
                 Console.WriteLine(status = s);
-            foreach (var key in keys.Pressed())
+            var (remaining, chosen) = menu.Handle(keys.Pressed().ToList(), keys.PressedDigits().ToList(), DateTime.UtcNow);
+            foreach (var key in remaining)
             {
                 if (key == RadioKey.Quit)
                     stop.Cancel();
-                HandleKey(chat, key, keys);
+                HandleKey(chat, key);
             }
+            if (chosen.Command is { } command)
+                chat.Post([Line(ChatLineKind.Request, "Gert Knoll", RadioChat.RequestPhrase(command), 0)]);
+            else if (chosen.Action != RadioMenuAction.None)
+                HandleKey(chat, chosen.Action == RadioMenuAction.LogOlder ? RadioKey.Older : RadioKey.Newer);
             stop.Token.WaitHandle.WaitOne(50);
         }
         return 0;

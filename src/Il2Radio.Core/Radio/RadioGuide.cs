@@ -38,8 +38,8 @@ public static class RadioGuide
 
     public static IReadOnlyList<Utility> OtherKeys { get; } =
     [
-        new("menu", "Show the key list in the game",
-            "Shows the bound keys on the in-game text, then hides them. The list also closes on its own after a few seconds, or when you make a call."),
+        new("menu", "Radio menu",
+            "Opens the radio menu in the game: every call, grouped as Flight, Enemy and Radio log. Choose with numpad 1 to 5; while the menu is open those keys pick from it instead of making their usual call. The menu key steps back a level and closes the menu at the top, and the quit key closes it too. It closes on its own after a few seconds without a key."),
         new("older", "Earlier messages",
             "Pages back through the radio log. Each line is stamped with the mission time, the same time as the watch in the cockpit."),
         new("newer", "Later messages",

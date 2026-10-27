@@ -55,7 +55,7 @@ The **Status** tab lists checks marked `[ok]` or `[!!]`. Every `[!!]` says what 
 | Numpad 3 | Separated: ask your flight to help you rejoin |
 | Numpad 4 | Ask your flight what enemy or unknown aircraft it can see |
 | Numpad 5 | Ask your flight to identify the nearest aircraft it can see |
-| Numpad 0 | Show or hide this list in the game |
+| Numpad 0 | Open the radio menu in the game; choose with Numpad 1–5. Numpad 0 again goes back, Numpad . closes it |
 | Numpad 7 / 9 | Page back / forward through earlier messages |
 | Numpad . | Quit the radio |
 
