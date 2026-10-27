@@ -56,6 +56,8 @@ switch (command)
         return Say();
     case "voice-check":
         return VoiceCheck();
+    case "mem-info" or "mem-scan" or "mem-next" or "mem-list" or "mem-dump" or "mem-refs" or "mem-watch":
+        return MemTools.Run(command, args);
     default:
         Console.WriteLine("""
             Il2Radio.Diag — feasibility diagnostics for an IL-2 Great Battles tactical radio
@@ -84,6 +86,10 @@ switch (command)
                                   R = 0..1 of radio range (more hiss further out); --wav saves instead of playing
               voice-check [--country C | --voice V] [--speaker N] [--play]
                                   List the clips a voice pack resolves to; --play plays each, with its key, to check by ear
+
+            Memory (read-only, for finding IL-2's structures; see docs/MEMORY.md):
+            """ + "\n" + MemTools.Help + """
+
 
               --voice auto|off|<pack>  auto (default): recorded clips matching the speaker's nation; anything
                                   they can't say is left out (the chat has it). off: no voice

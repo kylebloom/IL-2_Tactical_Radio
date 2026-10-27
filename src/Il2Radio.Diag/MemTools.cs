@@ -1,0 +1,287 @@
+using System.Diagnostics;
+using System.Globalization;
+using Il2Radio.Core.Memory;
+using Il2Radio.Windows;
+
+/// <summary>
+/// The mem-* commands: read-only tools for finding IL-2's structures (Phase 0 of the memory plan).
+/// Each run attaches, does one thing and exits; a scan's results are saved so mem-next can narrow
+/// them in a later run, and "rN" names result N in any address.
+/// </summary>
+static class MemTools
+{
+    private static string StatePath => Path.Combine(Environment.CurrentDirectory, "diag-output", "mem-scan.bin");
+
+    public static int Run(string command, string[] args)
+    {
+        var options = new Options(args);
+        ProcessMemory? memory;
+        try
+        {
+            memory = ProcessMemory.Open(options.Get("--process") ?? ProcessMemory.Il2ProcessName, options.Int("--pid"));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Fail(ex.Message);
+        }
+        if (memory is null)
+            return Fail($"{options.Get("--process") ?? ProcessMemory.Il2ProcessName}.exe is not running.");
+
+        using (memory)
+        {
+            try
+            {
+                return command switch
+                {
+                    "mem-info" => Info(memory),
+                    "mem-scan" => Scan(memory, options),
+                    "mem-next" => Next(memory, options),
+                    "mem-list" => List(memory, options),
+                    "mem-dump" => Dump(memory, options),
+                    "mem-refs" => Refs(memory, options),
+                    "mem-watch" => Watch(memory, options),
+                    _ => Fail($"Unknown command {command}"),
+                };
+            }
+            catch (FormatException ex)
+            {
+                return Fail(ex.Message);
+            }
+        }
+    }
+
+    public const string Help = """
+          mem-info                       Attach read-only and show the process, version, modules and memory size
+          mem-scan <type> <value|a..b> [--align N] [--module M] [--writable] [--max N]
+                                         Search memory. type: i32 i64 f32 f64 ascii utf16. A float matches to the
+                                         precision written (1234 is ±0.5); a..b is a range. Saves the results
+          mem-next <filter>              Narrow the saved results: changed, unchanged, increased, decreased, or a value/range
+          mem-list [--max N]             Show the saved results with their current values
+          mem-dump <address> [--bytes N] Show memory as hex, i32, f32, f64, text and pointers (default 256 bytes)
+          mem-refs <address> [--before N] [--module M] [--max N]
+                                         Find pointers to the address or up to N (hex, default 400) bytes before it,
+                                         i.e. to a structure holding it. Saves the results like a scan
+          mem-watch <addr:type[:label]>... [--seconds S] [--interval MS]
+                                         Print values over time (default 60 s, every 500 ms)
+                                         Addresses: hex (1A2B or 0x1A2B), module+offset (Il-2.exe+3C0), [x] reads the
+                                         pointer at x, rN is saved result N. Example: [[Il-2.exe+1F2A30]+18]+40
+                                         --process NAME [--pid N] reads another process (default Il-2). Read-only; needs an
+                                         administrator terminal; single-player only
+        """;
+
+    private static int Info(ProcessMemory memory)
+    {
+        var process = memory.Process;
+        string version = "";
+        try { version = process.MainModule?.FileVersionInfo.FileVersion ?? ""; } catch (System.ComponentModel.Win32Exception) { }
+        var regions = memory.Regions;
+        ulong total = regions.Aggregate(0UL, (sum, r) => sum + r.Size);
+        ulong writable = regions.Where(r => r.Writable).Aggregate(0UL, (sum, r) => sum + r.Size);
+
+        Console.WriteLine($"{process.ProcessName}.exe pid {process.Id}, started {process.StartTime:HH:mm:ss}, file version {version}");
+        Console.WriteLine($"Readable memory: {regions.Count} regions, {total / (1 << 20)} MB ({writable / (1 << 20)} MB writable)");
+        Console.WriteLine($"Modules: {memory.Modules.Count}");
+        foreach (var m in memory.Modules.Take(8))
+            Console.WriteLine($"  {m.Name,-28} 0x{m.Base:X12}  {m.Size / 1024,8} KB");
+        if (memory.Modules.Count > 8)
+            Console.WriteLine($"  … and {memory.Modules.Count - 8} more");
+        Console.WriteLine("Reading only. Use these tools in single-player missions only.");
+        return 0;
+    }
+
+    private static int Scan(ProcessMemory memory, Options options)
+    {
+        if (options.Positional(1) is not { } typeText || options.Positional(2) is not { } valueText)
+            return Fail("Usage: mem-scan <type> <value|a..b>");
+        var type = ScanPattern.ParseType(typeText);
+        var pattern = ScanPattern.Parse(type, valueText);
+        var scanOptions = new ScanOptions
+        {
+            Alignment = options.Int("--align"),
+            Module = options.Get("--module"),
+            WritableOnly = options.Has("--writable"),
+            MaxHits = options.Int("--max") ?? 2_000_000,
+        };
+
+        var clock = Stopwatch.StartNew();
+        var result = MemoryScanner.Scan(memory, pattern, scanOptions);
+        Console.WriteLine($"Scanned {result.BytesScanned / (1 << 20)} MB in {result.RegionsScanned} regions in {clock.Elapsed.TotalSeconds:F1} s: "
+            + $"{result.Hits.Count} hits{(result.Truncated ? " (stopped at --max)" : "")} for {type} {pattern.Text}");
+        Save(memory, type, $"{type} {pattern.Text}", result.Hits);
+        PrintHits(memory, type, result.Hits.Select(h => (h, h.Value)).ToList(), options.Int("--max-show") ?? 20);
+        return 0;
+    }
+
+    private static int Next(ProcessMemory memory, Options options)
+    {
+        if (options.Positional(1) is not { } filterText)
+            return Fail("Usage: mem-next <changed|unchanged|increased|decreased|value|a..b>");
+        if (LoadFor(memory) is not { } state)
+            return 1;
+        var filter = RefineFilter.Parse(filterText, state.Type);
+        var kept = MemoryScanner.Refine(memory, state.Hits, state.Type, filter);
+        Console.WriteLine($"{state.Hits.Count} → {kept.Count} hits ({filterText}) for {state.Description}");
+        Save(memory, state.Type, state.Description, kept);
+        PrintHits(memory, state.Type, kept.Select(h => (h, h.Value)).ToList(), options.Int("--max") ?? 20);
+        return 0;
+    }
+
+    private static int List(ProcessMemory memory, Options options)
+    {
+        if (LoadFor(memory) is not { } state)
+            return 1;
+        Console.WriteLine($"{state.Hits.Count} saved hits for {state.Description}");
+        var now = MemoryScanner.ReadAgain(memory, state.Hits).ToDictionary(x => x.Hit.Address, x => x.Now);
+        PrintHits(memory, state.Type, state.Hits.Select(h => (h, now.GetValueOrDefault(h.Address) ?? [])).ToList(), options.Int("--max") ?? 50);
+        return 0;
+    }
+
+    private static int Dump(ProcessMemory memory, Options options)
+    {
+        if (options.Positional(1) is not { } addressText)
+            return Fail("Usage: mem-dump <address> [--bytes N]");
+        ulong address = ResolveAddress(memory, addressText);
+        int length = Math.Clamp(options.Int("--bytes") ?? 256, 8, 1 << 16) / 8 * 8;
+        var data = new byte[length];
+        int read = memory.Read(address, data);
+        var book = new AddressBook(memory);
+        Console.WriteLine($"{book.Name(address)} (0x{address:X}), {read} of {length} bytes readable");
+        if (read == 0)
+            return 1;
+        Console.WriteLine($"  off   address       bytes             {"i32",15} {"",11}  {"f32",15} {"",11}  {"f64",18}  text      pointer");
+        foreach (string line in MemoryDump.Format(address, data.AsSpan(0, read / 8 * 8), book))
+            Console.WriteLine("  " + line);
+        return 0;
+    }
+
+    private static int Refs(ProcessMemory memory, Options options)
+    {
+        if (options.Positional(1) is not { } addressText)
+            return Fail("Usage: mem-refs <address> [--before N] [--module M]");
+        ulong target = ResolveAddress(memory, addressText);
+        ulong before = options.Get("--before") is { } b ? ulong.Parse(b.Replace("0x", ""), NumberStyles.HexNumber, CultureInfo.InvariantCulture) : 0x400;
+        var pattern = ScanPattern.PointerTo(target, before);
+        var clock = Stopwatch.StartNew();
+        var result = MemoryScanner.Scan(memory, pattern, new ScanOptions { Module = options.Get("--module"), MaxHits = options.Int("--max") ?? 100_000 });
+        var book = new AddressBook(memory);
+        Console.WriteLine($"{result.Hits.Count} pointers to {book.Name(target)} or up to 0x{before:X} before it ({clock.Elapsed.TotalSeconds:F1} s). Static ones (in a module) first:");
+        var ordered = result.Hits.OrderBy(h => book.RegionOf(h.Address)?.Module is null).ThenBy(h => h.Address).ToList();
+        int index = 0;
+        foreach (var hit in ordered.Take(options.Int("--max-show") ?? 40))
+        {
+            ulong points = BitConverter.ToUInt64(hit.Value);
+            Console.WriteLine($"  r{index++,-4} {book.Name(hit.Address),-32} → 0x{points:X}  (target is +0x{target - points:X} into it)");
+        }
+        Save(memory, ScanType.I64, pattern.Text, ordered);
+        return 0;
+    }
+
+    private static int Watch(ProcessMemory memory, Options options)
+    {
+        var fields = options.Positionals().Skip(1).Select(spec => Field.Parse(spec, memory)).ToList();
+        if (fields.Count == 0)
+            return Fail("Usage: mem-watch <address:type[:label]>...");
+        int interval = Math.Max(50, options.Int("--interval") ?? 500);
+        var end = DateTime.UtcNow.AddSeconds(options.Int("--seconds") ?? 60);
+        Console.WriteLine("time          " + string.Join("  ", fields.Select(f => f.Label.PadLeft(14))));
+        while (DateTime.UtcNow < end && !memory.Process.HasExited)
+        {
+            var values = fields.Select(f =>
+            {
+                var buffer = new byte[ScanPattern.SizeOf(f.Type)];
+                return (memory.Read(f.Address, buffer) == buffer.Length ? ScanPattern.Format(f.Type, buffer) : "?").PadLeft(14);
+            });
+            Console.WriteLine($"{DateTime.Now:HH:mm:ss.fff}  {string.Join("  ", values)}");
+            Thread.Sleep(interval);
+        }
+        return 0;
+    }
+
+    private sealed record Field(ulong Address, ScanType Type, string Label)
+    {
+        public static Field Parse(string spec, ProcessMemory memory)
+        {
+            // The address may itself hold ':'-free brackets and module names, so split from the right.
+            var parts = spec.Split(':');
+            if (parts.Length < 2)
+                throw new FormatException($"\"{spec}\": expected address:type[:label]");
+            bool labelled = parts.Length >= 3 && !IsType(parts[^1]);
+            string typeText = labelled ? parts[^2] : parts[^1];
+            string addressText = string.Join(':', parts[..(labelled ? ^2 : ^1)]);
+            var type = ScanPattern.ParseType(typeText);
+            if (type is ScanType.Ascii or ScanType.Utf16)
+                throw new FormatException("mem-watch reads numbers: i32, i64, f32 or f64");
+            return new Field(ResolveAddress(memory, addressText), type, labelled ? parts[^1] : addressText);
+        }
+
+        private static bool IsType(string s)
+        {
+            try { ScanPattern.ParseType(s); return true; } catch (FormatException) { return false; }
+        }
+    }
+
+    private static void PrintHits(ProcessMemory memory, ScanType type, List<(ScanHit Hit, byte[] Now)> hits, int max)
+    {
+        var book = new AddressBook(memory);
+        for (int i = 0; i < Math.Min(max, hits.Count); i++)
+        {
+            var (hit, now) = hits[i];
+            string value = now.Length == 0 ? "(unreadable)" : ScanPattern.Format(type, now);
+            Console.WriteLine($"  r{i,-4} {book.Name(hit.Address),-32} {value}");
+        }
+        if (hits.Count > max)
+            Console.WriteLine($"  … {hits.Count - max} more (mem-list --max N)");
+    }
+
+    private static ulong ResolveAddress(ProcessMemory memory, string text)
+    {
+        var state = LoadFor(memory, quiet: true);
+        return AddressExpression.Evaluate(text, memory, i => state is not null && i >= 0 && i < state.Hits.Count ? state.Hits[i].Address : null);
+    }
+
+    private static void Save(ProcessMemory memory, ScanType type, string description, List<ScanHit> hits) =>
+        new ScanState(memory.Process.Id, memory.Process.StartTime.ToUniversalTime(), type, description, hits).Save(StatePath);
+
+    private static ScanState? LoadFor(ProcessMemory memory, bool quiet = false)
+    {
+        var state = ScanState.Load(StatePath);
+        string? problem = state is null ? "No saved scan: run mem-scan first."
+            : state.ProcessId != memory.Process.Id || Math.Abs((state.ProcessStartUtc - memory.Process.StartTime.ToUniversalTime()).TotalSeconds) > 2
+                ? "The saved scan is from an earlier run of the game; its addresses no longer apply. Run mem-scan again."
+                : null;
+        if (problem is null)
+            return state;
+        if (!quiet)
+            Console.Error.WriteLine(problem);
+        return null;
+    }
+
+    private static int Fail(string message)
+    {
+        Console.Error.WriteLine(message);
+        return 1;
+    }
+
+    private sealed class Options(string[] args)
+    {
+        private static readonly string[] Flags = ["--writable"];
+
+        public string? Get(string name)
+        {
+            int i = Array.IndexOf(args, name);
+            return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+        }
+
+        public int? Int(string name) => int.TryParse(Get(name), out int v) ? v : null;
+
+        public bool Has(string name) => args.Contains(name);
+
+        /// <summary>Arguments that are neither options nor option values. Negative numbers ("-50..50") count as values.</summary>
+        public List<string> Positionals() =>
+            args.Where((a, i) => !IsOption(a) && (i == 0 || !IsOption(args[i - 1]) || Flags.Contains(args[i - 1]))).ToList();
+
+        public string? Positional(int index) => Positionals() is var p && index < p.Count ? p[index] : null;
+
+        private static bool IsOption(string a) => a.StartsWith("--", StringComparison.Ordinal);
+    }
+}

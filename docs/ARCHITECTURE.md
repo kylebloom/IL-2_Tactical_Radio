@@ -35,7 +35,9 @@ Numpad key (GetAsyncKeyState) ─► Keyed event: request line + mic click (imme
                                                      ─► chat sink (RTSS OSD / overlay window), synced via RadioVoice.Speaking
 ```
 
-### Game data sources (all read-only; the game process is never touched)
+### Game data sources (all read-only; the game process is never written to)
+Reading `Il-2.exe`'s memory is allowed since 2026-10-27 but not used in flight yet; the Diag tools for finding its structures and the plan are in [MEMORY.md](MEMORY.md).
+
 - **Mission log** (`Core/MissionLog`). IL-2's "AType" event log.
   - With `mission_text_log = 1`, IL-2 writes rotating chunks `missionReport(<start>)[N].mlg` plus `.txt` directly in `data\`, about every 33 s, and deletes the previous mission's chunks.
   - The complete `.mlg` lands in `data\FlightLogs` at mission end.
@@ -153,7 +155,7 @@ Numpad key (GetAsyncKeyState) ─► Keyed event: request line + mic click (imme
 - **Publish:** `dotnet publish src/Il2Radio.App` → `publish\Il2Radio.exe` (win-x64, self-contained, single file, compressed; publish-only properties under `_IsPublishing`).
 
 ## Diag commands
-`check [--apply]` · `mission` · `mlg` · `acmi [file]` (offline replay of all commands, with the clip keys the German game pack would play for each reply; reads a locked file by snapshot when elevated) · `snapshot-test` · `live` · `chat-test` · `audio-meter` · `say` · `voice-check`. Run without arguments for the full flag list.
+`check [--apply]` · `mission` · `mlg` · `acmi [file]` (offline replay of all commands, with the clip keys the German game pack would play for each reply; reads a locked file by snapshot when elevated) · `snapshot-test` · `live` · `chat-test` · `audio-meter` · `say` · `voice-check` · `mem-info` · `mem-scan` · `mem-next` · `mem-list` · `mem-dump` · `mem-refs` · `mem-watch` (read-only memory tools for reverse-engineering IL-2; see [MEMORY.md](MEMORY.md)). Run without arguments for the full flag list.
 
 ## Working on this repo
 - **Build and test:** `dotnet test` at the root. If the user's `live` session or `Il2Radio.exe` is running it locks its `bin\Debug`; then run `dotnet test tests/Il2Radio.Core.Tests` and build the programs elsewhere with `dotnet build src/Il2Radio.Diag -o <scratch dir>` (or `src/Il2Radio.App`).

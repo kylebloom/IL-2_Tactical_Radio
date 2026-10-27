@@ -32,7 +32,7 @@ You are adding a feature to the IL-2 tactical radio, a companion app for IL-2 St
   - other aircraft are reported only after the visibility model says someone could see them, and only as well as they could see them.
 
   New commands must report what they deliberately left out through `RadioResult.Suppressed`.
-- **No game process access:** no memory reading or writing, injection, hooks or game-file modification. `startup.cfg` changes need a backup and the user's explicit yes. Read IL-2's assets (audio, callsign tables) in place; never copy or commit them.
+- **Limited game process access:** reading `Il-2.exe`'s memory from our own process is allowed (single-player only, read-only; see CLAUDE.md). No memory writes, no code injection for reading, and no game-file modification; the only hook is OverlayKit's opt-in `Present` hook. `startup.cfg` changes need a backup and the user's explicit yes. Read IL-2's assets (audio, callsign tables) in place; never copy or commit them.
 - **Local and lightweight:** no cloud services and no LLMs. Ask before adding a dependency or downloading anything large.
 - **Coexistence:** never consume or remap input IL-2 needs. Don't take UDP ports or devices exclusively without a setting.
 

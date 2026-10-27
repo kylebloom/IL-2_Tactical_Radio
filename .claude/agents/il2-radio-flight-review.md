@@ -91,7 +91,7 @@ Judge every idea by one question: **would a pilot in this flight, in 1942–43, 
 - **Out of scope, or flagged as conflicting with the goal:**
   - radar-like omniscience;
   - map-marker equivalents;
-  - anything needing game-memory access, game-file changes, cloud services or LLMs;
+  - anything needing game-memory writes, game-file changes, cloud services or LLMs (read-only memory access is allowed; see CLAUDE.md);
   - anything breaking the honesty rule.
 - **Ground every idea in a moment of this flight.** "At 19:02:40 Albert Engel was shot down 3 km off the player's left wing and nobody said anything" beats "add loss calls". Cross-reference `WWII-RADIO-REALISM.md` (finding numbers) and ROADMAP items, and say what data the game actually provides for it (VERIFIED/DOCUMENTED/ASSUMED per `FEASIBILITY.md`).
 
