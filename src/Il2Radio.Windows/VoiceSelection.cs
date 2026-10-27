@@ -100,12 +100,6 @@ internal sealed class VoiceSelection
                                   ?? _voices.FirstOrDefault(v => v.Pack.Countries.Count == 0)
                                : null);
 
-    /// <summary>
-    /// The callsign word the voice for this country says (its manifest's <c>words</c>), so the on-screen text
-    /// names the same callsign; null when no pack speaks for that country or its pack doesn't say.
-    /// </summary>
-    public string? CallsignWord(int country, int callsign) => For(country)?.Pack.Word($"callsign.{callsign}");
-
     public string Describe() => Mode switch
     {
         "off" => "off: chat only",

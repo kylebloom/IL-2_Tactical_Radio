@@ -106,6 +106,16 @@ public class TextMissionLogTests
         Assert.Equal(998.778, e.Position!.Value.Altitude, 3);
     }
 
+    // The player's flight mates carry a leading 0x01 byte, as in the binary log; left in, the track's
+    // "Viktor Richter" never matched the log's and the flight had no live positions in a replay.
+    [Fact]
+    public void Strips_the_control_byte_from_a_flight_mates_name()
+    {
+        var e = Assert.IsType<ObjectSpawnedEvent>(TextMissionLog.ParseLine(
+            "T:15 AType:12 ID:765951 TYPE:Bf 109 F-4 COUNTRY:201 NAME:\u0001Viktor Richter PID:-1 POS(119868.0,57.0,157748.0)"));
+        Assert.Equal("Viktor Richter", e.Name);
+    }
+
     [Fact]
     public void Parses_plane_spawn()
     {

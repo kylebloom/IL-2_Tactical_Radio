@@ -20,7 +20,8 @@ namespace Il2Radio.Core.Audio;
 /// <c>class.fighter|fighters|attack|attacks|bomber|bombers|recon|recons|transport</c>,
 /// <c>nocontacts</c>, the optional <c>contact.type</c>, <c>side.enemy|friendly</c>, <c>hedge</c>,
 /// <c>few</c>, <c>many</c>, <c>onme</c>, <c>cannotsee</c>, <c>lastseen</c>, <c>grid</c>,
-/// <c>turn.left|right</c>, <c>destroyed</c>, <c>ack</c>, <c>beside.left|right|behind</c> and <c>spotted</c>.
+/// <c>turn.left|right</c>, <c>destroyed</c>, <c>ack</c>, <c>beside.left|right|behind</c>, <c>spotted</c>,
+/// <c>engaging</c>, <c>followme</c> and <c>rejoin</c>.
 /// <para>
 /// Placeholders: where a whole message has no recording of its own, a nearby game phrase stands in
 /// rather than leave the speaker saying only his callsign. "No contacts", "with us" and "in formation"
@@ -164,6 +165,15 @@ public static class ClipPhraser
                     break;
                 case SpeechWord.Destroyed:
                     Say("destroyed");
+                    break;
+                case SpeechWord.Engaging:
+                    Say("engaging");
+                    break;
+                case SpeechWord.FollowMe:
+                    Say("followme");
+                    break;
+                case SpeechWord.Rejoin:
+                    Say("rejoin");
                     break;
             }
         }

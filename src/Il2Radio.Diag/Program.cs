@@ -357,9 +357,8 @@ int AcmiCmd(string? path)
         zip?.Dispose();
     }
 
-    // Identities first, then the track, so a glimpse in an earlier frame is remembered before the replay.
     var replayVoices = install is null ? null : VoiceSelection.Create("auto", install.Root);
-    var tracker = new ContactTracker { CallsignWords = replayVoices is null ? null : replayVoices.CallsignWord };
+    var tracker = new ContactTracker();
     if (install is not null && File.Exists(install.GeneratedMission))
         tracker.SetPlan(MissionPlan.Load(install.GeneratedMission));
     List<string> chunks = install is null ? [] : LatestLogChunks(install.DataDir);
@@ -368,18 +367,53 @@ int AcmiCmd(string? path)
         Console.WriteLine("\n(The mission-log chunks on disk belong to a different mission; replaying from the ACMI alone, so flight membership is unknown.)");
         chunks = [];
     }
+    var logEvents = new List<MissionLogEvent>();
     foreach (string chunk in chunks)
-        foreach (var e in BinaryMissionLog.DecodeAll(File.ReadAllBytes(chunk)))
-            tracker.Apply(e);
+        logEvents.AddRange(BinaryMissionLog.DecodeAll(File.ReadAllBytes(chunk)));
+    // IL-2 can leave only the text copies of an older mission's log.
+    List<string> textChunks = chunks.Count > 0 || install is null ? [] : LatestLogChunks(install.DataDir, ".txt");
+    if (textChunks.Count > 0 && SameMission(path, textChunks[0]))
+    {
+        foreach (string chunk in textChunks)
+            foreach (string line in File.ReadLines(chunk))
+                if (TextMissionLog.ParseLine(line) is { } e)
+                    logEvents.Add(e);
+        chunks = textChunks;
+    }
+
+    // Identities first, so the track's aircraft join the log's flight members. The rest go in at their
+    // game time, alongside the track's frames, so a loss or despawn late in the mission does not
+    // silence the flight from the start of the replay.
+    bool IsIdentity(MissionLogEvent e) => e is ObjectSpawnedEvent or PlaneSpawnedEvent or MissionStarted;
+    foreach (var e in logEvents.Where(IsIdentity).OrderBy(e => e.Tick))
+        tracker.Apply(e);
+    var pendingLog = new Queue<MissionLogEvent>(logEvents.Where(e => !IsIdentity(e)).OrderBy(e => e.Tick));
+    void ApplyLogUpTo(double seconds)
+    {
+        while (pendingLog.TryPeek(out var e) && e.Tick / MissionLogEvent.TicksPerSecond <= seconds)
+            tracker.Apply(pendingLog.Dequeue());
+    }
+
     var realism = ChosenRealism();
     var radio = new RadioSettings { Realism = realism };
     var sightings = new SightingMemory();
+    // The calls the flight makes unasked, looked at every 10 s of track time as the live session does.
+    var unasked = new UnaskedCalls();
+    var unaskedLines = new List<string>();
+    double nextLook = 0;
     acmi.FrameClosed = s =>
     {
+        ApplyLogUpTo(s.CurrentTime);
         tracker.Apply(s);
         EnemyCommands.Notice(tracker, radio, sightings);
+        if (s.CurrentTime < nextLook)
+            return;
+        nextLook = s.CurrentTime + 10;
+        if (unasked.Consider(tracker, radio, sightings) is { } call)
+            unaskedLines.Add($"    {s.CurrentTime,5:F0} s  \"{RadioChat.Line(call).Speaker} {call.Text}\"");
     };
     acmi.Feed(text);
+    ApplyLogUpTo(double.PositiveInfinity);
 
     var aircraft = acmi.Objects.Values.Where(o => o.IsAircraft).ToList();
     Console.WriteLine($"ACMI: {path}\n{acmi.LinesParsed} lines, duration {acmi.CurrentTime:F0} s, {acmi.Objects.Count} objects, {aircraft.Count} aircraft. Reference {acmi.ReferenceLongitude}, {acmi.ReferenceLatitude}");
@@ -389,6 +423,9 @@ int AcmiCmd(string? path)
     Console.WriteLine("\nProperty keys seen: " + string.Join(", ", acmi.Objects.Values.SelectMany(o => o.Properties.Keys).Distinct().Order()));
 
     tracker.Apply(acmi);
+
+    Console.WriteLine($"\nUnasked calls during the replay ({unaskedLines.Count}):");
+    unaskedLines.ForEach(Console.WriteLine);
 
     Console.WriteLine($"\nRadio checks replayed at end of recording (t={acmi.CurrentTime:F0} s, {chunks.Count} log chunks, author {acmi.Author}, realism {realism}); player: {tracker.Player?.DisplayName ?? "(not identified)"}");
     // How the German game pack would say each reply: the clip keys it plays. The rest is on the chat only.
@@ -428,10 +465,10 @@ static bool SameMission(string acmiPath, string chunkPath)
     return Stamp(Path.GetFileName(acmiPath)) is { } a && Stamp(Path.GetFileName(chunkPath)) is { } c && Math.Abs((a - c).TotalMinutes) <= 10;
 }
 
-static List<string> LatestLogChunks(string dataDir)
+static List<string> LatestLogChunks(string dataDir, string extension = ".mlg")
 {
-    var regex = new System.Text.RegularExpressions.Regex(@"^missionReport\((?<stamp>[^)]+)\)\[(?<index>\d+)\]\.mlg$");
-    return new DirectoryInfo(dataDir).EnumerateFiles("missionReport*.mlg")
+    var regex = new System.Text.RegularExpressions.Regex(@"^missionReport\((?<stamp>[^)]+)\)\[(?<index>\d+)\]" + System.Text.RegularExpressions.Regex.Escape(extension) + "$");
+    return new DirectoryInfo(dataDir).EnumerateFiles("missionReport*" + extension)
         .Select(f => (File: f, Match: regex.Match(f.Name)))
         .Where(x => x.Match.Success)
         .GroupBy(x => x.Match.Groups["stamp"].Value)

@@ -206,38 +206,21 @@ public class CallsignTests
         }
     }
 
-    // Reported in a flight: the German voice said cs_bird_09 ("Lumme", heard as "Luma") while the chat showed
-    // the English table's "Canary". The text must name the word the speaker's voice says.
+    // Reported in a flight: IL-2's chat showed "Rook" while ours showed "Saatkrähe", the word the German
+    // recording says. The text names the callsign as the game's chat does; the voice still says its own word.
     [Fact]
-    public void Text_uses_the_callsign_word_the_speakers_voice_says()
+    public void Text_uses_the_installs_callsign_word_as_the_game_chat_does()
     {
-        _tracker.CallsignWords = (country, callsign) => country == 201 && callsign == 9 ? "Lumme" : null;
-        _tracker.SetPlan(MissionPlan.FromBlocks(MissionFileParser.Parse(new StringReader(Plan.Replace("Callsign = 8;", "Callsign = 9;"))))
-            with { CallsignNames = new Dictionary<int, string> { [9] = "Canary", [12] = "Eagle" } });
+        _tracker.SetPlan(MissionPlan.FromBlocks(MissionFileParser.Parse(new StringReader(Plan.Replace("Callsign = 8;", "Callsign = 4;"))))
+            with { CallsignNames = new Dictionary<int, string> { [4] = "Rook" } });
         _acmi.Feed(Acmi.Header + "#0\n");
         LogFlightMember(PlayerName, 4, isPlayer: true);
         LogFlightMember("Heinz Koelzig", 1);
-        Frame(Player(), Mate("a", "Heinz Koelzig", 0, 17_000), Acmi.Object("x", 0, -3000, 1000, "Bert Lange", "Axis"));
+        Frame(Player(), Mate("a", "Heinz Koelzig", 0, 17_000));
 
         var mate = Assert.Single(FlightCommands.FlightPosition(_tracker).Replies);
-        Assert.StartsWith("Lumme one, I am at your three o'clock", mate.Text);
-        Assert.Equal([new(SpeechWord.Callsign, 9), new SpeechToken(SpeechWord.Speaker, 1)], mate.Tokens!.Take(2));
-
-        // No word from the voice for callsign 12: the install's English word stays.
-        Assert.Contains(FriendlyPositionsCommand.Execute(_tracker).Replies, r => r.Text.StartsWith("Eagle one,", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public void Callsign_words_set_after_the_contacts_rename_them()
-    {
-        Start(Names);
-        LogFlightMember("Heinz Koelzig", 1);
-        Frame(Player(), Mate("a", "Heinz Koelzig", 0, 17_000));
-        Assert.StartsWith("Oriole one,", Assert.Single(FlightCommands.FlightPosition(_tracker).Replies).Text);
-
-        _tracker.CallsignWords = (country, callsign) => callsign == 8 ? "Pirol" : null;
-
-        Assert.StartsWith("Pirol one,", Assert.Single(FlightCommands.FlightPosition(_tracker).Replies).Text);
+        Assert.StartsWith("Rook one, I am at your three o'clock", mate.Text);
+        Assert.Equal([new(SpeechWord.Callsign, 4), new SpeechToken(SpeechWord.Speaker, 1)], mate.Tokens!.Take(2));
     }
 
     [Fact]

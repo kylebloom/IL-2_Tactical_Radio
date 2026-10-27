@@ -108,24 +108,6 @@ public sealed class ContactTracker(TimeProvider? time = null)
     }
 
     /// <summary>
-    /// The callsign word a speaker's voice says, by (IL-2 country, callsign number), or null to keep the
-    /// install's English word. The game's German recordings don't say the English table's words (callsign 9
-    /// is "Lumme", not "Canary"), so the on-screen text takes the voice's word and both name the same callsign.
-    /// </summary>
-    public Func<int, int, string?>? CallsignWords
-    {
-        get => _callsignWords;
-        set
-        {
-            _callsignWords = value;
-            foreach (var c in _contacts.Values)
-                ResolveCallsign(c);
-        }
-    }
-
-    private Func<int, int, string?>? _callsignWords;
-
-    /// <summary>
     /// Age of a fix in seconds: how far the source clock has advanced since the fix, plus how long
     /// ago (wall clock) the source last produced anything. A source that stops updating ages its fixes.
     /// </summary>
@@ -308,15 +290,14 @@ public sealed class ContactTracker(TimeProvider? time = null)
 
     /// <summary>
     /// Takes the pilot's callsign from the mission plan, matched by pilot name and country. The word is the
-    /// one his voice says (<see cref="CallsignWords"/>, for the same country the voice is chosen by), else the install's.
+    /// install's, as IL-2's own chat shows it ("Rook"), even where the German recording says another ("Saatkrähe").
     /// </summary>
     private void ResolveCallsign(Contact c)
     {
         if (Plan?.AircraftOf(c.PilotName, c.Country) is not { Callsign: > 0 } planned)
             return;
         c.Callsign = planned.Callsign;
-        int country = c.Country > 0 ? c.Country : planned.Country;
-        c.CallsignName = CallsignWords?.Invoke(country, planned.Callsign) ?? Plan.CallsignName(planned);
+        c.CallsignName = Plan.CallsignName(planned);
         c.Callnum = planned.Callnum > 0 ? planned.Callnum : null;
     }
 

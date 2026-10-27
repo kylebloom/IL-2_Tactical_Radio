@@ -30,6 +30,20 @@ public class UnaskedCallTests
         Visibility = new VisibilitySettings { DetectMetresPerSpanMetre = 100_000, MaxDetectFactor = 100, MisidentificationChance = 0 },
     };
 
+    /// <summary>Nobody spots anything: what the game's pilots react to and our model has not shown.</summary>
+    private static readonly RadioSettings Blind = new()
+    {
+        Realism = RadioRealism.Pilot,
+        Visibility = new VisibilitySettings { DetectMetresPerSpanMetre = 1, MaxDetectFactor = 1, MisidentificationChance = 0 },
+    };
+
+    /// <summary>A fighter is seen out to about 1.5 km, and certainly at 100 m.</summary>
+    private static readonly RadioSettings ShortSight = new()
+    {
+        Realism = RadioRealism.Pilot,
+        Visibility = new VisibilitySettings { DetectMetresPerSpanMetre = 100, MaxDetectFactor = 1.5, MisidentificationChance = 0 },
+    };
+
     private const string Overcast = """
         CloudLevel = 1500;
         CloudHeight = 800;
@@ -47,6 +61,9 @@ public class UnaskedCallTests
         Assert.Null(Say());
 
         Frame(11, 100_000, 208_000, 90);
+        Assert.Null(Say()); // the plan alone: he has not started the turn
+
+        Frame(16, 100_000, 209_000, 110);
         var call = Say();
 
         Assert.Equal("Number one, turning to heading 180.", call!.Text);
@@ -65,6 +82,8 @@ public class UnaskedCallTests
     {
         PatrolLoop();
         Frame(10, 100_000, 208_000, 90);
+        Assert.Null(Say());
+        Frame(16, 100_000, 209_000, 70);
 
         Assert.Equal("Number one, turning to heading 360.", Say()!.Text);
         Assert.Null(Say());
@@ -75,6 +94,8 @@ public class UnaskedCallTests
     {
         PatrolLoop();
         Frame(10, 100_500, 203_000, 270);
+        Assert.Null(Say());
+        Frame(16, 100_500, 202_000, 250);
 
         Assert.Equal("Number one, turning to heading 090.", Say()!.Text);
     }
@@ -84,6 +105,8 @@ public class UnaskedCallTests
     {
         PatrolLoop();
         Frame(10, 102_000, 200_000, 230);
+        Assert.Null(Say());
+        Frame(16, 101_000, 199_500, 210);
 
         Assert.Equal("Number one, turning to heading 090.", Say()!.Text);
     }
@@ -111,6 +134,8 @@ public class UnaskedCallTests
     {
         RouteMission(playerFormation: 2, leaderFormation: 1, outboundDegrees: 100);
         Frame(10, 100_000, 208_000, 90);
+        Assert.Null(Say());
+        Frame(16, 100_000, 209_000, 95); // half way round a small corner
 
         var call = Say();
 
@@ -166,7 +191,8 @@ public class UnaskedCallTests
         Track(6, leaderHeading: 0);
         Assert.Null(Say());
 
-        Track(8, leaderHeading: 180);
+        Track(8, leaderHeading: 170);
+        Assert.Equal("Number one, turning right. Follow me.", Say()!.Text); // a break off his course, not a cruise call
         Track(20, leaderHeading: 180);
         Assert.Null(Say());
 
@@ -197,6 +223,8 @@ public class UnaskedCallTests
     {
         RouteMission(playerFormation: 2, leaderFormation: 1);
         Frame(10, 100_000, 208_000, 90);
+        Assert.Null(Say());
+        Frame(16, 100_000, 209_000, 110);
         Assert.NotNull(Say());
 
         _clock.Advance(TimeSpan.FromSeconds(30));
@@ -212,6 +240,8 @@ public class UnaskedCallTests
     {
         RouteMission(playerFormation: 2, leaderFormation: 1);
         Frame(10, 100_000, 208_000, 90);
+        Assert.Null(Say());
+        Frame(16, 100_000, 209_000, 110);
         Assert.Equal("Number one, turning to heading 180.", Say()!.Text);
 
         _tracker.Apply(new MissionStarted(1, null, "next"));
@@ -219,6 +249,8 @@ public class UnaskedCallTests
         _acmi = new AcmiStream();
         _acmi.Feed(GridHeader + "#0\n");
         Frame(10, 100_000, 208_000, 90);
+        Assert.Null(Say());
+        Frame(16, 100_000, 209_000, 110);
 
         Assert.Equal("Number one, turning to heading 180.", Say()!.Text);
     }
@@ -227,11 +259,16 @@ public class UnaskedCallTests
     public void Each_unasked_call_can_be_switched_off()
     {
         RouteMission(playerFormation: 2, leaderFormation: 1);
-        Frame(10, 100_000, 208_000, 90);
         var off = new UnaskedCallSettings { Route = false, Contacts = true };
+        var on = new UnaskedCallSettings { Route = true };
+        UnaskedCalls quiet = new(), talking = new();
+        Frame(10, 100_000, 208_000, 90);
+        Assert.Null(quiet.Consider(_tracker, See, _memory, off));
+        Assert.Null(talking.Consider(_tracker, See, _memory, on));
+        Frame(16, 100_000, 209_000, 110);
 
-        Assert.Null(new UnaskedCalls().Consider(_tracker, See, _memory, off));
-        Assert.Equal("Number one, turning to heading 180.", new UnaskedCalls().Consider(_tracker, See, _memory, new UnaskedCallSettings { Route = true })!.Text);
+        Assert.Null(quiet.Consider(_tracker, See, _memory, off));
+        Assert.Equal("Number one, turning to heading 180.", talking.Consider(_tracker, See, _memory, on)!.Text);
 
         OpenFlight(playerFormation: 2, leaderFormation: 1, grid: false);
         SeeEnemy(10, 0, 600);
@@ -341,10 +378,190 @@ public class UnaskedCallTests
         Assert.Null(Say());
 
         // Removal takes effect on the next frame. Sure spotting would still see him anywhere on the map.
-        _acmi.Feed("#80\n-e\n#81\n");
-        Frame(81, 100_000, 208_000, 90);
+        Frame(20, 100_000, 208_500, 110, Enemy(208_600, 100_000));
+        Assert.DoesNotContain("turning to heading", Say()?.Text ?? ""); // he has started it, but the contact holds the call
+
+        _acmi.Feed("#30\n-e\n#31\n");
+        Frame(31, 100_000, 209_000, 120);
+
+        Assert.Equal("Number one, turning to heading 180.", Say()!.Text); // still coming round onto the leg
+    }
+
+    [Fact]
+    public void A_corner_found_while_a_contact_was_in_sight_is_called_once_the_picture_is_gone()
+    {
+        RouteMission(playerFormation: 2, leaderFormation: 1);
+        Frame(10, 100_000, 208_000, 90, Enemy(208_600, 100_000));
+        Assert.DoesNotContain("heading", Say()!.Text);
+
+        _acmi.Feed("#20\n-e\n#21\n");
+        Frame(21, 100_000, 208_200, 90);
+        Assert.Null(Say());
+        Frame(26, 100_000, 209_000, 110);
 
         Assert.Equal("Number one, turning to heading 180.", Say()!.Text);
+    }
+
+    // Reported in a flight (2026-10-26): "turning to heading 295" was the briefed leg, the leader turned
+    // north-east for the enemy instead, and the player who flew 295 lost the flight.
+    [Fact]
+    public void A_briefed_corner_the_leader_turns_away_from_is_not_called_and_his_real_course_is()
+    {
+        RouteMission(playerFormation: 2, leaderFormation: 1);
+        Frame(11, 100_000, 208_000, 90);
+        Assert.Null(Say());
+
+        Frame(21, 100_500, 209_000, 60); // left, away from 180
+        Assert.Null(Say());
+        Frame(31, 101_500, 209_500, 12);
+        Assert.Equal("Number one, turning left. Follow me.", Say()!.Text); // 78° off his course, the way he turned
+        Frame(41, 103_000, 209_600, 4); // drifting a few degrees: holding the new course
+
+        var call = Say();
+        Assert.Equal("Number one, heading 005.", call!.Text);
+        Assert.Null(Say());
+    }
+
+    [Fact]
+    public void A_briefed_corner_not_started_within_the_wait_is_dropped()
+    {
+        RouteMission(playerFormation: 2, leaderFormation: 1);
+        Frame(11, 100_000, 208_000, 90);
+        Assert.Null(Say());
+        Frame(41, 100_000, 212_000, 90);
+        Assert.Null(Say());
+        Frame(75, 100_000, 216_000, 90);
+        Assert.Null(Say());
+
+        Frame(80, 100_000, 217_000, 130);
+        Assert.Null(Say());
+        Frame(90, 99_500, 217_500, 175);
+        Assert.Equal("Number one, turning right. Follow me.", Say()!.Text);
+        Frame(96, 99_000, 217_500, 178);
+
+        Assert.Equal("Number one, heading 180.", Say()!.Text); // what he flies, not the old corner
+    }
+
+    // Reported in a flight (2026-10-26): the leader left the route for the enemy, and the player, ahead and out
+    // of sight of the flight, heard nothing until the fight was already on.
+    [Fact]
+    public void A_leader_turning_off_his_course_for_an_enemy_in_the_picture_says_he_is_engaging_once()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1, grid: false);
+        LeaderWithEnemy(0, leaderHeading: 0);
+        Assert.Contains("o'clock", Say()!.Text); // the contact first
+
+        LeaderWithEnemy(10, leaderHeading: 300);
+        var call = Say()!;
+
+        Assert.Equal("Number one, engaging, turning left. Follow me.", call.Text);
+        Assert.Equal(["number.1", "engaging", "turn.left", "followme"],
+            ClipPhraser.Phrase(call.Tokens!, key => key is "number.1" or "engaging" or "turn.left" or "turn.right" or "followme"));
+
+        LeaderWithEnemy(20, leaderHeading: 200);
+        Assert.DoesNotContain("engaging", Say()?.Text ?? ""); // once per break-off
+    }
+
+    // The game's pilots spot before our visibility model: in the 2026-10-26 flight the leader turned for the
+    // Hurricanes before the flight was shown to see them. A turn that swings him onto a live enemy is engaging.
+    [Fact]
+    public void A_leader_who_turns_onto_an_enemy_the_flight_has_not_seen_is_engaging_and_the_enemy_is_remembered()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1, grid: false);
+        LeaderAndEnemy(0, leaderHeading: 0, enemyNorth: 0, enemyEast: -10_000); // 10 km west, beyond sight
+        Assert.Null(_calls.Consider(_tracker, Blind, _memory));
+        Assert.DoesNotContain(EnemyCommands.EnemyContacts(_tracker, Blind, _memory).Replies, r => r.Members.Count > 0);
+
+        LeaderAndEnemy(10, leaderHeading: 300, enemyNorth: 0, enemyEast: -10_000); // 60° left, onto it
+
+        Assert.Equal("Number one, engaging, turning left. Follow me.", _calls.Consider(_tracker, Blind, _memory)!.Text);
+        Assert.Contains(EnemyCommands.EnemyContacts(_tracker, Blind, _memory).Replies, r => r.Members.Count > 0); // he has seen it
+    }
+
+    [Fact]
+    public void A_leader_who_turns_away_from_the_only_enemy_is_not_engaging()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1, grid: false);
+        LeaderAndEnemy(0, leaderHeading: 0, enemyNorth: 0, enemyEast: 10_000); // east
+        _calls.Consider(_tracker, Blind, _memory);
+        LeaderAndEnemy(10, leaderHeading: 300, enemyNorth: 0, enemyEast: 10_000); // left, away from it
+
+        Assert.Equal("Number one, turning left. Follow me.", _calls.Consider(_tracker, Blind, _memory)!.Text);
+    }
+
+    [Fact]
+    public void The_flight_says_once_when_it_loses_sight_of_a_player_out_in_front()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1);
+        Track(0, leaderHeading: 0, leaderNorth: -100);
+        Assert.Null(_calls.Consider(_tracker, ShortSight, _memory)); // with them, seen
+
+        Track(10, leaderHeading: 0, leaderNorth: -3_000);
+        Assert.Null(_calls.Consider(_tracker, ShortSight, _memory)); // one look unseen is not a loss
+        Track(25, leaderHeading: 0, leaderNorth: -3_200);
+        var lost = _calls.Consider(_tracker, ShortSight, _memory)!;
+        Assert.Equal("Number one, we have lost sight of you. Heading north, altitude 1000 metres.", lost.Text);
+        Assert.Contains(new SpeechToken(SpeechWord.CannotSee), lost.Tokens!);
+
+        Track(35, leaderHeading: 0, leaderNorth: -3_400);
+        Assert.Null(_calls.Consider(_tracker, ShortSight, _memory)); // once
+
+        Track(40, leaderHeading: 0, leaderNorth: -100);
+        _calls.Consider(_tracker, ShortSight, _memory); // seen again
+        Track(50, leaderHeading: 0, leaderNorth: -3_000);
+        _calls.Consider(_tracker, ShortSight, _memory);
+        Track(75, leaderHeading: 0, leaderNorth: -3_000);
+        Assert.StartsWith("Number one, we have lost sight of you.", _calls.Consider(_tracker, ShortSight, _memory)!.Text);
+    }
+
+    [Fact]
+    public void A_briefed_corner_is_not_a_break_off()
+    {
+        RouteMission(playerFormation: 2, leaderFormation: 1);
+        Frame(10, 100_000, 208_000, 90, Enemy(260_000, 100_000)); // an enemy far off, in sight
+        Say();
+        Frame(20, 100_000, 209_500, 150, Enemy(260_000, 100_000)); // 60° round toward the 180 leg
+
+        Assert.DoesNotContain("Follow me", Say()?.Text ?? "");
+    }
+
+    [Fact]
+    public void A_player_who_runs_ahead_of_the_flight_is_told_to_slow_down_and_rejoin()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1);
+        Track(0, leaderHeading: 0, leaderNorth: -3_000);
+        Assert.Null(Say());
+
+        Track(10, leaderHeading: 0, leaderNorth: -3_000);
+        var call = Say()!;
+        Assert.Equal("Number one, you are a few kilometres ahead of us. Slow down and rejoin.", call.Text);
+        Assert.Equal(["number.1", "rejoin"], ClipPhraser.Phrase(call.Tokens!, key => key is "number.1" or "rejoin"));
+
+        Track(40, leaderHeading: 0, leaderNorth: -4_000);
+        Assert.Null(Say()); // not every look
+
+        Track(75, leaderHeading: 0, leaderNorth: -4_500);
+        Assert.NotNull(Say()); // still ahead and not closing: again a minute on
+
+        Track(140, leaderHeading: 0, leaderNorth: -3_500);
+        Assert.Null(Say()); // closing: he is already doing it
+    }
+
+    [Fact]
+    public void Ahead_is_only_said_to_a_wingman_flying_the_flights_way_in_front_of_it()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1);
+        Track(0, leaderHeading: 0, playerHeading: 180, leaderNorth: -3_000);
+        Track(10, leaderHeading: 0, playerHeading: 180, leaderNorth: -3_000);
+        Assert.Null(Say()); // coming back to them
+        Track(20, leaderHeading: 0, leaderNorth: 3_000);
+        Track(30, leaderHeading: 0, leaderNorth: 3_000);
+        Assert.Null(Say()); // behind them, not ahead
+
+        OpenFlight(playerFormation: 1, leaderFormation: 2);
+        Track(0, leaderHeading: 0, leaderNorth: -3_000);
+        Track(10, leaderHeading: 0, leaderNorth: -3_000);
+        Assert.Null(new UnaskedCalls().Consider(_tracker, See, _memory)); // he leads
     }
 
     private RadioReply? Say(UnaskedCallSettings? calls = null) =>
@@ -573,6 +790,25 @@ public class UnaskedCallTests
         _acmi.Feed($"#{time.ToString(CultureInfo.InvariantCulture)}\n"
             + Grid(PlayerName, "p", 100_000, 200_000, playerHeading)
             + Grid(LeaderName, "w", 100_000 + leaderNorth, 200_000, leaderHeading));
+        _tracker.Apply(_acmi);
+    }
+
+    /// <summary>Player and leader side by side, the leader on <paramref name="leaderHeading"/>, a Yak 3 km east in sight.</summary>
+    private void LeaderWithEnemy(double time, double leaderHeading)
+    {
+        _acmi.Feed($"#{time.ToString(CultureInfo.InvariantCulture)}\n"
+            + Acmi.Object("p", 0, 0, 1000, PlayerName, "Axis", heading: 0)
+            + Acmi.Object("w", 0, 100, 1000, LeaderName, "Axis", heading: leaderHeading)
+            + Acmi.Object("e", 0, 3_000, 1000, "Pilot e", "Allies", "Yak-1 ser.69", heading: 90));
+        _tracker.Apply(_acmi);
+    }
+
+    private void LeaderAndEnemy(double time, double leaderHeading, double enemyNorth, double enemyEast)
+    {
+        _acmi.Feed($"#{time.ToString(CultureInfo.InvariantCulture)}\n"
+            + Acmi.Object("p", 0, 0, 1000, PlayerName, "Axis", heading: 0)
+            + Acmi.Object("w", 0, 100, 1000, LeaderName, "Axis", heading: leaderHeading)
+            + Acmi.Object("e", enemyNorth, enemyEast, 1000, "Pilot e", "Allies", "Yak-1 ser.69", heading: 90));
         _tracker.Apply(_acmi);
     }
 

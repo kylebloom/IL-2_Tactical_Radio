@@ -139,7 +139,7 @@ public sealed record AppSettings
 /// </summary>
 public sealed record UnaskedSettings
 {
-    /// <summary>An AI leader calls the cruise course in degrees. A corner still ahead is "turning to heading 185"; a course he is already flying is "heading 185". When you lead, the chat shows "Route: Turning to heading 185."</summary>
+    /// <summary>An AI leader calls the cruise course in degrees. A corner he has started turning for is "turning to heading 185"; a course he is already flying is "heading 185". When you lead, the chat shows "Route: Turning to heading 185."</summary>
     public bool Route { get; init; } = true;
 
     /// <summary>One call when the contact picture changes: a group gained, lost, or "on me".</summary>

@@ -117,6 +117,15 @@ public enum SpeechWord
     /// Used instead of <see cref="ContactCount"/> when the text says those words.
     /// </summary>
     ContactAmount,
+
+    /// <summary>"Engaging": an AI leader leaving his course for the enemy the flight has seen.</summary>
+    Engaging,
+
+    /// <summary>"Follow me": the leader's order after he breaks off.</summary>
+    FollowMe,
+
+    /// <summary>"Rejoin formation": the flight tells the player, who has run ahead of it, to slow down and close up.</summary>
+    Rejoin,
 }
 
 /// <summary>

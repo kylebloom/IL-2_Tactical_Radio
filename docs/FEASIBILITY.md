@@ -300,13 +300,15 @@ Windows speech recognition (en-US, a constrained grammar of about 60 candidate p
 | `trnleft`, `trnright` | "turning left" / "turning right" (0.61–0.74, actors 102–104) | `turn.left`, `turn.right` | an AI leader turning onto a new course, before the compass point |
 | `rep_trgdestr` | "target destroyed" (0.61, actor 105) | `destroyed` | an enemy a mate saw go down |
 | `spt`, `obj_spotted` | "spotted" (0.85), "object spotted" (0.66–0.71) | `spotted` | a newly gained contact, after the callsign (unasked calls) |
-| `atk` | "engaging" (0.82, actor 104) | not mapped | |
+| `atk` | "engaging" (0.82, actor 104); "engage" (0.89, actor 104, 2026-10-27) | `engaging` | an AI leader breaking off his course for an enemy the flight has seen |
+| `ord_followme` | "follow me" (0.78–0.93, actors 104–105, 2026-10-27) | `followme` | the end of the break-off call |
+| `ord_rejoin` | "rejoin formation" (0.61–0.90, actors 102–105, 2026-10-27) | `rejoin` | a mate telling the player, who is ahead of the flight, to slow down and rejoin |
 | `trnclimb` | "climbing" (0.76, actor 104) | not mapped | |
 | `toLeft`, `toRight`, `toBack` | "to the left", "to the right", "behind" (0.67–0.74) | `beside.left`, `beside.right`, `beside.behind` | where a mate in formation sits off the player's nose, in place of "Roger" (30–120° either side; beyond 120° behind; ahead keeps "Roger") |
 | `outsector` | "leaving sector" (0.68–0.75) | not mapped | |
 | `rep_underattack`, `rep_imhit`, `toCourse`, `im`, `flw` | no match | not mapped | |
 
-PARTIALLY VERIFIED for English. The German and Russian files are ASSUMED to say the same (same file names and script); not heard. `voice-check --country 201 --play` plays `ack`, `turn.left`, `turn.right`, `destroyed`, `spotted` and the three `beside` keys with the rest.
+PARTIALLY VERIFIED for English. The German and Russian files are ASSUMED to say the same (same file names and script); not heard. `voice-check --country 201 --play` plays `ack`, `turn.left`, `turn.right`, `destroyed`, `spotted`, the three `beside` keys, `engaging`, `followme` and `rejoin` with the rest.
 
 "A few kilometres" was given no placeholder: the nearest kilometre clip would claim a measured range the pilot model deliberately does not have.
 - It is the only option that sounds like IL-2's chatter, because it *is* IL-2's chatter (the same actors and processing).

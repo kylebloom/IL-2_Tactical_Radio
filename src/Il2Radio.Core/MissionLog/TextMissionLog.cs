@@ -37,7 +37,7 @@ public static partial class TextMissionLog
                 (int)Id(fields, "INAIR"), Id(fields, "PARENT"), fields.GetValueOrDefault("ISPL") == "1", fields.GetValueOrDefault("LOGIN", "")),
             11 => new GroupInitEvent(tick, Id(fields, "GID"), BinaryMissionLog.ParseIdList(fields.GetValueOrDefault("IDS", "")), Id(fields, "LID")),
             12 => new ObjectSpawnedEvent(tick, Id(fields, "ID"), StripIndexSuffix(fields.GetValueOrDefault("TYPE", "")), (int)Id(fields, "COUNTRY"),
-                fields.GetValueOrDefault("NAME", ""), Id(fields, "PID"), Pos(line)),
+                BinaryMissionLog.CleanName(fields.GetValueOrDefault("NAME", "")), Id(fields, "PID"), Pos(line)),
             16 => new BotDeinitEvent(tick, Id(fields, "BOTID"), Pos(line)!.Value),
             17 => new PositionEvent(tick, Id(fields, "ID"), Pos(line)!.Value),
             18 => new BotEjectedEvent(tick, Id(fields, "BOTID"), Id(fields, "PARENTID"), Pos(line)!.Value),

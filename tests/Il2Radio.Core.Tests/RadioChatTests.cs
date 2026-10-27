@@ -97,7 +97,7 @@ public class RadioChatTests
     [Fact]
     public void A_callsign_from_the_plan_is_shown_with_its_number_in_digits()
     {
-        var tracker = new ContactTracker(_clock) { CallsignWords = (_, number) => number == 9 ? "Lumme" : null };
+        var tracker = new ContactTracker(_clock);
         tracker.SetPlan(MissionPlan.FromBlocks(MissionFileParser.Parse(new StringReader($$"""
             Options
             {
@@ -113,12 +113,12 @@ public class RadioChatTests
               Callsign = 9;
               Callnum = 1;
             }
-            """))));
+            """))) with { CallsignNames = new Dictionary<int, string> { [9] = "Canary" } });
         tracker.Apply(new ObjectSpawnedEvent(0, 1, "Bf 109 F-4", 201, "Viktor Richter", -1, WorldPoint.FromIl2(0, 50, 0)));
         tracker.Apply(new ObjectSpawnedEvent(0, 2, "BotPilot_Bf109_GER41", 201, "BotPilot_Bf109_GER41", 1, WorldPoint.FromIl2(0, 50, 0)));
         var viktor = Assert.Single(tracker.Contacts);
 
-        Assert.Equal("[Lumme 1] [Viktor Richter]", RadioChat.Speaker(viktor));
+        Assert.Equal("[Canary 1] [Viktor Richter]", RadioChat.Speaker(viktor));
     }
 
     [Fact]

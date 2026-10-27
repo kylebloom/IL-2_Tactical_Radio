@@ -88,8 +88,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     /// <summary>Log chunks arrive about every 33 s while a mission runs; none for this long means it ended or is paused.</summary>
     private static readonly TimeSpan MissionQuietAfter = TimeSpan.FromSeconds(90);
 
-    // Callsign words as the speaker's voice says them, so the chat names the callsign the voice does.
-    private readonly ContactTracker _tracker = new() { CallsignWords = voice is null ? null : voice.Voices.CallsignWord };
+    private readonly ContactTracker _tracker = new();
     private readonly SightingMemory _sightings = new(); // what the flight has spotted, kept between calls
     private readonly UnaskedCalls _unasked = new();
     private DateTime _unaskedAttemptUtc = DateTime.MinValue;

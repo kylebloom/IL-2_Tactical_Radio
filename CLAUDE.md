@@ -10,7 +10,7 @@ Read before changing anything:
 - [docs/FEASIBILITY.md](docs/FEASIBILITY.md): research and evidence (verified vs assumed), with sources.
 
 Essentials:
-- **Honesty rule:** replies come only from fresh live ACMI tracks; never present planned or stale data as current; destroyed aircraft never answer; enemies only once the visibility model says they were seen.
+- **Honesty rule:** replies come only from fresh live ACMI tracks; never present planned or stale data as current; destroyed aircraft never answer; enemies only once the visibility model says they were seen, or (the one exception, at the user's request) once an AI leader's own turn onto a live enemy shows the game's pilot has seen it (`UnaskedCalls.TurnedToward`).
 - **No game process access, injection or game-file changes.** `startup.cfg` only, with a backup and the user's consent. Never copy or commit IL-2's audio files.
 - `dotnet test` must stay green. If the user's `live` session or `Il2Radio.exe` holds `bin\Debug`, run `dotnet test tests/Il2Radio.Core.Tests` and build the programs into a scratch folder (`dotnet build src/Il2Radio.Diag -o <dir>`, same for `src/Il2Radio.App`).
 - Projects: `Il2Radio.App` is the player's program (`Il2Radio.exe`, `settings.json`); `Il2Radio.Diag` is the developer console; both use `Il2Radio.Windows` (I/O and `LiveSession`) and `Il2Radio.Core`.
