@@ -29,7 +29,8 @@ public enum PositionSource
 /// <param name="Heading">True heading in degrees (0 = north, clockwise) when the source reports it.</param>
 /// <param name="Latitude">Absolute degrees from an ACMI fix. Mission-log fixes leave this empty; the two frames are not the same grid.</param>
 /// <param name="Longitude">Absolute degrees, paired with <see cref="Latitude"/>.</param>
-public sealed record PositionFix(WorldPoint Position, PositionSource Source, double SourceTime, string Detail, double? Heading = null, double? Latitude = null, double? Longitude = null);
+/// <param name="AboveGroundMetres">Height above the ground when the source reports it (ACMI <c>AGL</c>). Empty when that sample did not.</param>
+public sealed record PositionFix(WorldPoint Position, PositionSource Source, double SourceTime, string Detail, double? Heading = null, double? Latitude = null, double? Longitude = null, double? AboveGroundMetres = null);
 
 public sealed class Contact(string key)
 {
@@ -240,7 +241,7 @@ public sealed class ContactTracker(TimeProvider? time = null)
             }
             if (acmi.PositionOf(obj) is { } p)
                 c.LastFix = new PositionFix(p, PositionSource.AcmiTrack, obj.LastPositionTime, "track", obj.HeadingDegrees,
-                    acmi.ReferenceLatitude + obj.Latitude, acmi.ReferenceLongitude + obj.Longitude);
+                    acmi.ReferenceLatitude + obj.Latitude, acmi.ReferenceLongitude + obj.Longitude, obj.AboveGroundMetres);
 
             if ((playerName is not null && obj.Pilot == playerName) || (acmi.Author is { Length: > 0 } author && obj.Pilot == author))
             {

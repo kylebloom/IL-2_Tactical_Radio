@@ -47,16 +47,21 @@ public sealed record UnaskedCallSettings
 /// A loss goes before either; a picture change it holds back is said on the next look.
 /// <para>
 /// Break-off: when the AI leader's nose swings <see cref="BreakOffDegrees"/> off the course he was holding,
-/// not toward a briefed corner, he says once "turning left. Follow me.", with "engaging" when the flight
-/// has an enemy in its picture or his turn points him at one (see <see cref="BreakOff"/>). It goes first,
-/// so the turn is not absorbed into the fight unsaid. He says it again only after he has called a cruise
-/// course. In the 2026-10-26 flight the leader left the route for the enemy and the player, ahead and out
-/// of sight, heard nothing.
+/// not toward a briefed corner, he says once "turning left. Follow me.", with "engaging" when an enemy in
+/// the picture is within <see cref="EngageInferMetres"/> of him, or his turn points him at one
+/// (see <see cref="BreakOff"/>). A contact that only another mate has, or a last-seen one, is not his fight.
+/// It goes first, so the turn is not absorbed into the fight unsaid. He says it again only after he has called a cruise
+/// course. He says it, and a cruise heading, only while he is airborne and someone in the flight is within
+/// <see cref="WithFlightMetres"/>. A turn while he is alone or on the ground is followed in silence, so it is
+/// not announced when a mate comes back into range. In the 2026-10-26 flight the leader left the route for the
+/// enemy and the player, ahead and out of sight, heard nothing. In the 2026-10-27 flight the new leader said
+/// "follow me" from 5 km and beyond, and again while taxiing.
 /// </para>
 /// <para>
 /// Lost sight: when nobody in the flight has seen the player for <see cref="LostSightSeconds"/> while he is out
-/// in front, having been seen in the last two minutes, the leader says once "we have lost sight of you" with
-/// his own heading and altitude.
+/// in front (and no farther than <see cref="LostSightMaxMetres"/>), having been seen in the last two minutes,
+/// the leader says once "we have lost sight of you" with his own heading and altitude. Not from the ground,
+/// and not when another airborne mate is on the frequency and the leader is not with him.
 /// </para>
 /// <para>
 /// Running ahead: when the player, flying the flight's way, has been at least <see cref="AheadMetres"/> in
@@ -91,8 +96,20 @@ public sealed class UnaskedCalls
     /// <summary>The leader's nose this far off the course he was holding, with an enemy in the picture, is a break-off.</summary>
     public const double BreakOffDegrees = 45;
 
-    /// <summary>An enemy the leader turns onto within this range is taken as what he broke off for. About as far as the game's pilots react.</summary>
+    /// <summary>An enemy the leader turns onto within this range is taken as what he broke off for. About as far as the game's pilots react. An enemy already in the picture counts as his fight inside the same range, and not beyond it.</summary>
     public const double EngageInferMetres = 15_000;
+
+    /// <summary>
+    /// He is leading the flight while another living mate (the player counts) is at least this close.
+    /// Beyond it a turn is his own affair. The 2026-10-27 calls started at about 5 km.
+    /// </summary>
+    public const double WithFlightMetres = 4_000;
+
+    /// <summary>
+    /// At or under this height above the ground he is on the surface (taxi, rollout, a wheels-down figure of about
+    /// 1.4 m in IL-2's ACMI) and is not giving formation orders. A sample with no AGL is treated as airborne.
+    /// </summary>
+    public const double OnGroundMetres = 15;
 
     /// <summary>His turn must have brought that enemy at least this much nearer his nose.</summary>
     private const double EngageInferTurnDegrees = 20;
@@ -130,6 +147,9 @@ public sealed class UnaskedCalls
 
     /// <summary>"Out in front" for the lost-sight call: within this of the leader's nose. Wider than the ahead call, since he may be turning.</summary>
     private const double LostSightConeDegrees = 60;
+
+    /// <summary>Beyond this he has not lost the player out in front of the flight; the player is simply elsewhere. The same edge as "far".</summary>
+    private const double LostSightMaxMetres = PilotReport.FarBeyondMetres;
 
     private const double BreakDegreesPerSecond = 10;
     private const double SettleSeconds = 5;
@@ -197,13 +217,15 @@ public sealed class UnaskedCalls
         var suppressed = new List<SuppressedContact>();
         var flight = RadioPicture.Build(tracker, settings, RadioPicture.IsFlightMate, suppressed);
         var groups = contacts.Replies.Where(r => r.Members.Count > 0).ToList();
-        // The briefed corner ahead of an AI leader is found on every look, so his turn onto the next leg is not
-        // taken for a break-off while a contact is in sight. Its call is still made only on a quiet look.
-        if (flight is not null)
-            FindCorner(flight, tracker.Plan);
-        if (flight is not null && calls.Route && BreakOff(flight, groups.Count > 0, tracker, settings, memory) is { } breakOff)
+        // The briefed corner ahead of an AI leader is found on every look while he is still leading, so his turn
+        // onto the next leg is not taken for a break-off while a contact is in sight. Its call is still made only
+        // on a quiet look. Finding it while he is alone would use the corner up unheard.
+        bool leading = flight is not null && Pick(flight).Ai is { } leader && CanLead(flight, leader);
+        if (leading)
+            FindCorner(flight!, tracker.Plan);
+        if (leading && calls.Route && BreakOff(flight!, groups, tracker, settings, memory) is { } breakOff)
         {
-            UpdateHeading(flight, allowSpeech: false);
+            UpdateHeading(flight!, allowSpeech: false);
             return breakOff;
         }
 
@@ -235,16 +257,18 @@ public sealed class UnaskedCalls
 
     /// <summary>
     /// "Engaging, turning left. Follow me.": the AI leader has turned <see cref="BreakOffDegrees"/> off the
-    /// course he held, not toward a briefed corner. "Engaging" with an enemy in the flight's picture, or when
-    /// his turn points him at a live enemy aircraft (<see cref="TurnedToward"/>): the game's pilots spot
-    /// before our visibility model does, and a leader who swings onto an enemy has seen it. That enemy is
-    /// then remembered as seen by him, so a contact request agrees with what he said. With neither, he says
-    /// only "turning left. Follow me."
+    /// course he held, not toward a briefed corner, and he is still airborne with someone in the flight
+    /// (<see cref="CanLead"/>). "Engaging" when an enemy in the picture, not a last-seen one, is within
+    /// <see cref="EngageInferMetres"/> of him, or when his turn points him at a live enemy aircraft
+    /// (<see cref="TurnedToward"/>): the game's pilots spot before our visibility model does, and a leader
+    /// who swings onto an enemy has seen it. That enemy is then remembered as seen by him, so a contact
+    /// request agrees with what he said. A contact only a distant mate has does not make it his fight.
+    /// With neither, he says only "turning left. Follow me."
     /// </summary>
-    private RadioReply? BreakOff(RadioPicture flight, bool enemyInPicture, ContactTracker tracker, RadioSettings settings, SightingMemory memory)
+    private RadioReply? BreakOff(RadioPicture flight, IReadOnlyList<RadioReply> groups, ContactTracker tracker, RadioSettings settings, SightingMemory memory)
     {
         var (ai, playerLeads) = Pick(flight);
-        if (playerLeads || ai is null || _brokeOff || ai.Fix.Heading is not double nose
+        if (playerLeads || ai is null || !CanLead(flight, ai) || _brokeOff || ai.Fix.Heading is not double nose
             || !_haveHeading || _leaderKey != ai.Contact.Key || _announcedCourse < 0)
             return null;
         double turned = TurnSoFar(nose);
@@ -256,24 +280,50 @@ public sealed class UnaskedCalls
         _brokeOff = true;
         _pendingCorner = null;
         int side = turned < 0 ? -1 : 1;
-        if (!enemyInPicture && TurnedToward(ai, nose - turned, nose, side, tracker, settings) is { } target)
+        bool engaging = EnemyNearLeader(ai, groups);
+        if (!engaging && TurnedToward(ai, nose - turned, nose, side, tracker, settings) is { } target)
         {
             memory.Sync(tracker);
             memory.Set(target.Contact.Key, new SightingMemory.Sighting(
                 target.Fix.SourceTime, IdentificationLevel.Side, null, false, target.Fix.Position, target.Fix.Heading));
-            enemyInPicture = true;
+            engaging = true;
         }
 
         var who = ai.Contact;
         string turning = $"turning {(side < 0 ? "left" : "right")}";
         List<SpeechToken> tokens = [.. SpeechToken.Identify(who)];
-        if (enemyInPicture)
+        if (engaging)
             tokens.Add(new(SpeechWord.Engaging));
         tokens.Add(new(SpeechWord.Turn, side));
         tokens.Add(new(SpeechWord.FollowMe));
         return new RadioReply(who, [who], ai.Relative, ai.AgeSeconds,
-            $"{RadioPhrases.Who(who)}, {(enemyInPicture ? "engaging, " : "")}{turning}. Follow me.", tokens);
+            $"{RadioPhrases.Who(who)}, {(engaging ? "engaging, " : "")}{turning}. Follow me.", tokens);
     }
+
+    /// <summary>
+    /// An enemy the flight is reporting now, not a last-seen one, within <see cref="EngageInferMetres"/> of the leader.
+    /// A mate's fight on the other side of the map is not this.
+    /// </summary>
+    private static bool EnemyNearLeader(LiveContact leader, IReadOnlyList<RadioReply> groups) =>
+        groups.Any(g => g.Tokens?.Any(t => t.Word == SpeechWord.LastSeen) != true
+            && g.Members.Any(c => c.LastFix is { } fix
+                && Navigation.Relative(leader.Fix.Position, fix.Position) is { RangeMetres: <= EngageInferMetres }));
+
+    /// <summary>Airborne, and at least one other living mate is within <see cref="WithFlightMetres"/>. The player counts.</summary>
+    private static bool CanLead(RadioPicture flight, LiveContact leader) =>
+        Airborne(leader) && (Within(leader.Fix.Position, flight.PlayerFix.Position)
+            || flight.Live.Any(l => l.Contact.Key != leader.Contact.Key && Airborne(l) && Within(leader.Fix.Position, l.Fix.Position)));
+
+    /// <summary>
+    /// A logged landing, or ACMI height above the ground at or under <see cref="OnGroundMetres"/>.
+    /// No AGL on the sample means the track did not say, and he is taken as flying.
+    /// </summary>
+    private static bool Airborne(LiveContact mate) =>
+        mate.Contact.Status != ContactStatus.Landed
+        && (mate.Fix.AboveGroundMetres is not double agl || agl > OnGroundMetres);
+
+    private static bool Within(WorldPoint from, WorldPoint to) =>
+        Navigation.Relative(from, to) is { RangeMetres: <= WithFlightMetres };
 
     /// <summary>
     /// The live enemy aircraft the leader's turn has swung him onto: within <see cref="EngageInferMetres"/>, on the
@@ -326,7 +376,8 @@ public sealed class UnaskedCalls
             _playerSeenAt = now;
             _lostSightCalled = false;
         }
-        else if (!_lostSightCalled && fromLeader.RangeMetres >= AheadMetres
+        else if (!_lostSightCalled && Airborne(ai) && WithHisFlight(flight, ai)
+            && fromLeader.RangeMetres >= AheadMetres && fromLeader.RangeMetres <= LostSightMaxMetres
             && Delta(fromLeader.BearingDegrees, leaderNose) <= LostSightConeDegrees
             && now - _playerSeenAt >= LostSightSeconds && now - _playerSeenAt <= LostSightMemorySeconds)
         {
@@ -372,6 +423,16 @@ public sealed class UnaskedCalls
         tokens.Add(new(SpeechWord.Rejoin));
         return new RadioReply(speaker.Contact, [speaker.Contact], speaker.Relative, speaker.AgeSeconds,
             $"{RadioPhrases.Who(speaker.Contact)}, you are {where}. Slow down and rejoin.", tokens);
+    }
+
+    /// <summary>
+    /// Another airborne mate is on the frequency, and the leader is with him. A two-ship has no such mate:
+    /// the leader is the flight. Used so a pilot who has left cannot say the flight has lost the player.
+    /// </summary>
+    private static bool WithHisFlight(RadioPicture flight, LiveContact leader)
+    {
+        var others = flight.Live.Where(l => l.Contact.Key != leader.Contact.Key && l.Contact.FormationIndex is not null && Airborne(l)).ToList();
+        return others.Count == 0 || others.Any(l => Within(leader.Fix.Position, l.Fix.Position));
     }
 
     /// <summary>
@@ -458,6 +519,9 @@ public sealed class UnaskedCalls
                 ? RouteLine(flight, corner.OutboundDegrees)
                 : null;
         }
+
+        if (!CanLead(flight, ai))
+            return null;
 
         if (TurningIn(ai) is { } turning)
             return turning;
@@ -572,6 +636,24 @@ public sealed class UnaskedCalls
         double dt = now - _lastHeadingTime;
         if (dt < MinSampleSeconds)
             return;
+
+        // Alone, or on the ground, his nose is still followed. The turn is not stored up to be announced
+        // when a mate comes back within range, and a taxi turn is not a break-off.
+        if (!CanLead(flight, ai))
+        {
+            _lastHeading = heading;
+            _lastHeadingTime = now;
+            _turnSinceCourse = 0;
+            Announce(course);
+            _candidateCourse = course;
+            _candidateSince = now;
+            _candidateGentle = true;
+            _pendingSpeak = false;
+            _awaitingSettle = false;
+            _brokeOff = false;
+            _pendingCorner = null;
+            return;
+        }
 
         double rate = Delta(heading, _lastHeading) / dt;
         _turnSinceCourse += Signed(heading - _lastHeading);

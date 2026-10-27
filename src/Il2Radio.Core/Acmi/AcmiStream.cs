@@ -48,6 +48,12 @@ public sealed class AcmiObject(string id)
     public double? HeadingDegrees =>
         !double.IsNaN(Heading) ? Normalize(Heading) : !double.IsNaN(Yaw) ? Normalize(Yaw) : null;
 
+    /// <summary>
+    /// Metres above the ground from the latest sample that carried <c>AGL</c>. Cleared when a position
+    /// sample omits it, so a stale wheels-down figure cannot follow an aircraft into the air.
+    /// </summary>
+    public double? AboveGroundMetres { get; internal set; }
+
     private static double Normalize(double degrees) => (degrees % 360 + 360) % 360;
 
     public bool HasPosition => !double.IsNaN(Longitude) && !double.IsNaN(Latitude);
@@ -218,13 +224,27 @@ public sealed class AcmiStream
             obj.RemovedTime = null;
         }
 
+        bool transform = false, sawAgl = false;
         foreach (var (key, value) in fields.Skip(1).Select(SplitProperty))
         {
             if (key == "T")
+            {
                 ApplyTransform(obj, value);
+                transform = true;
+            }
+            else if (key == "AGL")
+            {
+                obj.Properties[key] = value;
+                obj.AboveGroundMetres = double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double agl)
+                    ? agl : null;
+                sawAgl = true;
+            }
             else
                 obj.Properties[key] = value;
         }
+
+        if (transform && !sawAgl)
+            obj.AboveGroundMetres = null;
     }
 
     private void ApplyTransform(AcmiObject obj, string value)

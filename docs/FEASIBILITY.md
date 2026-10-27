@@ -13,7 +13,7 @@ Status as of 2026-10-25. Evidence levels used throughout:
 
 > Can an external application access the actual, current positions and identities of AI aircraft during a running single-player Career mission?
 
-**Answer (2026-10-25): the data exists live, but IL-2 locks it.** With `tacviewrecord = 1` and track recording on (LCtrl+R), IL-2 writes a plain-text ACMI file to `data\Tracks` in real time (~18 KB/s). It contains **every** aircraft and ground vehicle in the mission at ~5 Hz, with real lat/lon/altitude, attitude, AGL, type, pilot name and coalition. IL-2 opens the file **without read sharing** while recording, so no other process can read it until recording stops. Mission-log events arrive live in ~33 s chunks (see §5–6).
+**Answer (2026-10-25): the data exists live, but IL-2 locks it.** With `tacviewrecord = 1` and track recording on (LCtrl+R), IL-2 writes a plain-text ACMI file to `data\Tracks` in real time (~18 KB/s). It contains **every** aircraft and ground vehicle in the mission at ~5 Hz, with real lat/lon/altitude, attitude, AGL, type, pilot name and coalition. On the 2026-10-27 Career track, AGL was present on every aircraft sample; an aircraft with its wheels on the ground read about 1.4 m (VERIFIED). IL-2 opens the file **without read sharing** while recording, so no other process can read it until recording stops. Mission-log events arrive live in ~33 s chunks (see §5–6).
 
 | Data | Available? | Source | Evidence |
 |---|---|---|---|

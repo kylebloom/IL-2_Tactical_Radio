@@ -478,6 +478,100 @@ public class UnaskedCallTests
         Assert.Contains(EnemyCommands.EnemyContacts(_tracker, Blind, _memory).Replies, r => r.Members.Count > 0); // he has seen it
     }
 
+    // 2026-10-27: after Finch one was down, Finch two kept saying "follow me" from 5 km and beyond,
+    // including while he taxied, and "engaging" for a fight that belonged to Finch three.
+    [Fact]
+    public void A_leader_who_has_left_every_mate_does_not_call_a_turn_or_a_heading()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1);
+        Track(0, leaderHeading: 0, leaderNorth: 10_000);
+        Track(6, leaderHeading: 0, leaderNorth: 10_000);
+        Track(8, leaderHeading: 170, leaderNorth: 10_000);
+
+        Assert.Null(Say());
+
+        Track(20, leaderHeading: 180, leaderNorth: 10_000);
+        Track(40, leaderHeading: 270, leaderNorth: 10_000);
+        Track(46, leaderHeading: 272, leaderNorth: 10_000);
+        Assert.Null(Say());
+    }
+
+    [Fact]
+    public void A_leader_on_the_ground_does_not_call_a_turn()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1);
+        Track(0, leaderHeading: 0, agl: 400);
+        Track(6, leaderHeading: 0, agl: 400);
+        Assert.Null(Say());
+
+        Track(8, leaderHeading: 170, agl: 1);
+        Assert.Null(Say());
+        Track(46, leaderHeading: 180, agl: 1);
+        Assert.Null(Say());
+    }
+
+    [Fact]
+    public void A_logged_landing_stops_the_course_call()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1);
+        Track(0, leaderHeading: 0);
+        Track(6, leaderHeading: 0);
+        _tracker.Apply(new LandingEvent(1, _leaderPlane, WorldPoint.FromIl2(0, 50, 0)));
+
+        Track(12, leaderHeading: 170);
+        Assert.Null(Say());
+    }
+
+    [Fact]
+    public void A_turn_is_not_engaging_when_the_enemy_is_another_mates_fight()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1, grid: false);
+        Flight("Kurt Meier", 3);
+        void Look(double time, double leaderHeading)
+        {
+            _acmi.Feed($"#{time.ToString(CultureInfo.InvariantCulture)}\n"
+                + Acmi.Object("p", 0, 0, 1000, PlayerName, "Axis", heading: 0)
+                + Acmi.Object("w", 0, 100, 1000, LeaderName, "Axis", heading: leaderHeading)
+                + Acmi.Object("m", 0, 25_000, 1000, "Kurt Meier", "Axis", heading: 90)
+                + Acmi.Object("e", 200, 25_000, 1000, "Pilot e", "Allies", "Yak-1 ser.69", heading: 90));
+            _tracker.Apply(_acmi);
+        }
+
+        Look(0, 0);
+        Say();
+        Look(10, 90);
+
+        var call = Say();
+        Assert.Equal("Number one, turning right. Follow me.", call!.Text);
+        Assert.DoesNotContain("engaging", call.Text);
+    }
+
+    [Fact]
+    public void Lost_sight_is_not_called_when_the_player_is_far_from_the_leader()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1);
+        Track(0, leaderHeading: 0, leaderNorth: -100);
+        Assert.Null(_calls.Consider(_tracker, ShortSight, _memory));
+
+        Track(10, leaderHeading: 0, leaderNorth: -12_000);
+        Assert.Null(_calls.Consider(_tracker, ShortSight, _memory));
+        Track(30, leaderHeading: 0, leaderNorth: -12_000);
+        Assert.Null(_calls.Consider(_tracker, ShortSight, _memory));
+    }
+
+    [Fact]
+    public void Lost_sight_is_not_called_by_a_leader_on_the_ground()
+    {
+        OpenFlight(playerFormation: 2, leaderFormation: 1);
+        Track(0, leaderHeading: 0, leaderNorth: -100, agl: 400);
+        Assert.Null(_calls.Consider(_tracker, ShortSight, _memory));
+
+        Track(10, leaderHeading: 0, leaderNorth: -3_000, agl: 1);
+        Assert.Null(_calls.Consider(_tracker, ShortSight, _memory));
+        Track(30, leaderHeading: 0, leaderNorth: -3_000, agl: 1);
+        Assert.Null(_calls.Consider(_tracker, ShortSight, _memory));
+    }
+
     [Fact]
     public void A_leader_who_turns_away_from_the_only_enemy_is_not_engaging()
     {
@@ -785,11 +879,11 @@ public class UnaskedCallTests
         _tracker.Apply(_acmi);
     }
 
-    private void Track(double time, double leaderHeading, double playerHeading = 0, double leaderNorth = 0)
+    private void Track(double time, double leaderHeading, double playerHeading = 0, double leaderNorth = 0, double? agl = null)
     {
         _acmi.Feed($"#{time.ToString(CultureInfo.InvariantCulture)}\n"
-            + Grid(PlayerName, "p", 100_000, 200_000, playerHeading)
-            + Grid(LeaderName, "w", 100_000 + leaderNorth, 200_000, leaderHeading));
+            + Grid(PlayerName, "p", 100_000, 200_000, playerHeading, agl: agl)
+            + Grid(LeaderName, "w", 100_000 + leaderNorth, 200_000, leaderHeading, agl: agl));
         _tracker.Apply(_acmi);
     }
 
@@ -833,10 +927,11 @@ public class UnaskedCallTests
     private static string Enemy(double east, double north) =>
         Grid("Pilot e", "e", north, east, 90, "Allies", "Yak-1 ser.69");
 
-    private static string Grid(string pilot, string id, double north, double east, double heading, string coalition = "Axis", string name = "Bf 109 F-4")
+    private static string Grid(string pilot, string id, double north, double east, double heading, string coalition = "Axis", string name = "Bf 109 F-4", double? agl = null)
     {
         var (lat, lon) = MapGrid.StalingradLatLon(north, east);
+        string height = agl is double a ? string.Create(CultureInfo.InvariantCulture, $",AGL={a:F1}") : "";
         return string.Create(CultureInfo.InvariantCulture,
-            $"{id},T={lon:F6}|{lat:F6}|1000|0|0|{heading:F1},Type=Air+FixedWing,Name={name},Pilot={pilot},Coalition={coalition}\n");
+            $"{id},T={lon:F6}|{lat:F6}|1000|0|0|{heading:F1}{height},Type=Air+FixedWing,Name={name},Pilot={pilot},Coalition={coalition}\n");
     }
 }
