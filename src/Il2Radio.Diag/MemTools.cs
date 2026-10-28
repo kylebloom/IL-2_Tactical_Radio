@@ -66,9 +66,10 @@ static class MemTools
                                          --fields off:type,... (scan, next, near, list) also shows values at hex offsets
                                          from each hit, e.g. --fields -8:i32,+170:f64
           mem-dump <address> [--bytes N] Show memory as hex, i32, f32, f64, text and pointers (default 256 bytes)
-          mem-roster [--id N] [--seconds S] [--interval MS] [--csv file]
+          mem-roster [--id N] [--seconds S] [--interval MS] [--csv file] [--rescan S]
                                          Find every scene object (once per mission) from the player's id in the newest
-                                         mission log, and name each from the log; --seconds re-reads them every second
+                                         mission log, and name each from the log; --seconds re-reads them every second;
+                                         --rescan S looks for new objects every S s and reports objects that appear or vanish
           mem-compare <csv> [acmi]       Check a mem-roster --csv log against the ACMI of the same flight (default: newest);
                                          fits the map between the frames and reports what differs. Needs no game
           mem-ptrs <address> [--count N] [--fields off:type,...]
@@ -201,19 +202,52 @@ static class MemTools
         int seconds = options.Int("--seconds") ?? 0;
         var end = DateTime.UtcNow.AddSeconds(seconds);
         // --csv: every object at every read, for comparing with an ACMI afterwards (mem-compare).
-        using var csv = options.Get("--csv") is { } csvPath ? new StreamWriter(csvPath) : null;
+        using var csv = options.Get("--csv") is { } csvPath ? new StreamWriter(csvPath) { AutoFlush = true } : null;
         csv?.WriteLine("utc_ms,id,north,height,east,speed");
         int interval = Math.Max(100, options.Int("--interval") ?? 1000);
+        // --rescan S: look for new objects (mid-mission spawns) every S seconds. Appearing and vanishing objects
+        // are reported as events, with what was last read from a vanished one.
+        int rescan = options.Int("--rescan") ?? 0;
+        var nextRescan = DateTime.UtcNow.AddSeconds(rescan);
+        var nextStatus = DateTime.UtcNow;
+        var tracked = objects.ToDictionary(o => o.Address);
+        string Name(int objectId) => names.GetValueOrDefault(objectId) ?? "(not in the mission log)";
         while (DateTime.UtcNow < end && !memory.Process.HasExited)
         {
             Thread.Sleep(interval);
+            if (rescan > 0 && DateTime.UtcNow >= nextRescan)
+            {
+                nextRescan = DateTime.UtcNow.AddSeconds(rescan);
+                names = MissionLogNames(options.Get("--game"), out _);
+                var added = ObjectRoster.FindAll(memory, cls).Where(o => !tracked.ContainsKey(o.Address)).ToList();
+                foreach (var o in added)
+                    tracked[o.Address] = o;
+                foreach (var group in added.GroupBy(o => o.Id))
+                    Console.WriteLine($"{DateTime.Now:HH:mm:ss}  + {group.Key} {Name(group.Key)}: {group.Count()} new object(s) at {group.First().North:F0} {group.First().Height:F0} {group.First().East:F0}, {group.First().Speed * 3.6:F0} km/h");
+            }
+
             clock.Restart();
-            var now = objects.Select(o => ObjectRoster.Read(memory, o.Address, cls)).OfType<MemoryObject>().ToList();
+            var now = new List<MemoryObject>();
+            foreach (var (address, before) in tracked.ToList())
+            {
+                if (ObjectRoster.Read(memory, address, cls) is { } o && o.Id == before.Id)
+                {
+                    now.Add(o);
+                    tracked[address] = o;
+                    continue;
+                }
+                tracked.Remove(address);
+                int left = tracked.Values.Count(t => t.Id == before.Id);
+                Console.WriteLine($"{DateTime.Now:HH:mm:ss}  - {before.Id} {Name(before.Id)}: object gone ({left} left), last {before.North:F0} {before.Height:F0} {before.East:F0}, {before.Speed * 3.6:F0} km/h");
+            }
             long stamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             foreach (var o in now)
                 csv?.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{stamp},{o.Id},{o.North:F3},{o.Height:F3},{o.East:F3},{o.Speed:F3}"));
+            if (DateTime.UtcNow < nextStatus)
+                continue;
+            nextStatus = DateTime.UtcNow.AddSeconds(rescan > 0 ? 10 : 0);
             var me = now.FirstOrDefault(o => o.Id == id);
-            Console.WriteLine($"{DateTime.Now:HH:mm:ss}  {now.Count}/{objects.Count} objects, {now.Select(o => o.Id).Distinct().Count()} ids, read in {clock.Elapsed.TotalMilliseconds:F0} ms"
+            Console.WriteLine($"{DateTime.Now:HH:mm:ss}  {now.Count} objects, {now.Select(o => o.Id).Distinct().Count()} ids, read in {clock.Elapsed.TotalMilliseconds:F0} ms"
                 + (me is null ? "  player: gone" : $"  player {me.North:F0} {me.Height:F0} {me.East:F0} {me.Speed * 3.6:F0} km/h"));
         }
         return 0;

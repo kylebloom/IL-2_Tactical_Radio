@@ -91,3 +91,19 @@ This depends only on field offsets, never on code addresses, so it may survive p
 - Four manoeuvring Bf 109s including the player: horizontal median 25–59 m (95% 85–219 m), height 1–2 m (player's 95% 62 m), clock scatter 0.13–0.63 s.
 - All 2,353 samples: horizontal median 7 m, 95% 94 m; height median 2 m, 95% 6 m.
 - The error grows steadily across the Ju 52 formation (1→11 m) and is largest for the aircraft that roamed furthest, which points to the frame conversion (one affine map fitted mostly where the Ju 52s are), not to memory. Separating the two needs a better lat/lon↔metre conversion. Either way it is far finer than the radio's wording (close / a few km / far).
+
+## Third mission, after restarting IL-2 (2026-10-27 22:10, VERIFIED)
+
+- `mem-roster` found the player in 3.6 s and all 13 aircraft of the mission log in 2.7 s more (69 objects); re-reading all of them took 1–5 ms.
+- **The class differed again:** `Il-2.exe+0xC1FB40` after the restart, against `0xC1FE98` in the second mission and `0xBD63A0` (parts) in the first, all on file version 1.0.0.1. A fixed class address would have failed every time; learning it from the player's object is required.
+- **Several objects per aircraft again** (5 for each Ju 52, 6 for each Bf 109), as in the first mission, unlike the second's one each; no static objects this time. An aircraft's objects agree to about 15 m (its size) and in speed, so the radio should take their mean per id. The first listing showed one object of Arnold Bremer at 360 km/h while his aircraft was on the airfield (only the first object per id was printed, so the others' speeds at that moment are unknown); later reads of all his objects agreed. Taking the median speed per id guards against a single odd part.
+- Still unchecked: aircraft that spawn mid-mission (a periodic rescan should find them) and what a destroyed aircraft's objects do.
+
+### A destroyed aircraft (VERIFIED, third mission, 22:21 and 22:23)
+
+The player shot down two Ju 52s of his own side while `mem-roster --rescan 30 --csv` watched.
+
+- Bert von Zimmermann (645119): the mission log has the kill (AType:3, T:31050, about 22:21:19 at 754 m) and three crew bailing out (AType:18). In memory the aircraft **stayed, with a live position, for about 40 s after the kill**: wallowing between 660 and 760 m, then diving (526, 227, 83 m). All five of its objects vanished in the same read at 22:21:59, at 73–88 m, i.e. at or just before ground impact.
+- Kurt Mex (598015): steady at 431 m, a dive from 22:22:58, all five objects gone at 22:23:28 at 62–66 m. His kill was not yet in the mission log at that moment (the text log is written in 30 s chunks).
+- **No "destroyed" field has been found in these objects.** Memory alone would let a falling wreck answer the radio for tens of seconds, against the honesty rule. Deaths must keep coming from the mission log (AType:3, AType:4, AType:18 of the pilot), with memory objects vanishing as confirmation. A field that flips at the moment of the kill could still exist; finding it would mean comparing an aircraft's object before and after a kill (`mem-dump` both, diff).
+- Mid-mission spawns: none happened in this mission while watched, so still unchecked.
