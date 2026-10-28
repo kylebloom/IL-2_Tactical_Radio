@@ -66,39 +66,4 @@ public class Il2ScreenAreasTests
         Assert.Equal(Il2ScreenAreas.All, Il2ScreenAreas.ForSubtitleAlignments([]));
         Assert.Equal(Il2ScreenAreas.All, Il2ScreenAreas.ForSubtitleAlignments([2]));
     }
-
-    [Fact]
-    public void Rtss_left_middle_block_is_fitted_between_subtitles_and_message_line()
-    {
-        // 2560x1440 at OSD zoom 2: 1280x720 zoomed pixels, 9x16 cells.
-        var fit = new RtssPlacement().Fit(2560, 1440, 2, (9, 16), columns: 72, rows: 24, Il2ScreenAreas.All);
-
-        Assert.Empty(fit.Overlapping);
-        Assert.Contains(Il2ScreenAreas.MiddleSubtitles, fit.Avoided);
-        Assert.Contains(Il2ScreenAreas.MessageLine, fit.Avoided);
-        // Right edge before the subtitles at 30 %: (0.30 * 1280 - 16 margin) / 9 = 40.9 columns.
-        Assert.Equal(40, fit.Columns);
-        // Bottom above the message line at 72 %: (0.72 * 720 - 0.42 * 720) / 16 = 13.5 rows.
-        Assert.Equal(13, fit.Rows);
-    }
-
-    [Fact]
-    public void Rtss_block_that_cannot_avoid_an_area_keeps_its_size_and_reports_the_overlap()
-    {
-        var bottomLeft = new RtssPlacement(RtssAnchor.BottomLeft);
-
-        var fit = bottomLeft.Fit(1920, 1080, 1, (9, 16), columns: 72, rows: 8, [Il2ScreenAreas.MessageLine]);
-
-        Assert.Equal((72, 8), (fit.Columns, fit.Rows));
-        Assert.Equal([Il2ScreenAreas.MessageLine], fit.Overlapping);
-    }
-
-    [Fact]
-    public void Rtss_block_already_clear_is_unchanged()
-    {
-        var fit = new RtssPlacement(RtssAnchor.TopRight).Fit(1920, 1080, 1, (9, 16), columns: 40, rows: 8, Il2ScreenAreas.All);
-
-        Assert.Equal((40, 8), (fit.Columns, fit.Rows));
-        Assert.Empty(fit.Avoided);
-    }
 }

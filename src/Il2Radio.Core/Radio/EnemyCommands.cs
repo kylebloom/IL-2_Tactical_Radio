@@ -445,6 +445,7 @@ public static class EnemyCommands
         AddSightingTokens(tokens, g, look.Player, includeCount: true, fuzzy: fuzzy);
 
         string text;
+        bool fromSpeaker = false;
         string seen = g.Held ? "last seen " : "";
         if (g.Held)
             tokens.Add(new(SpeechWord.LastSeen));
@@ -454,6 +455,7 @@ public static class EnemyCommands
         }
         else
         {
+            fromSpeaker = true;
             var fromHim = RelativeTo(reporter, g.Members);
             if (Engaged(g) || fromHim is null)
             {
@@ -471,7 +473,8 @@ public static class EnemyCommands
             }
         }
 
-        return new RadioReply(reporter.Contact, g.Members.Select(m => m.Target.Contact).ToList(), g.Relative, g.Members.Max(m => m.Target.AgeSeconds), text, tokens);
+        return new RadioReply(reporter.Contact, g.Members.Select(m => m.Target.Contact).ToList(), g.Relative, g.Members.Max(m => m.Target.AgeSeconds), text, tokens)
+        { FromSpeaker = fromSpeaker };
     }
 
     private static RadioReply PilotIdentifyReply(SightedGroup g, LookResult look, ContactTracker tracker, RadioSettings settings)
@@ -492,6 +495,7 @@ public static class EnemyCommands
         if (g.Held)
             tokens.Add(new(SpeechWord.LastSeen));
         string text;
+        bool fromSpeaker = false;
         if (WithPlayer(reporter, look, tracker, settings))
         {
             var where = PilotReport.Direction(g.Relative.BearingDegrees, look.PlayerFix.Heading, mine: false);
@@ -501,6 +505,7 @@ public static class EnemyCommands
         }
         else
         {
+            fromSpeaker = true;
             var fromHim = RelativeTo(reporter, g.Members);
             if (Engaged(g) || fromHim is null)
             {
@@ -518,7 +523,8 @@ public static class EnemyCommands
             }
         }
 
-        return new RadioReply(reporter.Contact, g.Members.Select(m => m.Target.Contact).ToList(), g.Relative, g.Members.Max(m => m.Target.AgeSeconds), text, tokens);
+        return new RadioReply(reporter.Contact, g.Members.Select(m => m.Target.Contact).ToList(), g.Relative, g.Members.Max(m => m.Target.AgeSeconds), text, tokens)
+        { FromSpeaker = fromSpeaker };
     }
 
     /// <summary>The class, side and type tokens, in the same order as a precise call. A fuzzy count is "a few" or "many".</summary>

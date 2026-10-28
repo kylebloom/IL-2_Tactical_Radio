@@ -1,5 +1,6 @@
 using Il2Radio.Core;
 using Il2Radio.Core.Audio;
+using Il2Radio.Core.Radio;
 using Il2Radio.Core.Settings;
 using Il2Radio.Windows;
 
@@ -33,7 +34,7 @@ internal sealed class FlightHost
     /// start (IL-2 or the voice); the check lines are still in <see cref="StartupChecks.Results"/>.
     /// </summary>
     public async Task<string?> StartAsync(AppSettings settings, string home, Action<CompactStatus> status,
-        Func<string, bool> confirmOutputs, CancellationToken cancel = default)
+        Func<string, bool> confirmOutputs, Action<KneeboardView>? kneeboardChanged = null, CancellationToken cancel = default)
     {
         await StopAsync();
         int generation = Interlocked.Increment(ref _generation);
@@ -91,7 +92,7 @@ internal sealed class FlightHost
             var keys = KeyBindings.From(settings.Keys);
             _voice = new RadioVoice(settings.Volume, voices);
             _meter = settings.RadioWait ? new Il2AudioMeter(settings.RadioWaitRatio) : null;
-            _chat = ChatSinks.Start(ChatOptions.From(settings.Chat, keys).WithGameScreen(install).WithIl2Areas(install));
+            _chat = ChatSinks.Start(ChatOptions.From(settings.Chat, keys, settings.Kneeboard).WithGameScreen(install).WithIl2Areas(install));
             var session = new LiveSession(install, new LiveOptions
             {
                 Compact = true,
@@ -104,6 +105,8 @@ internal sealed class FlightHost
                 UnaskedRoute = settings.Unasked?.Route ?? true,
                 UnaskedContacts = settings.Unasked?.Contacts ?? true,
                 UnaskedLosses = settings.Unasked?.Losses ?? true,
+                Kneeboard = settings.Kneeboard?.ViewMode ?? KneeboardView.Small,
+                KneeboardChanged = kneeboardChanged,
                 StartupResults = StartupChecks.Results.ToArray(),
                 Status = status,
             }, _voice);
@@ -129,7 +132,7 @@ internal sealed class FlightHost
         }
     }
 
-    /// <summary>Cancels the session and waits up to 4 s so the RTSS slot is released and the log is written.</summary>
+    /// <summary>Cancels the session and waits up to 4 s so the in-game layers are removed and the log is written.</summary>
     public async Task StopAsync()
     {
         Interlocked.Increment(ref _generation); // a session that ends because of this stop is not a quit
@@ -165,7 +168,7 @@ internal sealed class FlightHost
         _voice = null;
     }
 
-    /// <summary>One output failing to close must not skip the others (the RTSS slot, in particular).</summary>
+    /// <summary>One output failing to close must not skip the others (the in-game layers, in particular).</summary>
     private static void DisposeQuiet(IDisposable? item)
     {
         try { item?.Dispose(); }

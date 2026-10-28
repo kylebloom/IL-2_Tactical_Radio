@@ -89,4 +89,46 @@ public static class MapGrid
         int? ninth = ninthClearance < NinthMarginMetres ? null : subRow * 3 + subColumn + 1;
         return new GridSquare(row, column, ninth);
     }
+
+    /// <summary>
+    /// The square (and, with <paramref name="ninth"/>, its keypad cell) a position lies in, with no margin at the
+    /// lines: for a pilot matching the ground under him to the sheet, who sees which side of a line he is on.
+    /// Null outside the labeled grid.
+    /// </summary>
+    public static GridSquare? Containing(double northMetres, double eastMetres, bool ninth, int northRows = StalingradNorthRows, int eastColumns = StalingradEastColumns)
+    {
+        int northBand = (int)Math.Floor(northMetres / SquareMetres);
+        int eastBand = (int)Math.Floor(eastMetres / SquareMetres);
+        int row = northRows - northBand, column = eastBand + 1;
+        if (row < 1 || row > northRows || column < 1 || column > eastColumns || eastColumns >= 100)
+            return null;
+        if (!ninth)
+            return new GridSquare(row, column, null);
+        double third = SquareMetres / 3.0;
+        int subRow = Math.Clamp((int)Math.Floor((northMetres - northBand * SquareMetres) / third), 0, 2);
+        int subColumn = Math.Clamp((int)Math.Floor((eastMetres - eastBand * SquareMetres) / third), 0, 2);
+        return new GridSquare(row, column, subRow * 3 + subColumn + 1);
+    }
+
+    /// <summary>
+    /// The area a square names, in mission metres: the whole 10 km square, or its ninth when the square has one.
+    /// The inverse of <see cref="TryLabel"/> and <see cref="Containing"/>.
+    /// </summary>
+    public static (double South, double West, double Size) Bounds(GridSquare square, int northRows = StalingradNorthRows)
+    {
+        double south = (northRows - square.Row) * SquareMetres;
+        double west = (square.Column - 1) * SquareMetres;
+        if (square.Ninth is not int n)
+            return (south, west, SquareMetres);
+        double third = SquareMetres / 3.0;
+        return (south + (n - 1) / 3 * third, west + (n - 1) % 3 * third, third);
+    }
+
+    /// <summary>The square named by <see cref="GridSquare.Code"/> and an optional ninth ("1"–"9"), as a reply's grid token carries them.</summary>
+    public static GridSquare FromCode(int code, string? ninth) =>
+        new(code / 100, code % 100, int.TryParse(ninth, out int n) && n is >= 1 and <= 9 ? n : null);
+
+    /// <summary>The four digits printed on the map for the square whose south-west corner is at these mission metres ("1120").</summary>
+    public static string? SquareLabel(double southMetres, double westMetres, int northRows = StalingradNorthRows, int eastColumns = StalingradEastColumns) =>
+        Containing(southMetres + 1, westMetres + 1, ninth: false, northRows, eastColumns)?.Text;
 }

@@ -45,7 +45,7 @@ You have three jobs, in this order:
   - `settings.json` beside the `Il2Radio.exe` that was flown: realism level, visibility settings, chat output, voice, key bindings.
 
   If a file is gone, say what you couldn't check because of it.
-- **Don't disturb a flight.** If IL-2 or `Il2Radio.exe` is running, don't start Diag `live`, `chat-test` or the app; they share the numpad and the RTSS slot. A locked ACMI can only be read by snapshot from an administrator process. If you can't read it, use the memory position log; with neither, review the evidence file alone and say that the positions are unchecked.
+- **Don't disturb a flight.** If IL-2 or `Il2Radio.exe` is running, don't start Diag `live`, `chat-test` or the app; they share the numpad and the in-game overlay layers. A locked ACMI can only be read by snapshot from an administrator process. If you can't read it, use the memory position log; with neither, review the evidence file alone and say that the positions are unchecked.
 
 ## 3. Reconstruct what really happened
 - **Read the evidence file end to end.**

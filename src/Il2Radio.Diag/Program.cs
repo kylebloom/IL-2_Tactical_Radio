@@ -48,12 +48,16 @@ switch (command)
                 UnaskedRoute = FlagOn("--unasked-route"),
                 UnaskedContacts = FlagOn("--unasked-contacts"),
                 UnaskedLosses = FlagOn("--unasked-losses"),
+                Kneeboard = Il2Radio.Core.Osd.KneeboardPlacement.ParseView(Option("--kneeboard") ?? "small") ?? KneeboardView.Small,
             }, voice);
             session.Attach(meter, chat);
             return await session.RunAsync();
         }
     case "chat-test":
         return ChatSinks.Demo(ChatOptions.Parse(args).WithGameScreen(install).WithIl2Areas(install), int.TryParse(Option("--seconds"), out int demoSecs) ? demoSecs : 60, Option("--png"));
+    case "kneeboard-test":
+        return KneeboardTest.Run(Positional(1) ?? install?.GeneratedMission, Path.Combine(Environment.CurrentDirectory, "diag-output"),
+            int.TryParse(Option("--screen-height"), out int kneeHeight) ? kneeHeight : 1080);
     case "audio-meter":
         return AudioMeter();
     case "say":
@@ -82,12 +86,16 @@ switch (command)
                                   [--positions auto|memory|track]  (auto: IL-2's memory, the track when memory can't be read)
                                   Run during a mission: telemetry + log tail + ACMI tail + contact table + radio
                                   --radio-wait (default on): hold replies while IL-2's own audio peaks R x above its floor (1.8)
-                                  Chat text: --chat overlay|window|rtss|ingame|off  --chat-screen N  --chat-pos L,T,W,H  --chat-font PX
-                                             --rtss-pos X,Y  --rtss-columns N   (rtss: RivaTuner OSD, works in exclusive fullscreen)
+                                  Chat text: --chat overlay|window|ingame|off  --chat-screen N  --chat-pos L,T,W,H  --chat-font PX
+                                             (ingame: drawn in IL-2's own frames, works in exclusive fullscreen)
+                                             --kneeboard-pos centre-right|top-right|...  --kneeboard small|large|hidden
                                              --keep-clear on|off   (default on: stay out of IL-2's message line and subtitles)
               chat-test [--seconds S] [--png file] [chat options]
                                   Loop a sample radio exchange in the chosen chat output (to check it shows over IL-2);
                                   --png renders the overlay's live, menu and radio-log views to images instead
+              kneeboard-test [mission] [--screen-height H]
+                                  Draw the kneeboard of a Career mission (default data\Missions\_gen.Mission) with sample replies,
+                                  as diag-output\kneeboard-small.png and kneeboard-large.png, to check its look without IL-2
               audio-meter [--seconds S] [--radio-wait-ratio R] [--process NAME]
                                   Print IL-2's audio peak, floor and busy state, to tune --radio-wait-ratio while AI pilots talk
               say [--country C] [--voice V] [--volume V] [--range R] [--wav file]

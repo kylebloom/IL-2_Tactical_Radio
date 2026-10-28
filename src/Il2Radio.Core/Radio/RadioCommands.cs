@@ -12,6 +12,7 @@ public enum RadioCommand
     RoutePosition,
     SteerHome,
     SteerTarget,
+    FixPosition,
 }
 
 public static class RadioCommands
@@ -26,8 +27,15 @@ public static class RadioCommands
         RadioCommand.RoutePosition => "Where am I on the route",
         RadioCommand.SteerHome => "Steer home",
         RadioCommand.SteerTarget => "Steer to target",
+        RadioCommand.FixPosition => "Fix position",
         _ => command.ToString(),
     };
+
+    /// <summary>
+    /// The player keys the radio for it: a call goes out, with the mic click. A position fix is his own look at the
+    /// ground against the sheet, not a transmission.
+    /// </summary>
+    public static bool IsTransmission(RadioCommand command) => command != RadioCommand.FixPosition;
 
     /// <param name="memory">What the flight has already spotted; keep one per session so contacts stay tracked between calls.</param>
     public static RadioResult Execute(RadioCommand command, ContactTracker tracker, RadioSettings? settings = null, SightingMemory? memory = null) => command switch
@@ -40,6 +48,7 @@ public static class RadioCommands
         RadioCommand.RoutePosition => RouteCommands.RoutePosition(tracker, settings),
         RadioCommand.SteerHome => RouteCommands.SteerHome(tracker, settings),
         RadioCommand.SteerTarget => RouteCommands.SteerTarget(tracker, settings),
+        RadioCommand.FixPosition => FixCommand.FixPosition(tracker, settings),
         _ => throw new ArgumentOutOfRangeException(nameof(command)),
     };
 }

@@ -10,8 +10,7 @@ public enum ChatMode
     Off,
     Overlay, // transparent, click-through window above the game (hidden by exclusive fullscreen)
     Window,  // ordinary window, e.g. on a second monitor
-    Rtss,    // RivaTuner Statistics Server OSD: drawn inside the game's frames, works in exclusive fullscreen
-    InGame,  // our own OverlayKit host DLL in Il-2.exe: drawn inside the game's frames without RTSS
+    InGame,  // our own OverlayKit host DLL in Il-2.exe: drawn inside the game's frames, works in exclusive fullscreen
 }
 
 /// <summary>Where the radio log goes and how it looks. Window position and size are fractions of the chosen screen.</summary>
@@ -25,15 +24,12 @@ public sealed record ChatOptions(
     float FontPixels = 16f,
     double HoldSeconds = ChatSinks.HoldSeconds,
     int MaxLines = 8,
-    RtssPlacement? RtssPlacement = null,
-    int RtssColumns = 72,
-    int? RtssZoom = null,
-    (int Width, int Height)? RtssScreen = null,
-    (int Width, int Height)? RtssCell = null,
+    (int Width, int Height)? GameScreen = null,
     bool KeepClear = true,
     IReadOnlyList<Il2TextArea>? Il2Areas = null,
     KeyBindings? Keys = null,
-    string InGameExe = "Il-2.exe")
+    string InGameExe = "Il-2.exe",
+    KneeboardPlacement? Kneeboard = null)
 {
     /// <summary>The radio keys, for the menu and the log's paging hint.</summary>
     public KeyBindings KeyMap => Keys ?? KeyBindings.Default;
@@ -41,20 +37,13 @@ public sealed record ChatOptions(
     /// <summary>IL-2's own text areas to keep clear of (none with --keep-clear off).</summary>
     public IReadOnlyList<Il2TextArea> Areas => KeepClear ? Il2Areas ?? Il2ScreenAreas.All : [];
 
-    /// <summary>Rows of RTSS text to aim for before keeping clear of IL-2's areas: the line limit plus room for wrapping.</summary>
-    public int RtssRows => MaxLines * 3;
+    /// <summary>Where the kneeboard sits (the ingame output only).</summary>
+    public KneeboardPlacement KneeboardAt => Kneeboard ?? new KneeboardPlacement(KneeboardAnchor.CentreRight);
 
     /// <summary>
-    /// Estimated RTSS OSD character cell in zoomed pixels, used only to anchor text to the right or
-    /// bottom edge. Not verified; calibrate with --rtss-cell W,H.
-    /// </summary>
-    public static readonly (int Width, int Height) DefaultRtssCell = (9, 16);
-
-    /// <summary>
-    /// Reads --chat overlay|window|rtss|ingame|off, --chat-screen N, --chat-pos L,T,W,H (fractions),
-    /// --chat-font PX, --rtss-pos PRESET|X,Y, --rtss-margin PX, --rtss-columns N, --rtss-zoom Z,
-    /// --rtss-screen WxH, --rtss-cell W,H, --keep-clear on|off, --ingame-exe NAME (the process --chat ingame
-    /// draws in; for testing against OverlayKitTestHost.exe).
+    /// Reads --chat overlay|window|ingame|off, --chat-screen N, --chat-pos L,T,W,H (fractions),
+    /// --chat-font PX, --game-screen WxH, --keep-clear on|off, --ingame-exe NAME (the process --chat ingame
+    /// draws in; for testing against OverlayKitTestHost.exe), --kneeboard-pos PRESET.
     /// </summary>
     public static ChatOptions Parse(string[] args)
     {
@@ -63,22 +52,18 @@ public sealed record ChatOptions(
         var inv = System.Globalization.CultureInfo.InvariantCulture;
 
         if (Value("--chat") is { } mode)
-            options = options with { Mode = Enum.TryParse<ChatMode>(mode, ignoreCase: true, out var m) ? m : throw new ArgumentException($"--chat {mode}: expected overlay, window, rtss, ingame or off") };
+            options = options with { Mode = Enum.TryParse<ChatMode>(mode, ignoreCase: true, out var m) && Enum.IsDefined(m) ? m : throw new ArgumentException($"--chat {mode}: expected overlay, window, ingame or off") };
         if (int.TryParse(Value("--chat-screen"), out int screen))
             options = options with { Screen = screen };
         if (float.TryParse(Value("--chat-font"), inv, out float font))
             options = options with { FontPixels = font };
         if (Value("--chat-pos")?.Split(',').Select(s => float.Parse(s, inv)).ToArray() is [var l, var t, var w, var h])
             options = options with { Left = l, Top = t, Width = w, Height = h };
-        options = options with { RtssPlacement = RtssPlacement.Parse(Value("--rtss-pos"), Value("--rtss-margin")) };
-        if (int.TryParse(Value("--rtss-columns"), out int columns))
-            options = options with { RtssColumns = columns };
-        if (int.TryParse(Value("--rtss-zoom"), out int zoom) && zoom > 0)
-            options = options with { RtssZoom = zoom };
-        if (Value("--rtss-screen")?.Split('x', 'X') is [var sw, var sh] && int.TryParse(sw, out int w2) && int.TryParse(sh, out int h2))
-            options = options with { RtssScreen = (w2, h2) };
-        if (Value("--rtss-cell")?.Split(',') is [var cw, var ch] && int.TryParse(cw, out int cellW) && int.TryParse(ch, out int cellH))
-            options = options with { RtssCell = (cellW, cellH) };
+        if (Value("--game-screen")?.Split('x', 'X') is [var sw, var sh] && int.TryParse(sw, out int w2) && int.TryParse(sh, out int h2))
+            options = options with { GameScreen = (w2, h2) };
+        if (Value("--kneeboard-pos") is { } at)
+            options = options with { Kneeboard = KneeboardPlacement.Parse(at) is { Anchor: not KneeboardAnchor.Custom } p ? p
+                : throw new ArgumentException($"--kneeboard-pos {at}: expected {string.Join(", ", KneeboardPlacement.Presets.Where(n => n != "custom"))}") };
         if (Value("--keep-clear") is { } keepClear)
             options = options with { KeepClear = keepClear.ToLowerInvariant() switch { "on" => true, "off" => false, _ => throw new ArgumentException($"--keep-clear {keepClear}: expected on or off") } };
         if (Value("--ingame-exe") is { } exe)
@@ -87,7 +72,7 @@ public sealed record ChatOptions(
     }
 
     /// <summary>The options from the app's settings file. Call only on validated settings.</summary>
-    public static ChatOptions From(ChatSettings chat, KeyBindings keys) => new()
+    public static ChatOptions From(ChatSettings chat, KeyBindings keys, KneeboardSettings? kneeboard = null) => new()
     {
         Mode = Enum.Parse<ChatMode>(chat.Output, ignoreCase: true),
         Screen = chat.Screen,
@@ -96,24 +81,21 @@ public sealed record ChatOptions(
         Width = (float)chat.WindowArea[2],
         Height = (float)chat.WindowArea[3],
         FontPixels = (float)chat.FontPixels,
-        RtssPlacement = chat.Placement(),
-        RtssColumns = chat.RtssColumns,
-        RtssZoom = chat.RtssZoom,
-        RtssCell = chat.RtssCell is [var w, var h] ? (w, h) : null,
         KeepClear = chat.KeepClear,
         Keys = keys,
+        Kneeboard = kneeboard?.Placement(),
     };
 
-    /// <summary>Fills in the game's render size from startup.cfg unless --rtss-screen was given.</summary>
+    /// <summary>Fills in the game's render size from startup.cfg unless --game-screen was given.</summary>
     public ChatOptions WithGameScreen(Il2Install? install)
     {
-        if (RtssScreen is not null || install is null || !File.Exists(install.StartupCfg))
+        if (GameScreen is not null || install is null || !File.Exists(install.StartupCfg))
             return this;
         var cfg = StartupConfig.Load(install.StartupCfg);
         bool fullscreen = cfg.Get("graphics", "fullscreen") == "1";
         return int.TryParse(cfg.Get("graphics", fullscreen ? "full_width" : "win_width"), out int w)
                && int.TryParse(cfg.Get("graphics", fullscreen ? "full_height" : "win_height"), out int h)
-            ? this with { RtssScreen = (w, h) }
+            ? this with { GameScreen = (w, h) }
             : this;
     }
 
@@ -137,7 +119,7 @@ public sealed record ChatOptions(
     }
 }
 
-/// <summary>An output for the radio log: the window overlay, a second-screen window or the RTSS OSD.</summary>
+/// <summary>An output for the radio log: the in-game overlay, the window overlay or a second-screen window.</summary>
 internal interface IChatSink : IDisposable
 {
     /// <summary>Shows a new exchange. With <paramref name="syncToVoice"/>, replies appear as the voice starts them.</summary>
@@ -158,7 +140,10 @@ internal interface IChatSink : IDisposable
     /// <summary>Keeps the stamps already shown, so the next mission does not rewrite them.</summary>
     void FreezeMissionTime();
 
-    /// <summary>One-line state for the console (e.g. "RTSS not running"), or null.</summary>
+    /// <summary>Shows the kneeboard (or hides it, null). Only the in-game output draws it.</summary>
+    void ShowKneeboard(KneeboardPicture? picture) { }
+
+    /// <summary>One-line state for the console (e.g. "in-game text: waiting for Il-2.exe to start"), or null.</summary>
     string? Status => null;
 }
 
@@ -169,7 +154,6 @@ internal static class ChatSinks
     {
         ChatMode.Off => null,
         _ when !Environment.UserInteractive => null,
-        ChatMode.Rtss => new RtssChat(options),
         ChatMode.InGame => new InGameChat(options),
         _ => new ChatOverlay(options),
     };
@@ -224,7 +208,7 @@ internal static class ChatSinks
 
         if (png is not null)
         {
-            foreach (string file in ChatOverlay.SaveFrames(options, exchange, png, options.RtssScreen ?? (1920, 1080)))
+            foreach (string file in ChatOverlay.SaveFrames(options, exchange, png, options.GameScreen ?? (1920, 1080)))
                 Console.WriteLine($"wrote {file}");
             return 0;
         }
@@ -233,7 +217,7 @@ internal static class ChatSinks
         if (chat is null)
             return 1;
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
-        Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); }; // so the RTSS slot is released
+        Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.Cancel(); }; // so the in-game layer is removed
 
         var keys = options.KeyMap;
         var menu = new RadioMenuInput(chat, keys);
@@ -258,7 +242,7 @@ internal static class ChatSinks
             }
             if (chosen.Command is { } command)
                 chat.Post([Line(ChatLineKind.Request, "Gert Knoll", RadioChat.RequestPhrase(command), 0)]);
-            else if (chosen.Action != RadioMenuAction.None)
+            else if (chosen.Action is RadioMenuAction.LogOlder or RadioMenuAction.LogNewer)
                 HandleKey(chat, chosen.Action == RadioMenuAction.LogOlder ? RadioKey.Older : RadioKey.Newer);
             stop.Token.WaitHandle.WaitOne(50);
         }

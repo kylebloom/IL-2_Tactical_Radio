@@ -8,10 +8,10 @@ using OverlayKit;
 namespace Il2Radio.Windows;
 
 /// <summary>
-/// Shows the radio log inside IL-2's own frames through OverlayKit, without RTSS. The OverlayKit host
-/// DLL is loaded into Il-2.exe once it runs (the player opts in by choosing this output); it only
-/// draws the bitmap this sink publishes, rendered exactly as the window overlay renders it, at the
-/// game's back-buffer resolution. It never reads or writes the game's memory.
+/// Shows the radio log, the radio menu and the kneeboard inside IL-2's own frames through OverlayKit, each as a layer of
+/// its own. The OverlayKit host DLL is loaded into Il-2.exe once it runs (the player opts in by choosing this output); it
+/// only draws the bitmaps this sink publishes, rendered at the game's back-buffer resolution (the log exactly as the
+/// window overlay renders it). It never reads or writes the game's memory.
 /// </summary>
 internal sealed class InGameChat : IChatSink
 {
@@ -26,6 +26,9 @@ internal sealed class InGameChat : IChatSink
     private OverlayLayer? _menuLayer;
     private volatile RadioMenuView? _menuView;
     private volatile bool _menuDirty;
+    private OverlayLayer? _kneeboardLayer;
+    private volatile KneeboardPicture? _kneeboard;
+    private string _kneeboardDrawn = "";
     private Bitmap? _bitmap;
     private Font? _font;
     private (int Width, int Height) _screen;
@@ -57,6 +60,9 @@ internal sealed class InGameChat : IChatSink
         _menuDirty = true;
     }
 
+    /// <summary>The kneeboard is a third layer, pinned where its placement says; it is redrawn only when the picture changes.</summary>
+    public void ShowKneeboard(KneeboardPicture? picture) => _kneeboard = picture;
+
     public void Scroll(int pages) => _timeline.Scroll(pages, DateTime.UtcNow);
 
     public void BindMissionClock(MissionClock clock) => _timeline.MissionTime = clock;
@@ -78,6 +84,7 @@ internal sealed class InGameChat : IChatSink
                 Resize(host.Width, host.Height);
             if (_menuDirty)
                 PresentMenu();
+            PresentKneeboard();
 
             var lines = _timeline.Snapshot(DateTime.UtcNow).Select(v => (v.Line, v.Alpha)).ToList();
             string frame = string.Join("\n", lines.Select(l => $"{l.Line.Speaker}|{l.Line.Text}|{l.Alpha:F2}"));
@@ -142,6 +149,7 @@ internal sealed class InGameChat : IChatSink
         _screen = (width, height);
         _lastFrame = "\0"; // redraw at the new size
         _menuDirty = true;
+        _kneeboardDrawn = "";
 
         _layer ??= new OverlayLayer(OwnerName, GameExe);
         _layer.Place(OverlayAnchor.TopLeft, (int)(width * rect.Left), (int)(height * rect.Top));
@@ -168,6 +176,27 @@ internal sealed class InGameChat : IChatSink
         Publish(_menuLayer, panel);
         _menuLayer.Place(OverlayAnchor.TopLeft, x, y);
         _menuLayer.Visible = true;
+    }
+
+    /// <summary>Draws the kneeboard when its picture has changed (or hides it), at its placement on this back buffer.</summary>
+    private void PresentKneeboard()
+    {
+        var picture = _kneeboard;
+        string signature = picture is null || picture.View == KneeboardView.Hidden ? "hidden" : picture.Signature;
+        if (signature == _kneeboardDrawn)
+            return;
+        _kneeboardDrawn = signature;
+        _kneeboardLayer ??= new OverlayLayer(OwnerName + " kneeboard", GameExe) { ZOrder = 2 };
+        using var sheet = picture is null ? null : KneeboardPanel.Render(picture, _screen.Height);
+        if (sheet is null)
+        {
+            _kneeboardLayer.Visible = false;
+            return;
+        }
+        var (x, y) = _options.KneeboardAt.Place(_screen, (sheet.Width, sheet.Height));
+        Publish(_kneeboardLayer, sheet);
+        _kneeboardLayer.Place(OverlayAnchor.TopLeft, x, y);
+        _kneeboardLayer.Visible = true;
     }
 
     private static void Publish(OverlayLayer layer, Bitmap bitmap)
@@ -215,6 +244,7 @@ internal sealed class InGameChat : IChatSink
         _timer.Dispose();
         _layer?.Dispose(); // the host stops drawing it at once; the DLL itself stays in IL-2 until it exits
         _menuLayer?.Dispose();
+        _kneeboardLayer?.Dispose();
         _bitmap?.Dispose();
         _font?.Dispose();
     }

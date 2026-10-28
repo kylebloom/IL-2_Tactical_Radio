@@ -17,15 +17,14 @@ This is the one supported way to fly with the radio. You don't need anything els
    dotnet publish src/Il2Radio.App
    ```
    This writes one self-contained `publish\Il2Radio.exe` (about 50 MB), which runs without .NET installed. Put it in a folder of its own, for example `C:\Games\IL-2 Radio\`. Its settings and session logs go next to it.
-2. Install RivaTuner Statistics Server and turn its on-screen display on ([steps below](#setting-up-rtss-one-time)). It shows the radio text inside IL-2, including in fullscreen.
+   The radio text, its menu and the kneeboard are drawn inside IL-2's own picture, fullscreen too, by the radio's own overlay (chat output `ingame`, [details](#radio-text-chat)). Nothing else needs installing.
 
 **Every flight**
-1. Start RivaTuner Statistics Server; it sits in the system tray.
-2. Double-click `Il2Radio.exe` and accept the administrator prompt. Positions from IL-2's memory don't need administrator rights; the track-recording fallback does, to read the file IL-2 keeps locked. A window opens; leave it open while you fly.
-   - The Status tab checks that it runs as administrator, that IL-2 exports its mission log and Tacview tracks, and that RTSS is running. Each check is `[ok]` or `[!!]` with what to do; problems are also shown in game at the start of each mission.
+1. Double-click `Il2Radio.exe` and accept the administrator prompt. Positions from IL-2's memory don't need administrator rights; the track-recording fallback does, to read the file IL-2 keeps locked. A window opens; leave it open while you fly.
+   - The Status tab checks that it runs as administrator and that IL-2 exports its mission log and Tacview tracks. Each check is `[ok]` or `[!!]` with what to do; problems are also shown in game at the start of each mission.
    - **On the first start**, if IL-2 is closed and isn't exporting that data yet, it asks whether to switch it on in `startup.cfg` (Yes; the file is backed up first). If IL-2 is running, close it and start the radio again.
-3. Start IL-2 and fly a Career mission. The radio reads where everyone is straight from IL-2's memory (read-only; see [Live positions](#live-positions)), so no track recording is needed. If memory can't be read, it falls back to the track: press **LCtrl+R** in the cockpit to record one, and the radio reminds you in game if neither is available a minute into the mission.
-4. With Num Lock on, use the numpad:
+2. Start IL-2 and fly a Career mission. The radio reads where everyone is straight from IL-2's memory (read-only; see [Live positions](#live-positions)), so no track recording is needed. If memory can't be read, it falls back to the track: press **LCtrl+R** in the cockpit to record one, and the radio reminds you in game if neither is available a minute into the mission.
+3. With Num Lock on, use the numpad:
 
    | Key | Does |
    |---|---|
@@ -34,7 +33,8 @@ This is the one supported way to fly with the radio. You don't need anything els
    | Numpad 3 | Separated: ask your flight to help you rejoin |
    | Numpad 4 | Ask your flight what enemy or unknown aircraft it can see |
    | Numpad 5 | Ask your flight to identify the nearest aircraft it can see |
-   | Numpad 0 | Open the radio menu in game (choose with Numpad 1–5). Flight › also has *Where am I on the route*, *Steer home* and *Steer to target*; they have no key of their own unless you set one (`keys.routePosition`, `keys.steerHome`, `keys.steerTarget`) |
+   | Numpad 0 | Open the radio menu in game (choose with Numpad 1–5). Flight › also has *Where am I on the route*, *Steer home* and *Steer to target*; Kneeboard › has *Fix position by a landmark* and the sheet's size. They have no key of their own unless you set one (`keys.routePosition`, `keys.steerHome`, `keys.steerTarget`, `keys.fixPosition`) |
+   | Numpad / | The [kneeboard](#kneeboard): small, then large, then put away |
    | Numpad 7 / 9 | Page back / forward through earlier radio messages |
    | Numpad . | Quit (also writes a session report to `logs\` next to the program) |
 
@@ -57,12 +57,13 @@ The first start creates `settings.json` next to `Il2Radio.exe` with every settin
 | `unasked.losses` | `true` | A flight mate who saw it calls a loss on the chat: "Lumme six is down. Hurricane down." An enemy going down is also "target destroyed" in his voice; a mate's loss has no recording, so it is text only. Left to the game's own pilots: their own kills, yours, and a mate shot down who can still call that he is hit |
 | `radioWait`, `radioWaitRatio` | `true`, `1.8` | Hold replies while IL-2's own radio is talking ([details](#audio)) |
 | `recordingReminderSeconds` | `60` | Remind you to press LCtrl+R this long into a mission with neither memory positions nor a track; `0` never |
-| `chat.output` | `"rtss"` | `rtss` (in game, works in fullscreen), `overlay` (windowed IL-2 only), `window` (e.g. a second screen) or `off` |
-| `chat.rtssPosition`, `chat.rtssMargin` | `"left-middle"`, `32` | RTSS text position: `left-middle`, `top-left`, `top-right`, `bottom-left`, `bottom-right`, `default` or `"X,Y"`; margin in screen pixels |
-| `chat.rtssColumns`, `chat.rtssZoom`, `chat.rtssCell` | `72`, `null`, `null` | RTSS line width; OSD zoom (`null`: from IL-2's RTSS profile); character size `[w, h]` for the right and bottom presets |
+| `chat.output` | `"ingame"` | `ingame` (drawn in IL-2's own frames by the radio's overlay; works in fullscreen; the only output with the kneeboard), `overlay` (windowed IL-2 only), `window` (e.g. a second screen) or `off`. The RTSS output was removed on 2026-10-28: `rtss` is reported as an error, and the old `chat.rtss*` settings are accepted and dropped |
 | `chat.screen`, `chat.windowArea`, `chat.fontPixels` | `0`, `[0.015, 0.40, 0.42, 0.30]`, `16` | Overlay/window: screen number, area (left, top, width, height as screen fractions), font size on a 1080-line screen |
 | `chat.keepClear` | `true` | Keep the text out of IL-2's own message line and subtitles |
-| `keys.*` | `Num1` … `Num.` | One key per action: `friendlyPositions`, `flightPosition`, `rejoin`, `enemyContacts`, `identifyContact`, `routePosition`, `steerHome`, `steerTarget` (these three unbound by default; they are in the radio menu), `menu`, `older`, `newer`, `quit`. Names: `Num0`–`Num9`, `Num.`, `Num+`, `Num-`, `Num*`, `Num/`, `F1`–`F24`, `A`–`Z`, `0`–`9`, `Insert`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, arrows, `Pause`, `ScrollLock`. `""` leaves an action unbound |
+| `kneeboard.view` | `"small"` | The kneeboard's view at the start of a flight: `hidden`, `small` or `large`. The kneeboard key writes the view you leave it in back here |
+| `kneeboard.position` | `"centre-right"` | `centre-right`, `top-right`, `bottom-right`, `top-left`, `bottom-left`, `centre-left` (that corner, or the middle of that side, pinned a margin of 2 % of the screen height in), or `custom` |
+| `kneeboard.custom`, `kneeboard.customScreen` | `null`, `null` | With `custom`: `[x, y]`, the sheet's top-left pixel of IL-2's picture, and the `[width, height]` IL-2 ran at when it was set (the Settings tab fills it from `startup.cfg`), so it scales with the resolution. The sheet is always kept on screen |
+| `keys.*` | `Num1` … `Num.` | One key per action: `friendlyPositions`, `flightPosition`, `rejoin`, `enemyContacts`, `identifyContact`, `routePosition`, `steerHome`, `steerTarget`, `fixPosition` (these four unbound by default; they are in the radio menu), `kneeboard` (`Num/`), `menu`, `older`, `newer`, `quit`. Names: `Num0`–`Num9`, `Num.`, `Num+`, `Num-`, `Num*`, `Num/`, `F1`–`F24`, `A`–`Z`, `0`–`9`, `Insert`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, arrows, `Pause`, `ScrollLock`. `""` leaves an action unbound |
 
 Keys are watched, not taken: IL-2 still receives them, so pick keys IL-2 doesn't use. The options are described in more detail under [Radio text](#radio-text-chat), where they appear as `live` flags of the diagnostic console.
 
@@ -198,48 +199,44 @@ dotnet run --project src/Il2Radio.Diag -- audio-meter --seconds 120     # watch 
 **Unverified:** the meaning of each German or Russian fragment is inferred from its file name. For the English set it was spot-checked with speech recognition. If `voice-check --play` shows a clip saying something else, fix its line in `voices/il2-ger.json`.
 
 ### Radio text (chat)
-IL-2 offers no way for an external program to write into its chat in single-player (see [FEASIBILITY.md](docs/FEASIBILITY.md#radio-text-in-il-2s-chat--message-area-researched-2026-10-25)). Instead, `live` shows the exchange through one of three outputs.
-- **Each line** starts with the time and the speaker's callsign and name in brackets: `[16:44:50]  [Lumme 4] [Gert Knoll]: Flight, report your position.` A pilot with no callsign shows his name alone (`[Felix Knierim]`); the radio's own notes have the time only. Wrapped rows indent just past the time.
+IL-2 offers no way for an external program to write into its chat in single-player (see [FEASIBILITY.md](docs/FEASIBILITY.md#radio-text-in-il-2s-chat--message-area-researched-2026-10-25)). Instead, the radio shows the exchange through one of three outputs.
+- **Each line** starts with the time and the speaker's callsign and name in brackets: `[16:44:50]  [Lumme 4] [Gert Knoll]: Flight, report your position.` A pilot with no callsign shows his name alone (`[Felix Knierim]`); the radio's own notes have the time only.
 - **On key press:** your call ("[Lumme 4] [Gert Knoll]: All friendlies, report positions.") appears straight away, and you hear a mic key click and a short carrier burst at the radio volume. This cuts off any transmission still playing.
 - **Replies:** each reply appears under the pilot's name as the voice starts speaking it. The line is the whole report; a reply the recordings can say nothing of still appears in its turn, with no sound.
 - **No answer:** if nobody can answer, one line says why, e.g. "no reply: position snapshot needs administrator rights".
-- Lines fade out after 14 s; Numpad 7 and 9 page through the whole exchange history (the last 200 lines). Each line is stamped with the mission clock, the same time as the watch in the cockpit, once the mission log or a track has been read. Pausing the game pauses the clock. Numpad 0 opens the radio menu (with `ingame` text it is a panel of its own above the log; other outputs show it in the log's place). Both views close after 14 s without a key, or when you make a new call.
-- **Look:** measured from IL-2's own "Game is Paused" message. Each line has its own black box at 42 % opacity, sized to the text, with light grey (#E0E0DC) Arial text in a single colour, speaker included. The box is 2.6 cap heights tall with 1.45 cap heights of side padding. The tool's own notes ("no reply") are dimmer. RTSS gets the same colours and, behind each row, a black strip at that same 42 %, one character-row tall and only as wide as that row. It thins as the row fades. Text size and any extra shadow still come from RTSS's OSD settings.
-- **Keeping clear of IL-2's text:** the overlay and the RTSS text stay out of IL-2's bottom-left message line and the subtitle rows that the planned Career mission uses (read from `_gen.Mission`). By default the overlay is narrowed to end left of the centre subtitles, and the RTSS text is limited in columns and rows (the monitor header says so). `--keep-clear off` disables this. The areas are estimates (`Il2ScreenAreas`).
+- Lines fade out after 14 s; Numpad 7 and 9 page through the whole exchange history (the last 200 lines). Each line is stamped with the mission clock, the same time as the watch in the cockpit, once the mission log or a track has been read. Pausing the game pauses the clock. Numpad 0 opens the radio menu (with `ingame` text it is a panel of its own above the log; the window outputs show it in the log's place). Both views close after 14 s without a key, or when you make a new call.
+- **Look:** measured from IL-2's own "Game is Paused" message. Each line has its own black box at 42 % opacity, sized to the text, with light grey (#E0E0DC) Arial text in a single colour, speaker included. The box is 2.6 cap heights tall with 1.45 cap heights of side padding. The tool's own notes ("no reply") are dimmer.
+- **Keeping clear of IL-2's text:** the text stays out of IL-2's bottom-left message line and the subtitle rows that the planned Career mission uses (read from `_gen.Mission`). By default its area is narrowed to end left of the centre subtitles. `--keep-clear off` disables this. The areas are estimates (`Il2ScreenAreas`).
 
 | `--chat` | What | Works with IL-2 fullscreen (`fullscreen = 1`)? |
 |---|---|---|
-| `rtss` | Text in the RivaTuner Statistics Server on-screen display, drawn inside the game's frames | **Yes** (needs RTSS running, see below) |
-| `overlay` (default) | Transparent, click-through window styled like IL-2's message line | No, hidden while IL-2 has focus. Needs `fullscreen = 0` |
+| `ingame` (the app's default) | Drawn inside IL-2's own frames by the radio's overlay (OverlayKit, `overlay/`), loaded into `Il-2.exe` only for this. Also draws the menu panel and the [kneeboard](#kneeboard) | **Yes** |
+| `overlay` (Diag's default) | Transparent, click-through window styled like IL-2's message line | No, hidden while IL-2 has focus. Needs `fullscreen = 0` |
 | `window` | Ordinary window, e.g. `--chat-screen 1` for a second monitor | Yes, on the other screen |
 
+RivaTuner Statistics Server was the fullscreen output until 2026-10-28. It was removed once `ingame` had held up in a flight; the window outputs remain for windowed IL-2 or a second screen.
+
 ```bash
-dotnet run --project src/Il2Radio.Diag -- chat-test --chat rtss            # loop a sample exchange; start it, then fly in IL-2
+dotnet run --project src/Il2Radio.Diag -- chat-test --chat ingame          # loop a sample exchange; start it, then fly in IL-2
 dotnet run --project src/Il2Radio.Diag -- chat-test --png chat.png          # render the overlay's live, menu and log views to chat*.png
-dotnet run --project src/Il2Radio.Diag -- live --chat rtss
-dotnet run --project src/Il2Radio.Diag -- live --chat rtss --rtss-pos bottom-left --rtss-margin 48
-dotnet run --project src/Il2Radio.Diag -- live --chat rtss --rtss-pos 40,300 --rtss-columns 60
+dotnet run --project src/Il2Radio.Diag -- live --chat ingame --kneeboard large --kneeboard-pos top-right
 dotnet run --project src/Il2Radio.Diag -- live --chat-pos 0.015,0.40,0.42,0.30 --chat-font 16
 dotnet run --project src/Il2Radio.Diag -- live --chat window --chat-screen 1
 dotnet run --project src/Il2Radio.Diag -- live --chat off
 ```
 - `--chat-pos` is left, top, width and height as fractions of the screen. Text is bottom-aligned, so the default ends just above IL-2's own bottom-left message line. `--chat-font` is pixel size on a 1080-line screen.
-- `--rtss-columns` sets where RTSS lines wrap (RTSS doesn't wrap).
-- **RTSS position:** `--rtss-pos left-middle|top-left|top-right|bottom-left|bottom-right|default|X,Y` with `--rtss-margin PX` (screen pixels, default 32).
-  - **Default `left-middle`:** the text starts at 42 % of the screen height on the left. That keeps it on the canopy side, clear of the gunsight, the instrument panel and RTSS's own top-left counter, and it grows downwards without reaching IL-2's bottom-left message line.
-  - **How it's placed:** each preset is converted to RTSS's `<P=x,y>` tag. The game resolution comes from `startup.cfg` (or `--rtss-screen WxH`), and the OSD zoom from IL-2's RTSS profile (or `--rtss-zoom Z`). No RTSS setting needs changing, and the FPS counter stays where RTSS puts it.
-  - **Right and bottom presets** use an estimated character size; if they sit off, calibrate with `--rtss-cell W,H` (default `9,16`).
-  - `default` leaves the text at RTSS's own OSD position.
-  - `X,Y` is in RTSS's zoomed pixels.
-  - The monitor header shows the position in use, e.g. `text at <P=16,302> (LeftMiddle, margin 32 px, 2560x1440, zoom 2 …)`.
+- `--game-screen WxH` overrides the game resolution read from `startup.cfg` (used by `chat-test --png`).
 
-#### Setting up RTSS (one time)
-1. Download RivaTuner Statistics Server **only** from its official distributor, Guru3D: <https://www.guru3d.com/download/rtss-rivatuner-statistics-server-download/>. MSI Afterburner from msi.com also bundles it. Install it and start it; it lives in the system tray.
-2. Open the RTSS window. On the **Global** profile, set **Show On-Screen Display** to On. If you'd rather limit it to IL-2, press **Add** and pick `…\IL-2 Sturmovik Battle of Stalingrad\bin\game\Il-2.exe`, then turn it on there.
-3. Optional: turn off **Show own statistics** if you don't want RTSS's frame-rate counter as well. Use **On-Screen Display zoom** for text size and drag the preview to move the OSD.
-4. Nothing else is needed for third-party text. `live` and `chat-test` claim their own OSD slot ("IL-2 Tactical Radio") and release it on exit. The monitor header shows `RTSS: connected` or `RTSS: not running`. Don't run `chat-test` while `live` is running: they share the slot.
-
-RTSS hooks the game's Direct3D output to draw its OSD; this tool only writes text into RTSS's shared memory. If IL-2 doesn't show the OSD, try **Application detection level** Medium in RTSS.
+### Kneeboard
+A sheet of the briefed area on your knee, drawn in the game by the `ingame` output, so you need not open IL-2's map (O). Numpad / shows it small, then large, then puts it away; the radio menu's Kneeboard › does the same. The view you leave it in is kept in `settings.json` for the next flight, and its place is set with `kneeboard.position`.
+- **The sheet** is fixed, like a map folded to the briefing: your flight's briefed route and your home field, with a margin of one 10 km square (at least five squares each way), north up, the squares printed fine and, on the large view on the Stalingrad map, numbered in the margins as on a military map (row down the side, column along the top, as IL-2's map reads them), with a 10 km scale bar. It is drawn as folded map paper clipped to a dark kneeboard: the briefed route, each leg's course and distance, the target and home field in pencil, the radio's marks in coloured pencil, printed parts in typewriter type. It never pans. If a reply puts you off it, it says "off the sheet" at that edge.
+- **Nothing on it is live.** Each mark is made by a radio reply at the moment it is said, from the words of that reply, and fades as it ages (full for a minute, faint after eight). Marks are worked out in the mission's own metres, from memory positions only.
+  - **You** are marked when an ally places you: your leader's answer to *Where am I on the route* (the square or ninth he names, shaded), or a mate who has you with him. Your own map reading (the "[Route]" line when nobody can place you) is not a fix. *Fix position* (radio menu, Kneeboard › 1) is your own look at the ground: an airfield in sight, through haze, darkness and cloud as the visibility model has them, gives the ninth you are over when low and close, else the whole square; with no field in sight you can't place yourself, and it is refused while an enemy is on you. The Volga, the Don, the city and the towns are not landmarks yet.
+  - **Dead reckoning** carries your mark on from the last fix by your own course and speed, with a steady compass and speed error of its own, as a dashed patch that grows by a tenth of the distance flown plus 300 m a minute. Past 25 km it is dropped.
+  - **Mates** are marked where they last reported: their square, or the clock and range they gave from you. A mate in formation is noted beside your mark ("1, 3 with you").
+  - **Contacts** are marked where they were called: off your mark on your clock, or at the mate who has them "on me", with their direction of flight when the call gave one. Anything off the sheet is not drawn.
+- **Small** is the sheet, the marks and the scale bar. **Large** adds the legend, the square numbers and a footer with the last fix and the last steers. Each is a share of the screen height (30 % and 56 %).
+- `Diag kneeboard-test [mission]` draws a Career mission's kneeboard with sample replies to `diag-output\kneeboard-small.png` and `kneeboard-large.png`.
 
 ### Live positions
 **From IL-2's memory (the default, since 2026-10-27).** At the start of each mission the radio finds your aircraft in IL-2's memory by the id the mission log gives it, learns how the game stores aircraft from it, and then finds every aircraft in a few seconds; a rescan every 30 s picks up aircraft that spawn later. From then on it reads every aircraft's position once a second (about a millisecond). It only reads: the game is opened with read rights, nothing is written to it or loaded into it, and no game file changes. It is used only in missions IL-2 generated on your own PC (Career, quick missions), never on a server. Against a recorded track, memory positions agreed to a few metres (docs/MEMORY.md). Memory gives no name, side or "destroyed": those still come from the mission log, so an aircraft is reported only once the log has named it (up to about 30 s after it spawns), and a shot-down aircraft is silent from the moment the log records the kill, though its wreck is still falling. Heading is the course over ground, within a few degrees of the nose.

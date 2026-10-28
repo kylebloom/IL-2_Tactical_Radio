@@ -72,7 +72,7 @@ Keep logic in Core and keep the Windows layer thin.
 - wire it into `ContactTracker` / `LiveSession`, keeping source and frame tags.
 
 **Chat or audio:**
-- chat lines go through `ChatTimeline`, so every output (RTSS, overlay) gets them;
+- chat lines go through `ChatTimeline`, so every output (in-game, window overlay) gets them;
 - audio goes through `RadioVoice`'s single queue and `RadioEffect`;
 - keep the existing behaviour: new requests drop queued replies, the immediate key click, waiting while IL-2's own radio talks.
 
@@ -86,7 +86,7 @@ Keep logic in Core and keep the Windows layer thin.
 4. **Verify:**
    - `dotnet test` is green (if the user's running session locks `bin\Debug`, run `dotnet test tests/Il2Radio.Core.Tests` and build the programs into a scratch folder with `dotnet build src/Il2Radio.App -o <dir>` and the same for Diag);
    - replay against the user's real recordings with `Il2Radio.Diag acmi <file>`, and show the actual replies;
-   - never start `live`, `chat-test` or `Il2Radio.exe` while the user is flying (they share the numpad and the RTSS slot).
+   - never start `live`, `chat-test` or `Il2Radio.exe` while the user is flying (they share the numpad and the in-game overlay layers).
 5. **Update the docs:**
    - ARCHITECTURE.md for how it works;
    - FEASIBILITY.md for new evidence;

@@ -6,6 +6,9 @@ public enum RadioMenuAction
     None,
     LogOlder,
     LogNewer,
+    KneeboardSmall,
+    KneeboardLarge,
+    KneeboardHide,
 }
 
 /// <summary>One menu entry: a radio command, a chat action, or a submenu of further entries.</summary>
@@ -27,7 +30,7 @@ public sealed record RadioMenuView(IReadOnlyList<string> Path, IReadOnlyList<Rad
     public string Title => string.Join(" › ", Path);
 
     /// <summary>
-    /// The menu as chat lines, for outputs that show it in the radio log's place (RTSS, the window
+    /// The menu as chat lines, for outputs that show it in the radio log's place (the window
     /// overlay): the title, one line per entry under its numpad key, then the footer.
     /// </summary>
     public IReadOnlyList<ChatLine> ToChatLines()
@@ -53,7 +56,7 @@ public sealed record RadioMenuResult(bool Changed, RadioCommand? Command = null,
 /// </summary>
 public sealed class RadioMenu(IReadOnlyList<RadioMenuItem> root, double holdSeconds = 14)
 {
-    /// <summary>The radio's commands, grouped so each level fits the numpad keys the radio already uses (1–5).</summary>
+    /// <summary>The radio's commands and the kneeboard, grouped so each level fits the numpad keys the radio already uses (1–5).</summary>
     public static IReadOnlyList<RadioMenuItem> Default { get; } =
     [
         RadioMenuItem.Submenu("Flight",
@@ -69,6 +72,11 @@ public sealed class RadioMenu(IReadOnlyList<RadioMenuItem> root, double holdSeco
         RadioMenuItem.Submenu("Radio log",
             new RadioMenuItem("Older page", Action: RadioMenuAction.LogOlder),
             new RadioMenuItem("Newer page", Action: RadioMenuAction.LogNewer)),
+        RadioMenuItem.Submenu("Kneeboard",
+            new RadioMenuItem(RadioCommands.Title(RadioCommand.FixPosition) + " by a landmark", RadioCommand.FixPosition),
+            new RadioMenuItem("Small sheet", Action: RadioMenuAction.KneeboardSmall),
+            new RadioMenuItem("Large sheet", Action: RadioMenuAction.KneeboardLarge),
+            new RadioMenuItem("Put it away", Action: RadioMenuAction.KneeboardHide)),
     ];
 
     public const string RootTitle = "Radio";

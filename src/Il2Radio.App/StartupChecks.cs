@@ -88,24 +88,17 @@ internal static class StartupChecks
         return null;
     }
 
-    /// <summary>Whether the chosen chat output can be seen: RTSS must run; the overlay is hidden by exclusive fullscreen.</summary>
+    /// <summary>Whether the chosen chat output can be seen: the overlay window is hidden by exclusive fullscreen.</summary>
     public static void ChatOutput(ChatSettings chat, Il2Install install)
     {
         switch (chat.Output.ToLowerInvariant())
         {
-            case "rtss" when Process.GetProcessesByName("RTSS").Length == 0:
-                Warn("RivaTuner Statistics Server isn't running, so the radio text can't show in IL-2.",
-                    "Start it (it sits in the system tray); the text appears as soon as it is up.");
-                break;
-            case "rtss":
-                Ok("RivaTuner Statistics Server is running (radio text in the game)");
-                break;
             case "overlay" when StartupConfig.Load(install.StartupCfg).Get("graphics", "fullscreen") == "1":
                 Warn("IL-2 runs in exclusive fullscreen, which hides the overlay window.",
-                    "Choose RTSS for the radio text, or play IL-2 windowed.");
+                    "Choose ingame for the radio text, or play IL-2 windowed.");
                 break;
             case "ingame":
-                Ok("Radio text drawn inside IL-2 by the radio's own overlay (experimental; loaded into Il-2.exe when it runs)");
+                Ok("Radio text and kneeboard drawn inside IL-2 by the radio's own overlay (loaded into Il-2.exe when it runs)");
                 break;
             case "off":
                 Ok("Radio text is off");

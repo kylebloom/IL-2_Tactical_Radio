@@ -12,7 +12,7 @@ namespace Il2Radio.Windows;
 /// Shows the radio exchange as text in the style of IL-2's chat. It is a separate window drawn by
 /// this process; nothing is written into the game. In overlay mode it is a per-pixel-alpha layered
 /// window that ignores the mouse, never takes focus and stays above the game. IL-2 in fullscreen
-/// hides it whenever the game has focus (verified), so use <see cref="RtssChat"/> there.
+/// hides it whenever the game has focus (verified), so use <see cref="InGameChat"/> there.
 /// </summary>
 internal sealed class ChatOverlay : IChatSink
 {

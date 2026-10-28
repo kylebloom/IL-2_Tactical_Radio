@@ -69,6 +69,9 @@ public sealed record AppSettings
 
     public KeySettings Keys { get; init; } = new();
 
+    /// <summary>The kneeboard plot drawn in the game (chat output ingame): which view, and where.</summary>
+    public KneeboardSettings Kneeboard { get; init; } = new();
+
     /// <summary>
     /// The German phrase voice's settings, from before 2026-10-26. That voice is gone (only the game's
     /// recordings speak), so the value is ignored and never written; it is accepted so an older file still loads.
@@ -152,7 +155,52 @@ public sealed record AppSettings
 
         if (Unasked is null)
             problems.Add("unasked: missing");
+
+        if (Kneeboard is null)
+            problems.Add("kneeboard: missing");
+        else
+            problems.AddRange(Kneeboard.Validate());
         return problems;
+    }
+}
+
+/// <summary>
+/// The kneeboard plot: a fixed sheet of the briefed area with pencil marks for what the radio has said, drawn by the
+/// <c>ingame</c> output. The view is remembered between flights: the kneeboard key writes it back here.
+/// </summary>
+public sealed record KneeboardSettings
+{
+    /// <summary>hidden, small (a glance sheet: the route, the marks and the scale) or large (with the legend, grid labels and the footer).</summary>
+    public string View { get; init; } = "small";
+
+    /// <summary>centre-right (the default), top-right, bottom-right, top-left, bottom-left, centre-left, or custom (see <see cref="Custom"/>).</summary>
+    public string Position { get; init; } = KneeboardPlacement.Default;
+
+    /// <summary>With position custom: [x, y] in screen pixels, the sheet's top-left corner from the top-left of IL-2's picture.</summary>
+    public int[]? Custom { get; init; }
+
+    /// <summary>The [width, height] IL-2 ran at when <see cref="Custom"/> was set, so it scales with the resolution; null takes it as given.</summary>
+    public int[]? CustomScreen { get; init; }
+
+    /// <summary>The view for this file. Call after <see cref="Validate"/>.</summary>
+    [JsonIgnore]
+    public KneeboardView ViewMode => KneeboardPlacement.ParseView(View) ?? KneeboardView.Small;
+
+    /// <summary>The placement for this file. Call after <see cref="Validate"/>.</summary>
+    public KneeboardPlacement Placement() => KneeboardPlacement.Parse(Position, Custom, CustomScreen) ?? new KneeboardPlacement(KneeboardAnchor.CentreRight);
+
+    public IEnumerable<string> Validate()
+    {
+        if (KneeboardPlacement.ParseView(View) is null)
+            yield return $"kneeboard.view \"{View}\": expected hidden, small or large";
+        if (KneeboardPlacement.Parse(Position, [0, 0]) is null)
+            yield return $"kneeboard.position \"{Position}\": expected {string.Join(", ", KneeboardPlacement.Presets)}";
+        else if (KneeboardPlacement.Parse(Position, [0, 0])!.Anchor == KneeboardAnchor.Custom && Custom is not [>= 0, >= 0])
+            yield return "kneeboard.custom: with position custom, expected [x, y] in pixels, 0 or more";
+        if (Custom is not null && Custom is not [_, _])
+            yield return "kneeboard.custom: expected null or [x, y] in pixels";
+        if (CustomScreen is not null && CustomScreen is not [> 0, > 0])
+            yield return "kneeboard.customScreen: expected null or [width, height] in pixels";
     }
 }
 
@@ -178,31 +226,33 @@ public sealed record UnaskedSettings
 /// <summary>Where the radio text goes and how it looks.</summary>
 public sealed record ChatSettings
 {
-    public static readonly string[] Outputs = ["rtss", "ingame", "overlay", "window", "off"];
+    public static readonly string[] Outputs = ["ingame", "overlay", "window", "off"];
 
     /// <summary>
-    /// rtss: RivaTuner Statistics Server's on-screen display, which works in exclusive fullscreen.
-    /// ingame: our own OverlayKit host DLL, loaded into Il-2.exe, draws the text into the game's
-    /// frames (fullscreen too, no RTSS; experimental).
-    /// overlay: a click-through window over the game (windowed mode only). window: an ordinary
-    /// window, e.g. on a second screen. off: no text.
+    /// ingame (the default): our own OverlayKit host DLL, loaded into Il-2.exe, draws the text and the kneeboard into the
+    /// game's frames, in exclusive fullscreen too. overlay: a click-through window over the game (windowed mode only).
+    /// window: an ordinary window, e.g. on a second screen. off: no text. The RTSS output was removed on 2026-10-28.
     /// </summary>
-    public string Output { get; init; } = "rtss";
+    public string Output { get; init; } = "ingame";
 
-    /// <summary>RTSS text position: left-middle, top-left, top-right, bottom-left, bottom-right, default (RTSS's own) or "X,Y".</summary>
-    public string RtssPosition { get; init; } = "left-middle";
+    /// <summary>
+    /// The RTSS output's settings, from before 2026-10-28. RTSS is no longer used, so these are ignored and never written;
+    /// they are accepted so an older file still loads.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? RtssPosition { get => null; init { } }
 
-    /// <summary>Distance from the screen edge for the RTSS presets, in screen pixels.</summary>
-    public int RtssMargin { get; init; } = 32;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? RtssMargin { get => null; init { } }
 
-    /// <summary>Where RTSS lines wrap (RTSS doesn't wrap itself).</summary>
-    public int RtssColumns { get; init; } = 72;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? RtssColumns { get => null; init { } }
 
-    /// <summary>RTSS OSD zoom; null reads it from IL-2's RTSS profile.</summary>
-    public int? RtssZoom { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? RtssZoom { get => null; init { } }
 
-    /// <summary>RTSS character size [width, height] in zoomed pixels, for the right and bottom presets; null uses the estimate (9, 16).</summary>
-    public int[]? RtssCell { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? RtssCell { get => null; init { } }
 
     /// <summary>Screen number for the overlay and window outputs (0 = primary).</summary>
     public int Screen { get; init; }
@@ -216,32 +266,12 @@ public sealed record ChatSettings
     /// <summary>Stay out of IL-2's own message line and subtitles.</summary>
     public bool KeepClear { get; init; } = true;
 
-    /// <summary>The RTSS position as a placement. Call only on validated settings.</summary>
-    public RtssPlacement Placement() => RtssPlacement.Parse(RtssPosition) with { Margin = RtssMargin };
-
     public IEnumerable<string> Validate()
     {
-        if (!Outputs.Contains(Output?.ToLowerInvariant()))
+        if (string.Equals(Output?.Trim(), "rtss", StringComparison.OrdinalIgnoreCase))
+            yield return $"chat.output \"{Output}\": the RTSS output was removed; use ingame, which draws in the game's own frames";
+        else if (!Outputs.Contains(Output?.ToLowerInvariant()))
             yield return $"chat.output \"{Output}\": expected {string.Join(", ", Outputs)}";
-        string? position = null;
-        try
-        {
-            RtssPlacement.Parse(RtssPosition);
-        }
-        catch (ArgumentException)
-        {
-            position = $"chat.rtssPosition \"{RtssPosition}\": expected left-middle, top-left, top-right, bottom-left, bottom-right, default or \"X,Y\"";
-        }
-        if (position is not null)
-            yield return position;
-        if (RtssMargin < 0)
-            yield return $"chat.rtssMargin {RtssMargin}: expected 0 or more";
-        if (RtssColumns < RtssPlacement.MinColumns)
-            yield return $"chat.rtssColumns {RtssColumns}: expected at least {RtssPlacement.MinColumns}";
-        if (RtssZoom is <= 0)
-            yield return $"chat.rtssZoom {RtssZoom}: expected null (from RTSS) or more than 0";
-        if (RtssCell is not null && (RtssCell.Length != 2 || RtssCell.Any(v => v <= 0)))
-            yield return "chat.rtssCell: expected null or [width, height] in pixels";
         if (Screen < 0)
             yield return $"chat.screen {Screen}: expected 0 or more";
         if (WindowArea is not [var l, var t, var w, var h] || l < 0 || t < 0 || w <= 0 || h <= 0 || l + w > 1.0001 || t + h > 1.0001)
@@ -271,6 +301,12 @@ public sealed record KeySettings
     public string? SteerHome { get; init; }
     public string? SteerTarget { get; init; }
 
+    /// <summary>Fix your position by a landmark, for the kneeboard. Unbound by default: it is in the radio menu (Kneeboard ›).</summary>
+    public string? FixPosition { get; init; }
+
+    /// <summary>Cycles the kneeboard hidden → small → large. Num/ is free in IL-2's default bindings (Num* resets the zoom, Num+ and Num- zoom).</summary>
+    public string? Kneeboard { get; init; } = "Num/";
+
     public string? Menu { get; init; } = "Num0";
     public string? Older { get; init; } = "Num7";
     public string? Newer { get; init; } = "Num9";
@@ -281,7 +317,8 @@ public sealed record KeySettings
     [
         ("friendlyPositions", FriendlyPositions), ("flightPosition", FlightPosition), ("rejoin", Rejoin),
         ("enemyContacts", EnemyContacts), ("identifyContact", IdentifyContact),
-        ("routePosition", RoutePosition), ("steerHome", SteerHome), ("steerTarget", SteerTarget), ("menu", Menu),
+        ("routePosition", RoutePosition), ("steerHome", SteerHome), ("steerTarget", SteerTarget),
+        ("fixPosition", FixPosition), ("kneeboard", Kneeboard), ("menu", Menu),
         ("older", Older), ("newer", Newer), ("quit", Quit),
     ];
 

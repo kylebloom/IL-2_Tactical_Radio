@@ -30,7 +30,7 @@ The user is an experienced .NET engineer who flies Luftwaffe in Battle of Stalin
   - `acmi <file>` decodes the track and replays every radio command at the end of the recording. Logs are used only if they belong to the same mission;
   - `mlg <file>`, `mission`, `voice-check --country 201`, `audio-meter`, `snapshot-test`, `check`.
 - **Quick scripts:** if you need to inspect a file, write the script to the scratchpad and run it with `python -I <script> <file>`. Read files in place; never copy game audio into the repo.
-- **If IL-2 is running** and the user is mid-flight, do not start `live`, `chat-test` or `Il2Radio.exe`. They share the numpad and the RTSS slot. A locked ACMI is normal while a track records; `acmi` reads it by snapshot only from an elevated process.
+- **If IL-2 is running** and the user is mid-flight, do not start `live`, `chat-test` or `Il2Radio.exe`. They share the numpad and the in-game overlay layers. A locked ACMI is normal while a track records; `acmi` reads it by snapshot only from an elevated process.
 
 ## Symptom → where to look
 | Symptom | Start with |
@@ -42,7 +42,8 @@ The user is an experienced .NET engineer who flies Luftwaffe in Battle of Stalin
 | Enemy calls too omniscient, too blind, or wrongly identified | `Visibility` + `VisibilitySettings`, `EnemyCommands` + `SightingMemory`, `AircraftTypes`, `MissionWeather` (cloud preset parsing) |
 | English voice instead of German, wrong or missing words | `ClipPhraser` (required vs optional tokens), the `voices/*.json` manifests, `VoiceSelection`, the reply's `SpeechToken`s |
 | Silence, clipping, overlapping speech, the click | `RadioVoice` (queue, `PlayKeyClick`, `Speaking`), `RadioEffect`, `Il2AudioMeter` (waiting for IL-2's own radio) |
-| Chat text missing, misplaced or mistimed | `RtssChat`/`RtssOsd`/`RtssPlacement` (RTSS must run; `<P=x,y>`, zoom), `ChatTimeline` (voice sync and timeout), `ChatOverlay` (hidden by exclusive fullscreen; by design), `Il2ScreenAreas` |
+| Chat text missing, misplaced or mistimed | `InGameChat` (OverlayKit host loaded? `%TEMP%\OverlayKit\host-<pid>.log`), `ChatTimeline` (voice sync and timeout), `ChatOverlay` (hidden by exclusive fullscreen; by design), `Il2ScreenAreas` |
+| Kneeboard mark missing, misplaced or too sure | `Kneeboard.Record` (the reply's tokens and `FromSpeaker`; marks come only from what was said), `Kneeboard.Advance` (dead reckoning), `KneeboardSheet.For`, `FixCommand`, `KneeboardPanel` (drawing), `LiveSession.Plot`; `Diag kneeboard-test` draws one offline |
 | Keys ignored | Num Lock, `KeyBindings`/`VirtualKeys`, `settings.json` bindings, `GetAsyncKeyState` polling |
 | App start-up, settings, reminders | `Il2Radio.App`, `AppSettings` (unknown names rejected), `StartupChecks`, `Il2Outputs`, `TrackRecordingWatch` |
 | Log or ACMI parse errors | `BinaryMissionLog` framing (`tick u32, atype u8, len u16, payload, 0x0A`), `TextMissionLog`, `AcmiStream` (unescaped commas, continuation lines) |

@@ -4,14 +4,13 @@ IL-2 Tactical Radio adds radio calls to single-player Career in IL-2 Sturmovik: 
 
 Pilots only say what they could know. Positions come from the live mission, not the briefing; shot-down pilots don't answer; enemy aircraft are reported only once someone could have seen them. If nobody can answer, the radio says why instead of guessing.
 
-The radio runs beside the game. It reads the logs and the Tacview track IL-2 already writes. It doesn't change the game, read its memory or inject anything, so it works with Mods Off. The only IL-2 file it ever changes is `data\startup.cfg`, once, with your permission and a backup.
+The radio runs beside the game. It reads the logs IL-2 already writes and where everyone is from the game's memory (read only), or from a Tacview track when memory can't be read. To show its text in the game, even in fullscreen, it loads a small overlay of its own into IL-2 that only draws the radio's text, menu and kneeboard; it reads and writes nothing in the game. It works with Mods Off. The only IL-2 file it ever changes is `data\startup.cfg`, once, with your permission and a backup.
 
 ## What you need
 
 - Windows 10 or 11, 64-bit.
 - IL-2 Sturmovik: Great Battles (Steam or the standalone version), flying single-player Career.
-- RivaTuner Statistics Server (RTSS), free. It shows the radio text inside the game, even in fullscreen. MSI Afterburner includes it.
-- Administrator rights. The radio asks for them each time it starts; it needs them to read the track while IL-2 is writing it.
+- Administrator rights. The radio asks for them each time it starts; it needs them only to read a track recording while IL-2 is writing it.
 
 ## Install
 
@@ -21,14 +20,7 @@ The radio runs beside the game. It reads the logs and the Tacview track IL-2 alr
 
 The program isn't code-signed yet, so Windows may say "Windows protected your PC". Choose **More info**, then **Run anyway**. Some antivirus programs may also be wary of a new program that asks for administrator rights.
 
-## Set up RTSS (once)
-
-1. Download RivaTuner Statistics Server only from Guru3D: https://www.guru3d.com/download/rtss-rivatuner-statistics-server-download/ (or install MSI Afterburner, which includes it). Install it and start it; it sits in the system tray.
-2. Open the RTSS window. On the **Global** profile, set **Show On-Screen Display** to **On**. To limit it to IL-2, press **Add**, pick `bin\game\Il-2.exe` in your IL-2 folder, and turn it on there instead.
-3. Optional: turn off **Show own statistics** if you don't want RTSS's frame-rate counter too.
-4. If the text doesn't appear in IL-2, set **Application detection level** to **Medium** in RTSS.
-
-Don't want RTSS? On the radio's Settings tab, choose **overlay** (only works with IL-2 in windowed mode) or **window** (for a second screen).
+Earlier versions showed the text through RivaTuner Statistics Server (RTSS). It is no longer used or needed. If you'd rather not have the radio's overlay in IL-2, choose **overlay** (IL-2 in windowed mode only) or **window** (for a second screen) on the Settings tab.
 
 ## First start
 
@@ -42,11 +34,9 @@ The **Status** tab lists checks marked `[ok]` or `[!!]`. Every `[!!]` says what 
 
 ## Every flight
 
-1. Start RTSS.
-2. Start the radio and accept the administrator prompt.
-3. Start IL-2 and fly a Career mission.
-4. In the cockpit, press **LCtrl+R** to record a track. The positions come from that track. If you forget, the radio reminds you a minute into the mission.
-5. With **Num Lock on**, use the numpad:
+1. Start the radio and accept the administrator prompt.
+2. Start IL-2 and fly a Career mission. Positions are read from the game's memory, so nothing needs recording. If the radio can't read them, it reminds you a minute into the mission to press **LCtrl+R** to record a track instead.
+3. With **Num Lock on**, use the numpad:
 
 | Key | Does |
 |---|---|
@@ -56,22 +46,25 @@ The **Status** tab lists checks marked `[ok]` or `[!!]`. Every `[!!]` says what 
 | Numpad 4 | Ask your flight what enemy or unknown aircraft it can see |
 | Numpad 5 | Ask your flight to identify the nearest aircraft it can see |
 | Numpad 0 | Open the radio menu in the game; choose with Numpad 1–5. Numpad 0 again goes back, Numpad . closes it |
+| Numpad / | Your kneeboard: small, then large, then put away |
 | Numpad 7 / 9 | Page back / forward through earlier messages |
 | Numpad . | Quit the radio |
+
+The **Kneeboard** is a sheet of your briefed route and home field, north up, with the map squares and a scale, so you need not open IL-2's map. Nothing on it is live: it has pencil marks only for what the radio has said, each with its age, fading as it gets older. You are marked when your leader tells you where you are on the route, when a mate has you with him, or when you fix your own position by an airfield you can see (radio menu, Kneeboard › Fix position); between fixes a dashed patch carries you on by dead reckoning and grows quickly. Mates are marked where they last reported, contacts where they were called.
 
 The **Help** tab in the radio window explains when to use each call. Your flight also speaks up on its own: a new heading on a turn, a change in the contacts it can see, and a loss the game's own pilots don't call. Each of these can be turned off on the Settings tab.
 
 ## Settings
 
-Everything is on the **Settings** tab: the IL-2 folder, volume, voices, where the text appears, how much pilots may claim (**pilot** or **precise**), the unasked calls and the keys. Choose **Save and apply**. They are stored in `settings.json` next to the program; delete that file to get the defaults back.
+Everything is on the **Settings** tab: the IL-2 folder, volume, voices, where the text appears, the kneeboard's size and place on screen, how much pilots may claim (**pilot** or **precise**), the unasked calls and the keys. Choose **Save and apply**. They are stored in `settings.json` next to the program; delete that file to get the defaults back.
 
 The radio watches keys without taking them, so IL-2 still sees them. Choose keys IL-2 doesn't use.
 
 ## If something doesn't work
 
 - **Look at the Status tab first.** Problems are also shown in the game at the start of each mission.
-- **No text in the game:** RTSS isn't running, or its on-screen display is off (see above).
-- **Pilots say they can't give a position:** no track is recording. Press LCtrl+R in the cockpit. The radio also needs administrator rights.
+- **No text in the game:** check that **Show text** on the Settings tab is **ingame**, and the Status tab's "Chat" line. The text appears once IL-2 is drawing the cockpit.
+- **Pilots say they can't give a position:** the game's memory couldn't be read. Press LCtrl+R in the cockpit to record a track; the radio then needs administrator rights.
 - **IL-2 not found:** set the IL-2 folder (the one containing `data\startup.cfg`) on the Settings tab.
 ## Reporting a bug
 

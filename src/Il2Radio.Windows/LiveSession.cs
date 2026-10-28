@@ -9,6 +9,7 @@ using Il2Radio.Core.Geometry;
 using Il2Radio.Core.Memory;
 using Il2Radio.Core.MissionFile;
 using Il2Radio.Core.MissionLog;
+using Il2Radio.Core.Osd;
 using Il2Radio.Core.Radio;
 using Il2Radio.Core.Settings;
 using Il2Radio.Core.Telemetry;
@@ -56,6 +57,12 @@ internal sealed record LiveOptions
 
     /// <summary>Any unasked call is on, so the track is read without a numpad press.</summary>
     public bool AnyUnasked => UnaskedRoute || UnaskedContacts || UnaskedLosses;
+
+    /// <summary>The kneeboard's view at the start: the last one the player left it in.</summary>
+    public KneeboardView Kneeboard { get; init; } = KneeboardView.Small;
+
+    /// <summary>Called with the kneeboard's new view when the player changes it, so the app can remember it for the next flight.</summary>
+    public Action<KneeboardView>? KneeboardChanged { get; init; }
 
     /// <summary>The app's start-up check lines, kept in the compact view (otherwise its alerts are listed).</summary>
     public IReadOnlyList<string> StartupResults { get; init; } = [];
@@ -105,6 +112,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     private readonly int? _udpPort = options.UdpPort;
     private readonly TrackRecordingWatch _recordingWatch = new(options.RecordingReminder);
     private readonly MissionClock _missionClock = new();
+    private readonly Kneeboard _kneeboard = new(); // marks only from what the radio said; see Core/Radio/Kneeboard
+    private KneeboardView _kneeboardView = options.Kneeboard;
     private IChatSink? _chat;
     private RadioMenuInput? _menu; // only with a chat output: the menu has nowhere to show otherwise
     private DateTime? _gameOrigin; // in-game date and time at tick 0, from the mission log
@@ -201,8 +210,15 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
                     (pressed, var chosen) = _menu.Handle(pressed, digits, DateTime.UtcNow);
                     if (chosen.Command is { } command)
                         _ = RequestAsync(command);
-                    else if (chosen.Action != RadioMenuAction.None)
+                    else if (chosen.Action is RadioMenuAction.LogOlder or RadioMenuAction.LogNewer)
                         ChatKey?.Invoke(chosen.Action == RadioMenuAction.LogOlder ? RadioKey.Older : RadioKey.Newer);
+                    else if (chosen.Action is RadioMenuAction.KneeboardSmall or RadioMenuAction.KneeboardLarge or RadioMenuAction.KneeboardHide)
+                        ShowKneeboard(chosen.Action switch
+                        {
+                            RadioMenuAction.KneeboardSmall => KneeboardView.Small,
+                            RadioMenuAction.KneeboardLarge => KneeboardView.Large,
+                            _ => KneeboardView.Hidden,
+                        });
                 }
                 foreach (var key in pressed)
                     HandleKey(key, cts);
@@ -228,6 +244,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             cts.Cancel();
         else if (key is RadioKey.Older or RadioKey.Newer)
             ChatKey?.Invoke(key);
+        else if (key == RadioKey.Kneeboard)
+            ShowKneeboard(KneeboardPlacement.Next(_kneeboardView));
         else if (key switch
                  {
                      RadioKey.FriendlyPositions => RadioCommand.FriendlyPositions,
@@ -238,9 +256,40 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
                      RadioKey.RoutePosition => RadioCommand.RoutePosition,
                      RadioKey.SteerHome => RadioCommand.SteerHome,
                      RadioKey.SteerTarget => RadioCommand.SteerTarget,
+                     RadioKey.FixPosition => RadioCommand.FixPosition,
                      _ => (RadioCommand?)null,
                  } is { } command)
             _ = RequestAsync(command);
+    }
+
+    /// <summary>Switches the kneeboard to a view, shows it at once, and tells the app so it is kept for the next flight.</summary>
+    private void ShowKneeboard(KneeboardView view)
+    {
+        lock (_gate)
+        {
+            _kneeboardView = view;
+            PresentKneeboard();
+        }
+        options.KneeboardChanged?.Invoke(view);
+    }
+
+    /// <summary>Hands the chat output the kneeboard as it stands now. Caller holds _gate.</summary>
+    private void PresentKneeboard()
+    {
+        _chat?.ShowKneeboard(_kneeboard.Picture(DateTime.UtcNow, _kneeboardView));
+    }
+
+    /// <summary>
+    /// Pencils a reply onto the kneeboard, with the player's compass and the cockpit watch at that moment. Only while
+    /// positions come from IL-2's memory: the sheet is in the mission's own metres, and a square said from a track fix
+    /// went through the latitude fit, so it never makes a mark (the sheet stays bare). Caller holds _gate.
+    /// </summary>
+    private void Plot(RadioCommand? command, RadioReply reply)
+    {
+        if (_tracker.Player?.LastFix?.Position.Frame != CoordinateFrame.Il2World)
+            return;
+        var now = DateTime.UtcNow;
+        _kneeboard.Record(command, reply, _tracker.Player?.LastFix?.Heading, now, _missionClock.At(now)?.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture));
     }
 
     /// <summary>Raised for the chat's own keys: paging the radio log (by key or from the menu).</summary>
@@ -255,7 +304,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     /// </summary>
     public event Action<RadioCommand, RadioResult, Contact?, string?>? Transmitted;
 
-    /// <summary>State of the chat output (e.g. "RTSS: not running"), shown in the monitor header.</summary>
+    /// <summary>State of the chat output (e.g. "in-game text: waiting for Il-2.exe to start"), shown in the monitor header.</summary>
     public Func<string?>? ChatStatus { get; set; }
 
     /// <summary>State of the IL-2 audio meter that holds replies while IL-2 transmits, shown in the monitor header.</summary>
@@ -313,6 +362,9 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     {
         var settings = Radio();
         var result = RadioCommands.Execute(command, _tracker, settings, _sightings);
+        foreach (var reply in result.Replies)
+            Plot(command, reply);
+        PresentKneeboard();
         Transmitted?.Invoke(command, result, _tracker.Player, problem);
         voice?.Say(result.Replies.Select(TransmissionOf));
         var sb = new StringBuilder($"[{DateTime.Now:HH:mm:ss}] {RadioCommands.Title(command)} → {result.Outcome}\n");
@@ -387,6 +439,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             try { PollAcmi(); } catch (Exception ex) { Note($"acmi: {ex.Message}"); }
             try { PollMemory(); } catch (Exception ex) { Note($"memory: {ex.Message}"); }
             try { PollRecording(); } catch (Exception ex) { Note($"recording: {ex.Message}"); }
+            PresentKneeboard();
             if ((_memoryLive || !_acmiLocked) && options.AnyUnasked && Volatile.Read(ref _requestInFlight) == 0)
                 unasked = _unasked.Consider(_tracker, Radio(), _sightings, CallSettings());
             var now = DateTime.UtcNow;
@@ -492,7 +545,11 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             voice!.Say([TransmissionOf(reply)], interrupt: false);
         _chat?.Post([RadioChat.Line(reply)], syncToVoice: speak);
         lock (_gate)
+        {
             _lastExchange = $"[{DateTime.Now:HH:mm:ss}] {reply.Text}\n";
+            Plot(null, reply);
+            PresentKneeboard();
+        }
         Note($"unasked: \"{reply.Text}\"", monitorOnly: true);
     }
 
@@ -551,6 +608,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             return;
         _missionStamp = stamp;
         _tracker.SetPlan(MissionPlan.Load(install.GeneratedMission));
+        _kneeboard.Reset(_tracker.Plan); // a new sortie: a fresh sheet
         Note($"mission: loaded _gen.Mission ({stamp.ToLocalTime():HH:mm:ss}); player {_tracker.Plan?.Player?.PilotName} in {_tracker.Plan?.Player?.TypeKey}");
     }
 
@@ -612,6 +670,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             // behind the watch; the track sample below replaces it once a frame has been read.
             if (sawStart)
             {
+                _kneeboard.Reset(_tracker.Plan); // the same sortie flown again starts with a clean sheet
                 _chat?.FreezeMissionTime();
                 _missionClock.Reset(DateTime.UtcNow);
             }
@@ -761,6 +820,9 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             _tracker.Apply(aircraft, time);
             EnemyCommands.Notice(_tracker, Radio(), _sightings);
             LogPositions(aircraft, time);
+            // Dead reckoning from the player's own instruments: his course and speed, read from memory.
+            var own = playerId is int pid ? aircraft.FirstOrDefault(a => a.Id == pid) : null;
+            _kneeboard.Advance(DateTime.UtcNow, own is null ? null : _tracker.Player?.LastFix?.Heading, own?.Speed);
         }
         if (live != _memoryLive)
         {
@@ -855,7 +917,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             Contact? player;
             lock (_gate)
                 player = _tracker.Player;
-            Keyed?.Invoke(command, player);
+            if (RadioCommands.IsTransmission(command)) // a position fix is a look at the ground: no mic click, no call
+                Keyed?.Invoke(command, player);
 
             // From memory: a fresh read takes milliseconds, so answer at once without touching the track.
             lock (_gate)

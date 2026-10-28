@@ -42,6 +42,7 @@ public static class RadioChat
         RadioCommand.RoutePosition => "Flight, where are we on the route?",
         RadioCommand.SteerHome => "Flight, request steer home.",
         RadioCommand.SteerTarget => "Flight, request steer to the target.",
+        RadioCommand.FixPosition => "Checking the ground against the map.",
         _ => RadioCommands.Title(command) + ".",
     };
 

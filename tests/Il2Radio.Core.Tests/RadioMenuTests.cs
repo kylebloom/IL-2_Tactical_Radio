@@ -16,8 +16,8 @@ public class RadioMenuTests
 
         var view = menu.View!;
         Assert.Equal("Radio", view.Title);
-        Assert.Equal(["Flight", "Request friendly positions", "Enemy", "Radio log"], view.Entries.Select(e => e.Label));
-        Assert.Equal([1, 2, 3, 4], view.Entries.Select(e => e.Digit));
+        Assert.Equal(["Flight", "Request friendly positions", "Enemy", "Radio log", "Kneeboard"], view.Entries.Select(e => e.Label));
+        Assert.Equal([1, 2, 3, 4, 5], view.Entries.Select(e => e.Digit));
         Assert.True(view.Entries[0].IsSubmenu);
         Assert.False(view.Entries[1].IsSubmenu);
         Assert.Equal("Num0 closes", view.Footer);

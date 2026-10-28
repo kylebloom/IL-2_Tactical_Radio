@@ -68,7 +68,6 @@ Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]
-Filename: "https://www.guru3d.com/download/rtss-rivatuner-statistics-server-download/"; Description: "Open the RivaTuner Statistics Server download page (Guru3D)"; Flags: postinstall shellexec skipifsilent nowait; Check: not RtssInstalled
 Filename: "{app}\README.txt"; Description: "Read the player guide"; Flags: postinstall shellexec skipifsilent nowait unchecked
 ; shellexec: the radio requires administrator rights, so it must start through the UAC prompt.
 Filename: "{app}\{#AppExe}"; Description: "Start the radio now (it asks for administrator rights)"; Flags: postinstall shellexec skipifsilent nowait
@@ -106,12 +105,6 @@ begin
       Exit;
     end;
   Result := '';
-end;
-
-function RtssInstalled: Boolean;
-begin
-  Result := RegKeyExists(HKLM32, 'SOFTWARE\Unwinder\RTSS')
-    or RegKeyExists(HKLM32, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\RTSS');
 end;
 
 { The radio holds Il2Radio.exe open while it runs; its window title is how a non-elevated setup can see it. }
@@ -193,9 +186,6 @@ begin
   end;
   if MemoTasksInfo <> '' then
     Result := Result + MemoTasksInfo + NewLine + NewLine;
-  if not RtssInstalled then
-    Result := Result + 'RivaTuner Statistics Server:' + NewLine + Space +
-      'not found. The radio shows its text inside IL-2 through it; you can open its download page at the end.';
 end;
 
 { Only the IL-2 folder: the radio fills in every other setting with its default. }
@@ -214,14 +204,6 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
     WriteSettings;
-end;
-
-procedure CurPageChanged(CurPageID: Integer);
-begin
-  if (CurPageID = wpFinished) and not RtssInstalled then
-    WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 +
-      'RivaTuner Statistics Server wasn''t found. The radio shows its text inside IL-2 through it, so install it ' +
-      'from Guru3D (free) and turn its on-screen display on. The player guide explains how.';
 end;
 
 { Settings and session reports are the player's: kept unless they say otherwise. piper\ is a German voice

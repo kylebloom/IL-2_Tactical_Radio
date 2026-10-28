@@ -16,7 +16,9 @@ public class AppSettingsTests
 
         Assert.Empty(problems);
         Assert.Equal(defaults.ToJson(), parsed.ToJson());
-        Assert.Equal("rtss", parsed.Chat.Output);
+        Assert.Equal("ingame", parsed.Chat.Output);
+        Assert.Equal("Num/", parsed.Keys.Kneeboard);
+        Assert.Equal(KneeboardView.Small, parsed.Kneeboard.ViewMode);
         Assert.Equal("Num1", parsed.Keys.FriendlyPositions);
         Assert.Equal("pilot", parsed.Realism);
         Assert.Equal(RadioRealism.Pilot, parsed.RealismMode);
@@ -47,7 +49,9 @@ public class AppSettingsTests
         string json = new AppSettings().ToJson();
 
         Assert.Contains("\"il2Path\": null", json);
-        Assert.Contains("\"rtssZoom\": null", json);
+        Assert.Contains("\"fixPosition\": null", json);
+        Assert.DoesNotContain("rtss", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("viewMode", json, StringComparison.Ordinal);
         Assert.Contains("\"recordingReminderSeconds\": 60", json);
         Assert.Contains("\"realism\": \"pilot\"", json);
         Assert.Contains("\"unasked\"", json);
@@ -89,7 +93,6 @@ public class AppSettingsTests
         Assert.Empty(problems);
         Assert.Equal(0.5, settings.Volume);
         Assert.Equal("overlay", settings.Chat.Output);
-        Assert.Equal("left-middle", settings.Chat.RtssPosition);
         Assert.Equal("F12", settings.Keys.Quit);
         Assert.Equal("Num1", settings.Keys.FriendlyPositions);
         Assert.True(settings.RadioWait);
@@ -119,10 +122,12 @@ public class AppSettingsTests
     [InlineData("""{ "voice": " " }""", "voice")]
     [InlineData("""{ "realism": "radar" }""", "realism")]
     [InlineData("""{ "chat": { "output": "screen" } }""", "chat.output")]
-    [InlineData("""{ "chat": { "rtssPosition": "centre" } }""", "chat.rtssPosition")]
-    [InlineData("""{ "chat": { "rtssColumns": 10 } }""", "chat.rtssColumns")]
-    [InlineData("""{ "chat": { "rtssZoom": 0 } }""", "chat.rtssZoom")]
-    [InlineData("""{ "chat": { "rtssCell": [9] } }""", "chat.rtssCell")]
+    [InlineData("""{ "chat": { "output": "rtss" } }""", "chat.output")]
+    [InlineData("""{ "kneeboard": { "view": "medium" } }""", "kneeboard.view")]
+    [InlineData("""{ "kneeboard": { "position": "middle" } }""", "kneeboard.position")]
+    [InlineData("""{ "kneeboard": { "position": "custom" } }""", "kneeboard.custom")]
+    [InlineData("""{ "kneeboard": { "customScreen": [1920] } }""", "kneeboard.customScreen")]
+    [InlineData("""{ "keys": { "kneeboard": "Num1" } }""", "keys.kneeboard")]
     [InlineData("""{ "chat": { "windowArea": [0.5, 0.5, 0.6, 0.2] } }""", "chat.windowArea")]
     [InlineData("""{ "chat": null }""", "chat")]
     [InlineData("""{ "keys": { "menu": "Numpad zero" } }""", "keys.menu")]
@@ -167,12 +172,26 @@ public class AppSettingsTests
     }
 
     [Fact]
-    public void Rtss_position_and_margin_make_one_placement()
+    public void An_older_file_with_the_removed_rtss_settings_still_loads_and_they_are_not_written_back()
     {
-        var chat = new ChatSettings { RtssPosition = "bottom-right", RtssMargin = 48 };
+        var (parsed, problems) = AppSettings.Parse("""
+            { "chat": { "output": "ingame", "rtssPosition": "left-middle", "rtssMargin": 32, "rtssColumns": 72, "rtssZoom": null, "rtssCell": null } }
+            """);
 
-        Assert.Equal(new RtssPlacement(RtssAnchor.BottomRight, 48), chat.Placement());
-        Assert.Equal(new RtssPlacement(RtssAnchor.Pixel, 48, 40, 300), (chat with { RtssPosition = "40,300" }).Placement());
+        Assert.Empty(problems);
+        Assert.Equal("ingame", parsed.Chat.Output);
+        Assert.DoesNotContain("rtss", parsed.ToJson(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void The_kneeboard_view_and_a_custom_place_are_read()
+    {
+        var (parsed, problems) = AppSettings.Parse("""{ "kneeboard": { "view": "Large", "position": "custom", "custom": [100, 200], "customScreen": [1920, 1080] } }""");
+
+        Assert.Empty(problems);
+        Assert.Equal(KneeboardView.Large, parsed.Kneeboard.ViewMode);
+        Assert.Equal(new KneeboardPlacement(KneeboardAnchor.Custom, 100, 200, (1920, 1080)), parsed.Kneeboard.Placement());
+        Assert.Equal(KneeboardAnchor.CentreRight, new KneeboardSettings().Placement().Anchor);
     }
 
     [Fact]

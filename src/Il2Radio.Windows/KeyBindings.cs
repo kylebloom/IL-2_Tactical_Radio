@@ -15,6 +15,8 @@ public enum RadioKey
     RoutePosition,     // unbound by default; radio menu Flight › 3
     SteerHome,         // unbound by default; radio menu Flight › 4
     SteerTarget,       // unbound by default; radio menu Flight › 5
+    FixPosition,       // unbound by default; radio menu Kneeboard › 1
+    Kneeboard,         // Num/: the kneeboard hidden → small → large
     Menu,              // Numpad 0: open the radio menu, step back a level, close it at the top
     Older,             // Numpad 7: page back through the radio log
     Newer,             // Numpad 9: page forward; past the newest page returns to the live lines
@@ -38,7 +40,7 @@ public sealed class KeyBindings
         NumLock = _bindings.Any(b => VirtualKeys.NeedsNumLock(b.VirtualKey));
     }
 
-    /// <summary>The numpad layout: Num1–Num5 commands, Num0 menu, Num7/Num9 log, Num. quit.</summary>
+    /// <summary>The numpad layout: Num1–Num5 commands, Num0 menu, Num7/Num9 log, Num/ kneeboard, Num. quit.</summary>
     public static KeyBindings Default => From(new KeySettings());
 
     /// <summary>Bindings from the settings file. Unbound (empty) actions are left out; call only on validated settings.</summary>
@@ -48,7 +50,8 @@ public sealed class KeyBindings
                 (keys.FriendlyPositions, RadioKey.FriendlyPositions), (keys.FlightPosition, RadioKey.FlightPosition),
                 (keys.Rejoin, RadioKey.Rejoin), (keys.EnemyContacts, RadioKey.EnemyContacts),
                 (keys.IdentifyContact, RadioKey.IdentifyContact), (keys.RoutePosition, RadioKey.RoutePosition),
-                (keys.SteerHome, RadioKey.SteerHome), (keys.SteerTarget, RadioKey.SteerTarget), (keys.Menu, RadioKey.Menu),
+                (keys.SteerHome, RadioKey.SteerHome), (keys.SteerTarget, RadioKey.SteerTarget),
+                (keys.FixPosition, RadioKey.FixPosition), (keys.Kneeboard, RadioKey.Kneeboard), (keys.Menu, RadioKey.Menu),
                 (keys.Older, RadioKey.Older), (keys.Newer, RadioKey.Newer), (keys.Quit, RadioKey.Quit),
             }
             .Where(b => VirtualKeys.Parse(b.Name) is not null)
@@ -81,6 +84,8 @@ public sealed class KeyBindings
             Add(RadioKey.RoutePosition, "route position");
             Add(RadioKey.SteerHome, "steer home");
             Add(RadioKey.SteerTarget, "steer to target");
+            Add(RadioKey.FixPosition, "fix position");
+            Add(RadioKey.Kneeboard, "kneeboard");
             Add(RadioKey.Menu, "menu");
             if (Label(RadioKey.Older) is { } older && Label(RadioKey.Newer) is { } newer)
                 parts.Add($"{older}/{newer} log older/newer");

@@ -91,6 +91,12 @@ public sealed record RadioReply(Contact Contact, IReadOnlyList<Contact> Members,
     /// "Route" so a wingman is not shown giving the leader an order.
     /// </summary>
     public string? SpeakerLabel { get; init; }
+
+    /// <summary>
+    /// The place in the reply is measured from the speaker ("at my two o'clock", "on me"), not from the player. The
+    /// kneeboard plots it off the speaker's own last reported place; the tokens alone cannot tell "my" from "your".
+    /// </summary>
+    public bool FromSpeaker { get; init; }
 }
 
 /// <summary>Contacts that were deliberately not reported, and why. Useful for diagnostics and tests.</summary>

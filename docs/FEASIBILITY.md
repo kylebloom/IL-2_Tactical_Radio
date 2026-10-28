@@ -180,7 +180,9 @@ The evidence file answers: does the `.mlg` grow during flight, do text logs rota
 
 **User check by eye (2026-10-25):** "the text shows until I put IL-2 in focus, then it disappears." This confirms the capture result. The user wants to stay in fullscreen, hence the RTSS output below.
 
-### RTSS on-screen display output (`--chat rtss`, implemented 2026-10-25)
+### RTSS on-screen display output (`--chat rtss`, implemented 2026-10-25, removed 2026-10-28)
+**Removed 2026-10-28.** The player reported that chat output `ingame` (our own `Present` hook, "Own in-game renderer" below) held up in a real flight (VERIFIED by the user, 2026-10-28), so RTSS was taken out with the kneeboard plot, which needs a layer of our own. The research below is kept as the record of why it was used.
+
 RivaTuner Statistics Server (RTSS) already draws on-screen text inside games' own frames, including exclusive fullscreen. It also accepts text from other programs through a documented named shared-memory block, `RTSSSharedMemoryV2`. MSI Afterburner, CapFrameX and many small tools use it, and RTSS's own description invites "display any custom text in On-Screen Display directly from your own application" ([Guru3D RTSS page](https://www.guru3d.com/download/rtss-rivatuner-statistics-server-download/)). RTSS hooks the game to render; this project only writes text into RTSS's memory and never opens or touches the IL-2 process.
 
 **Layout and protocol** (DOCUMENTED: RTSS SDK `RTSSSharedMemory.h` and the SDK sample's `UpdateOSD`/`ReleaseOSD`, as carried in [CapFrameX's copy of the header](https://github.com/CXWorld/CapFrameX/blob/master/source/CapFrameX.RTSSInterface/Include/RTSSSharedMemory.h) and [its client](https://github.com/CXWorld/CapFrameX/blob/master/source/CapFrameX.RTSSInterface/RTSSCoreControl.cpp), which `static_assert`s the entry offsets; the same pattern appears in [SysLat](https://github.com/Skewjo/SysLat_Software/blob/master/RTSSClient.cpp) and [YetAnotherKeyDisplayer](https://github.com/Jagailo/YetAnotherKeyDisplayer/blob/master/RTSSCustomOSD/OSD.cpp)):

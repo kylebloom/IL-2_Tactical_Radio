@@ -9,8 +9,8 @@ public sealed record VisibleChatLine(ChatLine Line, DateTime ShownUtc, float Alp
 /// Decides which radio-log lines are on screen: lines appear at their <see cref="ChatLine.Delay"/>
 /// (or, when synced to the voice, when their transmission starts), stay for a hold time, fade and
 /// expire. Every line shown is also kept in a history that can be paged through, and the screen can
-/// show a command menu instead of the live lines. Shared by every chat output (window overlay,
-/// RTSS OSD). Thread-safe.
+/// show a command menu instead of the live lines. Shared by every chat output (in-game overlay,
+/// window overlay). Thread-safe.
 /// </summary>
 public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2, int maxLines = 8, int historySize = 200)
 {
@@ -229,9 +229,6 @@ public sealed class ChatTimeline(double holdSeconds = 14, double fadeSeconds = 2
 
     /// <summary>Between the bracketed time and the speaker.</summary>
     public const string TimeGap = "  ";
-
-    /// <summary>How wide "[16:44:52]  " is: wrapped rows of a line indent this far, not under the whole speaker.</summary>
-    public const int StampWidth = 10 + 2;
 
     /// <summary>Fills in the mission time. Frozen lines keep whatever they already have, including none.</summary>
     private void Place(LoggedLine line, bool freeze)

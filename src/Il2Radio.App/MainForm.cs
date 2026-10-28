@@ -23,6 +23,8 @@ internal sealed class MainForm : Form
         ("Route position", "routePosition"),
         ("Steer home", "steerHome"),
         ("Steer to target", "steerTarget"),
+        ("Fix position", "fixPosition"),
+        ("Kneeboard", "kneeboard"),
         ("Menu", "menu"),
         ("Older log", "older"),
         ("Newer log", "newer"),
@@ -83,14 +85,12 @@ internal sealed class MainForm : Form
     private readonly NumericUpDown _radioWaitRatio = Number(1.1m, 10m, 1.8m, 0.1m, 1);
     private readonly NumericUpDown _reminder = Number(0, 600, 60, 5);
     private readonly ComboBox _chatOutput = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
-    private readonly ComboBox _rtssPosition = new() { DropDownStyle = ComboBoxStyle.DropDown, Width = 200 };
-    private readonly NumericUpDown _rtssMargin = Number(0, 500, 32, 1);
-    private readonly NumericUpDown _rtssColumns = Number(RtssPlacement.MinColumns, 200, 72, 1);
-    private readonly CheckBox _zoomFromRtss = new() { Text = "Use the zoom from IL-2's RTSS profile", AutoSize = true, Checked = true };
-    private readonly NumericUpDown _rtssZoom = Number(1, 20, 1, 1);
-    private readonly CheckBox _cellEstimate = new() { Text = "Use the estimated character size (9×16)", AutoSize = true, Checked = true };
-    private readonly NumericUpDown _cellW = Number(1, 64, 9, 1);
-    private readonly NumericUpDown _cellH = Number(1, 64, 16, 1);
+    private readonly ComboBox _kneeboardView = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
+    private readonly ComboBox _kneeboardPosition = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
+    private readonly NumericUpDown _kneeboardX = Number(0, 16384, 0, 10);
+    private readonly NumericUpDown _kneeboardY = Number(0, 16384, 0, 10);
+    private int[]? _kneeboardScreen; // the resolution custom x, y were set at, kept as loaded unless they change
+    private int[]? _kneeboardCustomLoaded;
     private readonly NumericUpDown _screen = Number(0, 8, 0, 1);
     private readonly NumericUpDown _areaL = Fraction(0.015m);
     private readonly NumericUpDown _areaT = Fraction(0.40m);
@@ -133,12 +133,7 @@ internal sealed class MainForm : Form
             if (!_filling && _host.Voice is { } voice)
                 voice.Volume = _volume.Value / 100.0;
         };
-        _zoomFromRtss.CheckedChanged += (_, _) => _rtssZoom.Enabled = !_zoomFromRtss.Checked;
-        _cellEstimate.CheckedChanged += (_, _) =>
-        {
-            _cellW.Enabled = !_cellEstimate.Checked;
-            _cellH.Enabled = !_cellEstimate.Checked;
-        };
+        _kneeboardPosition.SelectedIndexChanged += (_, _) => EnableKneeboardCustom();
         _apply.Click += async (_, _) => await SaveAndStartAsync(writeFile: true);
         _reset.Click += (_, _) => ResetToDefaults();
         _quit.Click += (_, _) => Close();
@@ -457,23 +452,21 @@ internal sealed class MainForm : Form
         Section("Radio text");
         _chatOutput.Items.AddRange(ChatSettings.Outputs);
         Row("Show text", _chatOutput, 160);
-        Hint("rtss is inside the game, including fullscreen. ingame is too, without RTSS, by loading the radio's own overlay into IL-2 (experimental). overlay needs windowed IL-2. window is an ordinary window. off shows nothing.", ref y);
-        foreach (string preset in new[] { "left-middle", "top-left", "top-right", "bottom-left", "bottom-right", "default" })
-            _rtssPosition.Items.Add(preset);
-        Row("RTSS position", _rtssPosition, 200);
-        Hint("A preset, or X,Y in RTSS pixels. default leaves the position to RTSS.", ref y);
-        Row("RTSS margin (px)", _rtssMargin, 80);
+        Hint("ingame draws the text, the radio menu and the kneeboard inside IL-2's own picture, fullscreen too, by loading the radio's own overlay into IL-2 (it draws only these, and reads nothing). overlay is a window over a windowed IL-2. window is an ordinary window, e.g. on a second screen. off shows nothing.", ref y);
+
+        Section("Kneeboard");
+        _kneeboardView.Items.AddRange(["hidden", "small", "large"]);
+        Row("View", _kneeboardView, 160);
+        Hint("Where a flight starts. The kneeboard key (and the radio menu) changes it in the game, and the view you leave it in is kept here for the next flight. Needs the ingame text.", ref y);
+        _kneeboardPosition.Items.AddRange(KneeboardPlacement.Presets);
+        Row("Position", _kneeboardPosition, 160);
+        var customRow = new FlowLayoutPanel { Height = 28, WrapContents = false };
+        Piece(customRow, "X", _kneeboardX);
+        Piece(customRow, "Y", _kneeboardY);
+        Row("Custom corner (px)", customRow, 300, 28);
+        Hint("A preset pins that corner of the sheet near the screen's edge; the large sheet grows away from it. custom puts its top-left corner at X, Y pixels of IL-2's picture, scaled if IL-2's resolution changes. It is always kept on screen.", ref y);
 
         Section("Advanced chat layout");
-        Row("RTSS line width", _rtssColumns, 80);
-        Check(_zoomFromRtss);
-        Row("RTSS zoom", _rtssZoom, 80);
-        Check(_cellEstimate);
-        var cellRow = new FlowLayoutPanel { Height = 28, WrapContents = false };
-        cellRow.Controls.Add(_cellW);
-        cellRow.Controls.Add(new Label { Text = "×", AutoSize = true, Padding = new Padding(4, 4, 4, 0) });
-        cellRow.Controls.Add(_cellH);
-        Row("Character size (px)", cellRow, 220, 28);
         Row("Screen number", _screen, 80);
         var areaRow = new FlowLayoutPanel { Height = 28, WrapContents = false };
         Piece(areaRow, "Left", _areaL);
@@ -584,7 +577,7 @@ internal sealed class MainForm : Form
         try
         {
             string? blocked = await _host.StartAsync(settings, AppContext.BaseDirectory, ShowStatus,
-                ConfirmOutputs, _startup.Token);
+                ConfirmOutputs, RememberKneeboardView, _startup.Token);
             if (_closing || IsDisposed)
                 return;
             ShowNotices(StartupChecks.Results);
@@ -660,23 +653,17 @@ internal sealed class MainForm : Form
             SetNumber(_radioWaitRatio, settings.RadioWaitRatio);
             SetNumber(_reminder, settings.RecordingReminderSeconds);
             Select(_chatOutput, chat.Output, ChatSettings.Outputs);
-            if (!_rtssPosition.Items.Contains(chat.RtssPosition))
-                _rtssPosition.Items.Add(chat.RtssPosition);
-            _rtssPosition.Text = chat.RtssPosition;
-            SetNumber(_rtssMargin, chat.RtssMargin);
-            SetNumber(_rtssColumns, chat.RtssColumns);
-            _zoomFromRtss.Checked = chat.RtssZoom is null;
-            if (chat.RtssZoom is int zoom)
-                SetNumber(_rtssZoom, zoom);
-            _rtssZoom.Enabled = !_zoomFromRtss.Checked;
-            _cellEstimate.Checked = chat.RtssCell is not { Length: 2 };
-            if (chat.RtssCell is [int w, int h])
+            var kneeboard = settings.Kneeboard ?? new KneeboardSettings();
+            Select(_kneeboardView, kneeboard.View?.Trim().ToLowerInvariant(), ["small", "hidden", "large"]);
+            Select(_kneeboardPosition, kneeboard.Position?.Trim().ToLowerInvariant(), KneeboardPlacement.Presets);
+            _kneeboardCustomLoaded = kneeboard.Custom;
+            _kneeboardScreen = kneeboard.CustomScreen;
+            if (kneeboard.Custom is [int x, int y])
             {
-                SetNumber(_cellW, w);
-                SetNumber(_cellH, h);
+                SetNumber(_kneeboardX, x);
+                SetNumber(_kneeboardY, y);
             }
-            _cellW.Enabled = !_cellEstimate.Checked;
-            _cellH.Enabled = !_cellEstimate.Checked;
+            EnableKneeboardCustom();
             SetNumber(_screen, chat.Screen);
             double[] area = chat.WindowArea is { Length: 4 } ? chat.WindowArea : [0.015, 0.40, 0.42, 0.30];
             SetNumber(_areaL, area[0]);
@@ -709,11 +696,6 @@ internal sealed class MainForm : Form
         Chat = new ChatSettings
         {
             Output = _chatOutput.Text,
-            RtssPosition = string.IsNullOrWhiteSpace(_rtssPosition.Text) ? "left-middle" : _rtssPosition.Text.Trim(),
-            RtssMargin = (int)_rtssMargin.Value,
-            RtssColumns = (int)_rtssColumns.Value,
-            RtssZoom = _zoomFromRtss.Checked ? null : (int)_rtssZoom.Value,
-            RtssCell = _cellEstimate.Checked ? null : [(int)_cellW.Value, (int)_cellH.Value],
             Screen = (int)_screen.Value,
             WindowArea = [(double)_areaL.Value, (double)_areaT.Value, (double)_areaW.Value, (double)_areaH.Value],
             FontPixels = (double)_font.Value,
@@ -729,12 +711,88 @@ internal sealed class MainForm : Form
             RoutePosition = Key("routePosition"),
             SteerHome = Key("steerHome"),
             SteerTarget = Key("steerTarget"),
+            FixPosition = Key("fixPosition"),
+            Kneeboard = Key("kneeboard"),
             Menu = Key("menu"),
             Older = Key("older"),
             Newer = Key("newer"),
             Quit = Key("quit"),
         },
+        Kneeboard = ReadKneeboard(),
     };
+
+    /// <summary>
+    /// The kneeboard settings from the tab. Custom x, y are noted against the resolution in IL-2's startup.cfg when they
+    /// are first set or changed, so they scale if IL-2's resolution changes later.
+    /// </summary>
+    private KneeboardSettings ReadKneeboard()
+    {
+        string view = string.IsNullOrWhiteSpace(_kneeboardView.Text) ? "small" : _kneeboardView.Text;
+        string position = string.IsNullOrWhiteSpace(_kneeboardPosition.Text) ? KneeboardPlacement.Default : _kneeboardPosition.Text;
+        if (position != "custom")
+            return new KneeboardSettings { View = view, Position = position, Custom = _kneeboardCustomLoaded, CustomScreen = _kneeboardScreen };
+        int[] custom = [(int)_kneeboardX.Value, (int)_kneeboardY.Value];
+        bool unchanged = _kneeboardCustomLoaded is [var x, var y] && x == custom[0] && y == custom[1];
+        return new KneeboardSettings { View = view, Position = position, Custom = custom, CustomScreen = unchanged ? _kneeboardScreen : GameResolution() };
+    }
+
+    /// <summary>IL-2's render size from its startup.cfg, or null when it can't be read.</summary>
+    private int[]? GameResolution()
+    {
+        var install = Il2Install.Locate(Blank(_il2Path.Text));
+        if (install is null || !File.Exists(install.StartupCfg))
+            return null;
+        try
+        {
+            var cfg = StartupConfig.Load(install.StartupCfg);
+            bool fullscreen = cfg.Get("graphics", "fullscreen") == "1";
+            return int.TryParse(cfg.Get("graphics", fullscreen ? "full_width" : "win_width"), out int w)
+                   && int.TryParse(cfg.Get("graphics", fullscreen ? "full_height" : "win_height"), out int h)
+                ? [w, h]
+                : null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+    }
+
+    private void EnableKneeboardCustom()
+    {
+        bool custom = _kneeboardPosition.Text == "custom";
+        _kneeboardX.Enabled = custom;
+        _kneeboardY.Enabled = custom;
+    }
+
+    /// <summary>
+    /// The kneeboard key changed the view in the game: remember it in settings.json for the next flight, changing nothing
+    /// else in the file (edits not yet applied on this tab stay unsaved), and show it on the tab.
+    /// </summary>
+    private void RememberKneeboardView(KneeboardView view)
+    {
+        if (IsDisposed)
+            return;
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => RememberKneeboardView(view));
+            return;
+        }
+        string name = KneeboardPlacement.ViewName(view);
+        _filling = true;
+        try { Select(_kneeboardView, name, ["small", "hidden", "large"]); }
+        finally { _filling = false; }
+        try
+        {
+            var (saved, problems) = AppSettings.Parse(File.ReadAllText(_settingsPath));
+            if (problems.Count > 0 || saved.Kneeboard is null || saved.Kneeboard.View == name)
+                return;
+            File.WriteAllText(_settingsPath, (saved with { Kneeboard = saved.Kneeboard with { View = name } }).ToJson() + Environment.NewLine);
+        }
+        catch (IOException)
+        {
+            // Not kept for the next flight; the view still changed in the game.
+        }
+    }
 
     private void ReloadVoices(string? selected)
     {
