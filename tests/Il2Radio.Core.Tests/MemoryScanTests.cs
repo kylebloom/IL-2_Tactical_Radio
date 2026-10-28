@@ -141,6 +141,73 @@ public class MemoryScanTests
         Assert.Equal([0x40L, 0x50], nearby.Select(n => n.Offset));
     }
 
+    /// <summary>Lays out one scene object as IL-2 1.0.0.1 does: class pointer, then id/kind/marker, speed and position.</summary>
+    private static void PutObject(FakeMemory memory, int at, ulong cls, int id, double north, double height, double east, float speed, uint marker = ObjectRoster.NodeMarker)
+    {
+        memory.PutPointer(memory.Heap, at, cls);
+        BinaryPrimitives.WriteInt32LittleEndian(memory.Heap.AsSpan(at + ObjectRoster.IdOffset), id);
+        BinaryPrimitives.WriteInt32LittleEndian(memory.Heap.AsSpan(at + ObjectRoster.IdOffset + 4), ObjectRoster.NodeKind);
+        BinaryPrimitives.WriteUInt32LittleEndian(memory.Heap.AsSpan(at + ObjectRoster.IdOffset + 8), marker);
+        BinaryPrimitives.WriteSingleLittleEndian(memory.Heap.AsSpan(at + ObjectRoster.SpeedOffset), speed);
+        memory.PutDouble(memory.Heap, at + ObjectRoster.PositionOffset, north);
+        memory.PutDouble(memory.Heap, at + ObjectRoster.PositionOffset + 8, height);
+        memory.PutDouble(memory.Heap, at + ObjectRoster.PositionOffset + 16, east);
+    }
+
+    [Fact]
+    public void The_player_object_is_found_by_id_and_teaches_the_class_pointer()
+    {
+        var memory = new FakeMemory(0x20000);
+        ulong cls = ImageBase + 0x3A0;
+        // An id block with no object around it (a component, or a mission not yet flying), then the real object.
+        BinaryPrimitives.WriteInt32LittleEndian(memory.Heap.AsSpan(0x3008), 1055743);
+        BinaryPrimitives.WriteInt32LittleEndian(memory.Heap.AsSpan(0x300C), ObjectRoster.NodeKind);
+        BinaryPrimitives.WriteUInt32LittleEndian(memory.Heap.AsSpan(0x3010), ObjectRoster.NodeMarker);
+        PutObject(memory, 0x8000, cls, 1055743, 119457.1, 1179.7, 137161.8, 112.6f);
+
+        var player = ObjectRoster.FindPlayer(memory, 1055743, out ulong learned);
+
+        Assert.NotNull(player);
+        Assert.Equal(HeapBase + 0x8000, player.Address);
+        Assert.Equal((119457.1, 1179.7, 137161.8), (player.North, player.Height, player.East));
+        Assert.Equal(112.6f, player.Speed);
+        Assert.Equal(cls, learned);
+        Assert.Null(ObjectRoster.FindPlayer(memory, 1217535, out _));
+    }
+
+    [Fact]
+    public void All_objects_of_the_class_are_found_and_stale_copies_are_not()
+    {
+        var memory = new FakeMemory(0x20000);
+        ulong cls = ImageBase + 0x3A0;
+        PutObject(memory, 0x0000, cls, 1055743, 119457.1, 1179.7, 137161.8, 112.6f);
+        PutObject(memory, 0x4000, cls, 1016831, 184101.9, 2477.6, 189176.7, 75.6f);
+        BinaryPrimitives.WriteInt32LittleEndian(memory.Heap.AsSpan(0x4000 + ObjectRoster.IdOffset + 4), 257); // flags vary (parked objects)
+        PutObject(memory, 0x8000, cls, 961535, 184037.9, 2495.4, 189186.9, 75.2f, marker: 0); // freed: marker gone
+        PutObject(memory, 0xC000, ImageBase + 0x500, 36863, 190618.5, 3248.2, 196066.3, 105.3f); // another class
+        memory.PutPointer(memory.Heap, 0x10000, cls); // a bare reference to the class, no object
+
+        var all = ObjectRoster.FindAll(memory, cls);
+
+        Assert.Equal([1055743, 1016831], all.Select(o => o.Id));
+    }
+
+    [Fact]
+    public void A_reread_object_that_was_freed_or_moved_off_the_map_is_dropped()
+    {
+        var memory = new FakeMemory(0x10000);
+        ulong cls = ImageBase + 0x3A0;
+        PutObject(memory, 0, cls, 1055743, 119457.1, 1179.7, 137161.8, 112.6f);
+        Assert.NotNull(ObjectRoster.Read(memory, HeapBase, cls));
+
+        PutObject(memory, 0, cls, 1055743, 0, 0, 0, 0); // memory reused: zeros where the position was
+        Assert.Null(ObjectRoster.Read(memory, HeapBase, cls));
+
+        PutObject(memory, 0, ImageBase + 0x500, 1055743, 119457.1, 1179.7, 137161.8, 112.6f);
+        Assert.Null(ObjectRoster.Read(memory, HeapBase, cls));
+        Assert.NotNull(ObjectRoster.Read(memory, HeapBase));
+    }
+
     [Fact]
     public void Pointer_search_finds_structures_holding_the_target()
     {

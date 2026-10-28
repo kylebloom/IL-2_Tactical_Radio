@@ -8,7 +8,7 @@ Why: IL-2 stops a track recording when the `.trk` reaches about 500 MiB, and the
 |---|---|---|
 | 0 | Diag tools (`mem-*`) | Done, and used against IL-2 on 2026-10-27 (`mem-near` and `--fields` added during that session) |
 | 1 | Find the player's aircraft and its fields | Done: position, velocity, speed and orientation for every object, by id (see Findings) |
-| 2 | Find the list of all aircraft and a static path to it | List found (an array of every object's scene nodes); no static path yet. Alternative below |
+| 2 | Find all aircraft | Done another way: learn the aircraft class from the player's object, then scan for it once per mission (`ObjectRoster`, `Diag mem-roster`; second-mission section). No static path, none needed so far |
 | 3 | Survive game updates (byte patterns, version check, fall back to ACMI) | Not started |
 | 4 | `PositionSource.Memory` in the radio, checked against ACMI for a whole sortie | Not started |
 
@@ -73,3 +73,21 @@ A fixed path from `Il-2.exe` needs a multi-level pointer search (Cheat Engine-st
 4. Verify continuously: the player's memory position must agree with the ACMI when one is recording, and ids must be ones the mission log announced. On any mismatch, rediscover; failing that, fall back to ACMI.
 
 This depends only on field offsets, never on code addresses, so it may survive patches that move code. To test next: how long step 2–3 take on a full mission (aim: a few seconds, once), whether the array moves during a mission (new spawns), and which pointer identifies the node class.
+
+## Second mission (2026-10-27 21:42, same game process): discovery works
+
+- **The aircraft's own objects are a different class.** In the second mission (escorting nine Ju 52s), objects of class `Il-2.exe+0xBD63A0` (the class learned in the first mission) were only parked objects on the airfield and stale leftovers; no aircraft. Starting a track recording did not change that. Searching instead for the player's id with the marker at +8, at an object whose first qword points into `Il-2.exe` and whose position is plausible, found the player in class **`Il-2.exe+0xC1FE98`**, with the same field offsets (id `+0x2E88`, marker `+0x2E90`, speed `+0x2EB4`, position `+0x2FF8`).
+- **One object per aircraft.** Scanning for that class gave 65 objects with 65 distinct ids: all 13 aircraft in the mission log (the player and three Bf 109 F-4s of his flight at 1,390–1,590 m and 426–556 km/h, nine Ju 52s at 806–930 m and 216–225 km/h), and about 50 static objects the log does not name (parked aircraft and ground objects, speed 0). The first mission's ~10 objects per aircraft were evidently parts of class `0xBD63A0`; the first mission's main objects were not looked for under another class.
+- **The field after the id is flags, not a constant 2:** 2 on every first-mission part, 1, 257 and others on parked objects. `ObjectRoster` now checks only the marker.
+- **Timing (`Diag mem-roster`):** finding the player 5.2 s, finding all objects 4.1 s, once per mission; re-reading all 65 objects every second about 1 ms.
+- **Not yet checked:** positions against the ACMI over a flight; that the class `0xC1FE98` holds in a third mission and after a game restart (the class pointer moves with the module base, so it is learned each mission, but the layout may differ); new spawns during a mission (a rescan would find them); what a destroyed aircraft's object does.
+
+### Memory against the ACMI (VERIFIED, 2026-10-27 21:53–22:04)
+
+`mem-roster --seconds 180 --interval 500 --csv` logged all 13 aircraft while the player flew with a track recording; `mem-compare` then matched each moving memory sample to the nearest point on the same aircraft's ACMI track (ACMI ids = mission-log ids in hex), after fitting an affine map from the ACMI's latitude/longitude (projected with `MapGrid.ProjectStalingrad`) to game metres. Only samples taken while the track was recording count: samples after recording stopped had to be left out, or they matched the track's last point and skewed the fit (scale 1.3–1.8 instead of 1).
+
+- Fitted map scale 1.006 / 1.002, i.e. the same flight in both.
+- Nine Ju 52s in steady flight: horizontal median 1–11 m, height difference 2 m (95% 4 m), memory in step with the track's clock to 0.01–0.03 s.
+- Four manoeuvring Bf 109s including the player: horizontal median 25–59 m (95% 85–219 m), height 1–2 m (player's 95% 62 m), clock scatter 0.13–0.63 s.
+- All 2,353 samples: horizontal median 7 m, 95% 94 m; height median 2 m, 95% 6 m.
+- The error grows steadily across the Ju 52 formation (1→11 m) and is largest for the aircraft that roamed furthest, which points to the frame conversion (one affine map fitted mostly where the Ju 52s are), not to memory. Separating the two needs a better lat/lon↔metre conversion. Either way it is far finer than the radio's wording (close / a few km / far).

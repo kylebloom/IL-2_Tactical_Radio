@@ -38,6 +38,7 @@ static class MemTools
                     "mem-next" => Next(memory, options),
                     "mem-near" => Near(memory, options),
                     "mem-ptrs" => Pointers(memory, options),
+                    "mem-roster" => Roster(memory, options),
                     "mem-list" => List(memory, options),
                     "mem-dump" => Dump(memory, options),
                     "mem-refs" => Refs(memory, options),
@@ -65,6 +66,11 @@ static class MemTools
                                          --fields off:type,... (scan, next, near, list) also shows values at hex offsets
                                          from each hit, e.g. --fields -8:i32,+170:f64
           mem-dump <address> [--bytes N] Show memory as hex, i32, f32, f64, text and pointers (default 256 bytes)
+          mem-roster [--id N] [--seconds S] [--interval MS] [--csv file]
+                                         Find every scene object (once per mission) from the player's id in the newest
+                                         mission log, and name each from the log; --seconds re-reads them every second
+          mem-compare <csv> [acmi]       Check a mem-roster --csv log against the ACMI of the same flight (default: newest);
+                                         fits the map between the frames and reports what differs. Needs no game
           mem-ptrs <address> [--count N] [--fields off:type,...]
                                          Walk an array of pointers; --fields reads values inside each object pointed to
           mem-refs <address> [--before N] [--module M] [--max N]
@@ -166,6 +172,89 @@ static class MemTools
         if (kept.Count > max)
             Console.WriteLine($"  ... {kept.Count - max} more (--max N)");
         return 0;
+    }
+
+    /// <summary>
+    /// The once-per-mission discovery (docs/MEMORY.md): the player's object by id, its class pointer, then every
+    /// object of that class, named from the mission log. With --seconds, re-reads those objects every second.
+    /// </summary>
+    private static int Roster(ProcessMemory memory, Options options)
+    {
+        var names = MissionLogNames(options.Get("--game"), out int? loggedPlayer);
+        int? playerId = options.Int("--id") ?? loggedPlayer;
+        if (playerId is not { } id)
+            return Fail("No player id: pass --id N (the PLID of the ISPL:1 line in the mission log).");
+
+        var clock = Stopwatch.StartNew();
+        var player = ObjectRoster.FindPlayer(memory, id, out ulong cls);
+        double findPlayer = clock.Elapsed.TotalSeconds;
+        if (player is null)
+            return Fail($"Player object {id} not found ({findPlayer:F1} s). Is the aircraft in the air yet?");
+        var book = new AddressBook(memory);
+        Console.WriteLine($"Player {id} at {book.Name(player.Address)}, class {book.Name(cls)} ({findPlayer:F1} s)");
+
+        clock.Restart();
+        var objects = ObjectRoster.FindAll(memory, cls);
+        Console.WriteLine($"{objects.Count} objects of that class, {objects.Select(o => o.Id).Distinct().Count()} ids ({clock.Elapsed.TotalSeconds:F1} s)");
+        PrintRoster(objects, names, id);
+
+        int seconds = options.Int("--seconds") ?? 0;
+        var end = DateTime.UtcNow.AddSeconds(seconds);
+        // --csv: every object at every read, for comparing with an ACMI afterwards (mem-compare).
+        using var csv = options.Get("--csv") is { } csvPath ? new StreamWriter(csvPath) : null;
+        csv?.WriteLine("utc_ms,id,north,height,east,speed");
+        int interval = Math.Max(100, options.Int("--interval") ?? 1000);
+        while (DateTime.UtcNow < end && !memory.Process.HasExited)
+        {
+            Thread.Sleep(interval);
+            clock.Restart();
+            var now = objects.Select(o => ObjectRoster.Read(memory, o.Address, cls)).OfType<MemoryObject>().ToList();
+            long stamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            foreach (var o in now)
+                csv?.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{stamp},{o.Id},{o.North:F3},{o.Height:F3},{o.East:F3},{o.Speed:F3}"));
+            var me = now.FirstOrDefault(o => o.Id == id);
+            Console.WriteLine($"{DateTime.Now:HH:mm:ss}  {now.Count}/{objects.Count} objects, {now.Select(o => o.Id).Distinct().Count()} ids, read in {clock.Elapsed.TotalMilliseconds:F0} ms"
+                + (me is null ? "  player: gone" : $"  player {me.North:F0} {me.Height:F0} {me.East:F0} {me.Speed * 3.6:F0} km/h"));
+        }
+        return 0;
+    }
+
+    private static void PrintRoster(List<MemoryObject> objects, Dictionary<int, string> names, int playerId)
+    {
+        foreach (var group in objects.GroupBy(o => o.Id).OrderBy(g => names.ContainsKey(g.Key) ? 0 : 1).ThenBy(g => g.Key))
+        {
+            var o = group.First();
+            string name = names.GetValueOrDefault(group.Key) ?? "(not in the mission log)";
+            Console.WriteLine($"  {(group.Key == playerId ? "*" : " ")}{group.Key,9} x{group.Count(),-3} {o.North,10:F0} {o.Height,6:F0} {o.East,10:F0}  {o.Speed * 3.6,5:F0} km/h  {name}");
+        }
+    }
+
+    /// <summary>id → "type | country | name" from the newest mission's text log (AType:12), and the player's PLID (AType:10 ISPL:1).</summary>
+    private static Dictionary<int, string> MissionLogNames(string? game, out int? playerId)
+    {
+        playerId = null;
+        var names = new Dictionary<int, string>();
+        if (Il2Radio.Core.Il2Install.Locate(game) is not { } install)
+            return names;
+        var newest = new DirectoryInfo(install.DataDir).EnumerateFiles("missionReport(*)*.txt").OrderByDescending(f => f.LastWriteTimeUtc).FirstOrDefault();
+        if (newest is null)
+            return names;
+        string stamp = newest.Name[..(newest.Name.IndexOf(')') + 1)];
+        var spawn = new System.Text.RegularExpressions.Regex(@"AType:12 ID:(\d+) TYPE:(.+?) COUNTRY:(\d+) NAME:(.*?) PID:");
+        var plane = new System.Text.RegularExpressions.Regex(@"AType:10 PLID:(\d+) .*ISPL:1 ");
+        foreach (var file in new DirectoryInfo(install.DataDir).EnumerateFiles(stamp.Replace("(", "*").Replace(")", "*") + ".txt"))
+        {
+            if (!file.Name.StartsWith(stamp, StringComparison.Ordinal))
+                continue;
+            foreach (string line in File.ReadLines(file.FullName))
+            {
+                if (spawn.Match(line) is { Success: true } m)
+                    names[int.Parse(m.Groups[1].Value)] = $"{m.Groups[2].Value} | {m.Groups[3].Value} | {m.Groups[4].Value}";
+                else if (plane.Match(line) is { Success: true } p)
+                    playerId = int.Parse(p.Groups[1].Value);
+            }
+        }
+        return names;
     }
 
     /// <summary>Walks an array of 8-byte pointers and shows --fields read from each object they point to.</summary>
