@@ -158,6 +158,7 @@ internal static class KneeboardPanel
                 g.FillRectangle(i % 3 == 0 ? light : dark, x, y, s, s);
             }
         }
+        Foxing(g, paper, map, u, rng);
 
         float edge = 22 * u;
         var shade = Color.FromArgb(85, 0x7A, 0x56, 0x1E); // browner towards the edges, where hands and light have aged it most
@@ -179,6 +180,85 @@ internal static class KneeboardPanel
             g.DrawLine(shine, fold + 2 * u, paper.Top + 2 * u, fold + 2 * u, paper.Bottom - 2 * u);
         using (var edgeLine = new Pen(Color.FromArgb(90, 0x6E, 0x5E, 0x40), Math.Max(1, u)))
             g.DrawRectangle(edgeLine, paper.X, paper.Y, paper.Width, paper.Height);
+    }
+
+    /// <summary>
+    /// A few faint foxing spots, the rust-brown blotches old paper takes on: each a soft, irregular patch darkest off its
+    /// middle, with a few tiny flecks or none, some with a smaller satellite. Only in the paper's margins, never inside the
+    /// map frame, so a stain is never taken for a landmark or a mark. Placed by the sheet's own seeded random, so they stay
+    /// put between redraws.
+    /// </summary>
+    private static void Foxing(Graphics g, RectangleF paper, RectangleF map, float u, Random rng)
+    {
+        var frame = RectangleF.Inflate(map, 6 * u, 6 * u); // the map and its double neat line
+        var state = g.Save();
+        g.SetClip(frame, CombineMode.Exclude); // a safeguard: nothing below may reach into the map
+        int spots = 5 + rng.Next(4);
+        for (int i = 0; i < spots; i++)
+        {
+            // Try a few places on the sheet; keep one with room in the margin, and size the stain to that room.
+            for (int attempt = 0; attempt < 40; attempt++)
+            {
+                float x = paper.Left + (0.04f + 0.92f * (float)rng.NextDouble()) * paper.Width;
+                float y = paper.Top + (0.04f + 0.92f * (float)rng.NextDouble()) * paper.Height;
+                float room = Math.Min(Clearance(frame, x, y), Clearance(paper, x, y, inside: true)) - 2 * u;
+                if (room < 3 * u)
+                    continue;
+                float r = Math.Min((5f + 10f * (float)rng.NextDouble()) * u, room / 1.25f); // the outline wanders to 1.25 r
+                Spot(x, y, r, 75 + rng.Next(25));
+                if (rng.NextDouble() < 0.5) // a satellite fleck beside the larger spot
+                {
+                    float sx = x + (float)(rng.NextDouble() * 2 - 1) * r * 1.8f, sy = y + (float)(rng.NextDouble() * 2 - 1) * r * 1.8f;
+                    if (Math.Min(Clearance(frame, sx, sy), Clearance(paper, sx, sy, inside: true)) > r * 0.5f + 2 * u)
+                        Spot(sx, sy, r * 0.4f, 70);
+                }
+                break;
+            }
+        }
+        g.Restore(state);
+
+        // Distance from a point to a rectangle's edge: outside it (0 when inside), or, with inside, from within it.
+        static float Clearance(RectangleF r, float x, float y, bool inside = false)
+        {
+            if (inside)
+                return Math.Min(Math.Min(x - r.Left, r.Right - x), Math.Min(y - r.Top, r.Bottom - y));
+            float dx = Math.Max(Math.Max(r.Left - x, x - r.Right), 0), dy = Math.Max(Math.Max(r.Top - y, y - r.Bottom), 0);
+            return MathF.Sqrt(dx * dx + dy * dy);
+        }
+
+        void Spot(float x, float y, float r, int alpha)
+        {
+            const int n = 10;
+            var outline = new PointF[n];
+            for (int k = 0; k < n; k++)
+            {
+                double t = k * 2 * Math.PI / n;
+                float rr = r * (0.75f + 0.5f * (float)rng.NextDouble());
+                outline[k] = new PointF(x + (float)Math.Cos(t) * rr, y + (float)Math.Sin(t) * rr * 0.85f);
+            }
+            using var path = new GraphicsPath();
+            path.AddClosedCurve(outline, 0.6f);
+            // The stain is darkest off the middle, where it began, not at a bullseye.
+            float cx = x + (float)(rng.NextDouble() * 2 - 1) * r * 0.35f, cy = y + (float)(rng.NextDouble() * 2 - 1) * r * 0.3f;
+            using var brush = new PathGradientBrush(path)
+            {
+                CenterPoint = new PointF(cx, cy),
+                CenterColor = Color.FromArgb(alpha, 0x8A, 0x55, 0x1C),
+                SurroundColors = [Color.FromArgb(0, 0x8A, 0x55, 0x1C)],
+            };
+            g.FillPath(brush, path);
+
+            // A few tiny darker flecks scattered in it, none to three, each its own size and strength.
+            int flecks = rng.Next(4);
+            for (int k = 0; k < flecks; k++)
+            {
+                double t = rng.NextDouble() * 2 * Math.PI;
+                float d = r * 0.55f * (float)rng.NextDouble();
+                float s = r * (0.06f + 0.12f * (float)rng.NextDouble());
+                using var fleck = new SolidBrush(Color.FromArgb(alpha / 4 + rng.Next(alpha / 4 + 1), 0x7A, 0x45, 0x14));
+                g.FillEllipse(fleck, cx + (float)Math.Cos(t) * d - s, cy + (float)Math.Sin(t) * d - s * 0.8f, 2 * s, 1.6f * s);
+            }
+        }
     }
 
     /// <summary>Fine printed grid; on the large view the square numbers along the top and left margins, and a double neat line.</summary>
