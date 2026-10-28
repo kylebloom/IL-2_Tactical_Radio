@@ -75,7 +75,7 @@ The radio watches keys without taking them, so IL-2 still sees them. Choose keys
 - **IL-2 not found:** set the IL-2 folder (the one containing `data\startup.cfg`) on the Settings tab.
 ## Reporting a bug
 
-Each time the radio closes, it writes a session report to the `logs` folder next to the program (the Start menu has a link to it). Please attach the newest `evidence-*.md` to your report, and say what you pressed and what you expected. The report includes the radio's version, which is also shown on the Help tab.
+Each time the radio closes, it writes a session report to the `logs` folder next to the program (the Start menu has a link to it). Please attach the newest `evidence-*.md` to your report, with the `positions-*.csv` of the same time if there is one, and say what you pressed and what you expected. The report includes the radio's version, which is also shown on the Help tab.
 
 Report bugs at https://github.com/kylebloom/AI_Friendly_Radio/issues
 

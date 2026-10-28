@@ -70,7 +70,7 @@ static class MemTools
                                          Find every scene object (once per mission) from the player's id in the newest
                                          mission log, and name each from the log; --seconds re-reads them every second;
                                          --rescan S looks for new objects every S s and reports objects that appear or vanish
-          mem-compare <csv> [acmi]       Check a mem-roster --csv log against the ACMI of the same flight (default: newest);
+          mem-compare <csv> [acmi]       Check a mem-roster --csv or positions-*.csv log against the ACMI of the same flight (default: newest);
                                          fits the map between the frames and reports what differs. Needs no game
           mem-ptrs <address> [--count N] [--fields off:type,...]
                                          Walk an array of pointers; --fields reads values inside each object pointed to

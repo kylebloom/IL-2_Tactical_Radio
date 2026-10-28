@@ -1,12 +1,13 @@
 ---
 name: il2-radio-flight-review
-description: Reviews the most recent flight session of the IL-2 tactical radio (the newest evidence-*.md log plus that mission's ACMI track, mission logs and Career plan). Checks that every reply was accurate and honest, that unasked calls fired when, and only when, they should have, and looks for enhancements that bring the radio closer to what real pilots on a WWII net would have known and said. Use after a flight, or when the user asks to review, audit or check the last log or session. Reports findings; it does not change code.
+description: Reviews the most recent flight session of the IL-2 tactical radio (the newest evidence-*.md log plus its positions-*.csv memory log, that mission's ACMI track if one was recorded, mission logs and Career plan). Checks that every reply was accurate and honest, that unasked calls fired when, and only when, they should have, and looks for enhancements that bring the radio closer to what real pilots on a WWII net would have known and said. Use after a flight, or when the user asks to review, audit or check the last log or session. Reports findings; it does not change code.
 ---
 
 You are reviewing one flight flown with the IL-2 tactical radio, a companion app for IL-2 Sturmovik: Great Battles single-player Career. It answers numpad radio requests, and makes some unasked calls, with spoken replies in the game's own pilot voices and on-screen chat. Its information comes only from the game's outputs:
 - mission-log chunks (`missionReport(...)[N].mlg/.txt`);
 - the Career mission file (`_gen.Mission`);
-- the Tacview ACMI track, read through an on-demand Volume Shadow Copy because IL-2 locks it.
+- positions read from IL-2's memory (read-only), the default since 2026-10-28;
+- the Tacview ACMI track, read through an on-demand Volume Shadow Copy because IL-2 locks it, as the fallback when memory can't be read.
 
 **The goal of the tool:** support realism and immersion for a player who flies with no aids (no icons, no map marker, no labels), giving them only what real pilots talking to each other on the radio would have had. Good calls are short, correct, timely and in period. Every call that tells the player more than a pilot in that flight could have seen or known breaks the goal as surely as a wrong one.
 
@@ -32,21 +33,26 @@ You have three jobs, in this order:
   - Diag runs from this repo: `diag-output\`.
 
   Say which file you reviewed and when it was flown. If the user named a different one, use theirs. If the newest one is short or empty (a start-up without a flight), say so and offer the previous one.
+- **The memory position log** beside it, `positions-yyyyMMdd-HHmmss.csv` with the same timestamp (the evidence header names it and its row count). It is written whenever memory was live: every aircraft at every read, about once a second and at each radio call, named or not. Columns: `utc_ms,id,north,height,east,speed,heading,session_s,name,type,coalition,status`.
+  - `north`/`east` are mission-log metres (the map's own frame), `height` metres above sea level, `speed` m/s, `heading` the course over ground the radio used (blank until the aircraft has moved 30 m).
+  - `id` is the mission-log id; `name`/`type`/`coalition`/`status` are blank until the mission log named the aircraft, and the radio never uses an unnamed one.
+  - `status` is the tracker's view at that read: a `Destroyed` aircraft still moves in memory for ~40 s while it falls (docs/MEMORY.md), and must not have answered.
+  - `utc_ms` is Unix milliseconds; evidence note times are local wall-clock, so convert with the machine's UTC offset and say which you used.
 - **The same mission's game files**, in the IL-2 install (`C:\Program Files (x86)\Steam\steamapps\common\IL-2 Sturmovik Battle of Stalingrad`, or `IL2_PATH`). The evidence header names the ACMI and `.mlg` paths.
-  - `data\Tracks\*.acmi`: the ground truth for positions;
+  - `data\Tracks\*.acmi`: ground truth for positions when the player recorded a track (independent of what the radio read, so it also checks the memory log; `Il2Radio.Diag mem-compare <positions.csv> <acmi>` measures the two against each other);
   - `data\missionReport(<start>)[N].mlg/.txt`: these survive only until the next mission starts; `data\FlightLogs\*.mlg` keeps whole missions;
   - `data\Missions\_gen.Mission`: the plan (callsigns, flights, waypoints). It is overwritten by the next Career mission, so check its timestamp against the flight.
   - `settings.json` beside the `Il2Radio.exe` that was flown: realism level, visibility settings, chat output, voice, key bindings.
 
   If a file is gone, say what you couldn't check because of it.
-- **Don't disturb a flight.** If IL-2 or `Il2Radio.exe` is running, don't start Diag `live`, `chat-test` or the app; they share the numpad and the RTSS slot. A locked ACMI can only be read by snapshot from an administrator process. If you can't read it, review the evidence file alone and say that the positions are unchecked.
+- **Don't disturb a flight.** If IL-2 or `Il2Radio.exe` is running, don't start Diag `live`, `chat-test` or the app; they share the numpad and the RTSS slot. A locked ACMI can only be read by snapshot from an administrator process. If you can't read it, use the memory position log; with neither, review the evidence file alone and say that the positions are unchecked.
 
 ## 3. Reconstruct what really happened
 - **Read the evidence file end to end.**
   - The header gives the program version, data sources and their growth, every ACMI aircraft with its update span, and replies held for IL-2's own radio.
   - "Contacts at end of session" gives the tracker's final view.
   - "Notes" is the timeline: `RADIO:` replies with fix age, `silent:` lines (who was left out and why), `unasked:` calls, `warning:` lines, snapshot timings, `mlg:`/`acmi:`/`mission:` events and errors.
-- **Build a ground-truth timeline from the ACMI.**
+- **Build a ground-truth timeline** from the memory position log, or from the ACMI when there is one. Say which you used. The memory log is what the radio itself read, so it checks the reply logic (rounding, visibility, who answers) but not the reading of memory; only an ACMI checks that. Where both exist, prefer the ACMI for geometry and use the memory log to see exactly what the radio had at each call.
   - Write small scripts to the scratchpad and run them with `python -I <script> <file>`. Read game files in place; never copy them or game audio into the repo.
   - ACMI times are seconds from the header's `ReferenceTime`; evidence times are local wall-clock. Map one to the other with care: the snapshot taken for each call is the best anchor, and the track's file name holds its start time. State the offset you used and how you got it.
   - For each call, compute at that moment: the player's position, heading and altitude; each friendly's and enemy's bearing, range, clock position and relative height; who was alive; and what the player could plausibly see (range, aspect, cloud, sun).

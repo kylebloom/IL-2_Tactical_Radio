@@ -16,7 +16,7 @@ The user is an experienced .NET engineer who flies Luftwaffe in Battle of Stalin
    - which program (`Il2Radio.exe` or `Il2Radio.Diag live`) and which key or command;
    - what was said or shown versus what they expected;
    - the time of the flight;
-   - the session's evidence file. The flying copy is outside this repo, at `%USERPROFILE%\Desktop\IL2\IL2Radio\`: `Il2Radio.exe`, `settings.json` beside it, and `logs\evidence-*.md` (plus `udp-capture-*.bin`). Diag run from this repo writes `diag-output\evidence-*.md`. Repo `bin\` and `publish\` are build output, not that copy;
+   - the session's evidence file. The flying copy is outside this repo, at `%USERPROFILE%\Desktop\IL2\IL2Radio\`: `Il2Radio.exe`, `settings.json` beside it, and `logs\evidence-*.md` (plus `positions-*.csv`, every aircraft at every memory read, and `udp-capture-*.bin`). Diag run from this repo writes `diag-output\evidence-*.md`. Repo `bin\` and `publish\` are build output, not that copy;
    - a screenshot or the console text, if it's a display problem.
 
 ## Find the evidence

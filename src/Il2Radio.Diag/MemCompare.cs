@@ -18,7 +18,7 @@ static class MemCompare
     public static int Run(string? csvPath, string? acmiPath)
     {
         if (csvPath is null || !File.Exists(csvPath))
-            return Fail("Usage: mem-compare <memory.csv> [track.acmi]  (the CSV from mem-roster --csv)");
+            return Fail("Usage: mem-compare <memory.csv> [track.acmi]  (from mem-roster --csv, or the radio's positions-*.csv)");
         if (acmiPath is null || !File.Exists(acmiPath))
             return Fail("ACMI file not found.");
 

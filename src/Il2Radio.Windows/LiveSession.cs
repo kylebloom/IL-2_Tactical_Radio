@@ -6,6 +6,7 @@ using Il2Radio.Core;
 using Il2Radio.Core.Acmi;
 using Il2Radio.Core.Contacts;
 using Il2Radio.Core.Geometry;
+using Il2Radio.Core.Memory;
 using Il2Radio.Core.MissionFile;
 using Il2Radio.Core.MissionLog;
 using Il2Radio.Core.Radio;
@@ -150,6 +151,9 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     private MemoryPositions? _memoryPositions;
     private bool _memoryLive;
     private string? _missionFile; // MFile of the mission log's AType:0: memory is read only for missions generated here
+    private StreamWriter? _positionLog; // positions-*.csv beside the evidence: the review's ground truth without a track
+    private string? _positionLogPath;
+    private long _positionRows;
 
     /// <summary>The track's positions are not applied: memory supplies them, or the player chose memory only. The two frames never mix.</summary>
     private bool TrackPositionsOff => _memoryLive || options.Positions == PositionsMode.Memory;
@@ -207,6 +211,11 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         }
 
         try { await udp; } catch (OperationCanceledException) { }
+        lock (_gate)
+        {
+            _positionLog?.Dispose();
+            _positionLog = null;
+        }
         string summary = WriteSummary();
         if (options.Status is null)
             Console.WriteLine($"\nEvidence summary written to {summary}");
@@ -745,8 +754,10 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         bool live = aircraft is not null;
         if (aircraft is not null)
         {
-            _tracker.Apply(aircraft, (DateTime.UtcNow - _startedUtc).TotalSeconds);
+            double time = (DateTime.UtcNow - _startedUtc).TotalSeconds;
+            _tracker.Apply(aircraft, time);
             EnemyCommands.Notice(_tracker, Radio(), _sightings);
+            LogPositions(aircraft, time);
         }
         if (live != _memoryLive)
         {
@@ -754,6 +765,41 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
                 : options.Positions == PositionsMode.Memory ? $"positions: IL-2's memory not readable ({_memoryPositions.Status})"
                 : $"positions: IL-2's memory not readable ({_memoryPositions.Status}); using the track recording");
             _memoryLive = live;
+        }
+    }
+
+    /// <summary>
+    /// Appends every aircraft of one memory read to positions-*.csv (<see cref="PositionLog"/>), named or not,
+    /// flushed each read so a crash keeps the flight. A write failure stops the log, never the radio. Caller holds _gate.
+    /// </summary>
+    private void LogPositions(IReadOnlyList<MemoryAircraft> aircraft, double time)
+    {
+        if (_positionLogPath is not null && _positionLog is null)
+            return; // failed earlier
+        try
+        {
+            if (_positionLog is null)
+            {
+                _positionLogPath = Path.Combine(_outputDir, $"positions-{_startedUtc:yyyyMMdd-HHmmss}.csv");
+                _positionLog = new StreamWriter(_positionLogPath, append: true);
+                if (_positionLog.BaseStream.Length == 0)
+                    _positionLog.WriteLine(PositionLog.Header);
+            }
+            long utcMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var byId = new Dictionary<long, Contact>();
+            foreach (var c in _tracker.Contacts)
+                if (c.LogId is long id)
+                    byId.TryAdd(id, c);
+            foreach (var a in aircraft)
+                _positionLog.WriteLine(PositionLog.Row(utcMs, time, a, byId.GetValueOrDefault(a.Id)));
+            _positionLog.Flush();
+            _positionRows += aircraft.Count;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Note($"positions log stopped: {ex.Message}");
+            _positionLog?.Dispose();
+            _positionLog = null;
         }
     }
 
@@ -1045,6 +1091,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             sb.AppendLine($"- Binary mission log: {(_mlg?.Path ?? "none")} — {_mlgEvents} events, file grew during session {_mlgGrowthCount} times (last {(_mlgLastGrowthUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "never")})");
             sb.AppendLine($"- Text mission log: {_textEvents} events across {_textLogOffsets.Count} files");
             sb.AppendLine($"- Positions: {options.Positions}; memory {(_memoryPositions is null ? "off" : _memoryPositions.Status)}");
+            sb.AppendLine($"- Memory position log: {(_positionLogPath is null ? "none (memory never live)" : $"{_positionLogPath} — {_positionRows} rows")}");
             sb.AppendLine($"- ACMI: {(_acmiPath ?? "none")} — grew {_acmiGrowthCount} times (last {(_acmiLastGrowthUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "never")}), stream time {_acmi?.CurrentTime:F0} s");
             if (_acmi is not null)
             {

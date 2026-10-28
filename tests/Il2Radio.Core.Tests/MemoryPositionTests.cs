@@ -169,6 +169,23 @@ public class MemoryPositionTests
         Assert.Single(aircraft, a => a.Id == Yak);
     }
 
+    [Fact]
+    public void The_position_log_row_keeps_mem_roster_columns_first_and_adds_who_it_is()
+    {
+        Read(10, At(Raub, 120000, 160000));
+        Read(11, At(Raub, 120100, 160050, 1234.56));
+
+        string row = PositionLog.Row(1_761_600_000_123, 11, At(Raub, 120100, 160050, 1234.56), Contact(Raub));
+        string unnamed = PositionLog.Row(1_761_600_000_123, 11, At(1567743, 120226, 157036, 56), null);
+
+        var f = row.Split(',');
+        Assert.Equal(PositionLog.Header.Split(',').Length, f.Length);
+        Assert.Equal(["1761600000123", Raub.ToString(), "120100.0", "1234.6", "160050.0", "100.0", "27", "11.0"], f[..8]);
+        Assert.Contains("Raub", f[8]);
+        Assert.Equal(("Bf 109 F-4", "2", "Spawned"), (f[9], f[10], f[11]));
+        Assert.Equal("1761600000123,1567743,120226.0,56.0,157036.0,100.0,,11.0,,,,", unnamed);
+    }
+
     [Theory]
     [InlineData("auto", PositionsMode.Auto)]
     [InlineData("Memory", PositionsMode.Memory)]
