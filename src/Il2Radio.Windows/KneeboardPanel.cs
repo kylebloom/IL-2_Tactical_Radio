@@ -23,8 +23,8 @@ internal static class KneeboardPanel
 
     private static readonly Color Board = Color.FromArgb(0x2E, 0x29, 0x22);
     private static readonly Color BoardEdge = Color.FromArgb(0x55, 0x4B, 0x3C);
-    private static readonly Color Paper = Color.FromArgb(0xE6, 0xDE, 0xC6);
-    private static readonly Color GridLine = Color.FromArgb(0x9C, 0x8F, 0x74);
+    private static readonly Color Paper = Color.FromArgb(0xEA, 0xD8, 0xA8); // yellowed with age, as a sheet carried for a season
+    private static readonly Color GridLine = Color.FromArgb(0x8E, 0x78, 0x50);
     private static readonly Color Print = Color.FromArgb(0x4A, 0x40, 0x30);
     private static readonly Color Graphite = Color.FromArgb(0x3A, 0x38, 0x36);
     private static readonly Color RedPencil = Color.FromArgb(0xA8, 0x2A, 0x1E);
@@ -148,8 +148,8 @@ internal static class KneeboardPanel
 
         var rng = new Random((int)(paper.Width * 31 + paper.Height)); // grain fixed for a sheet of this size
         int specks = (int)(paper.Width * paper.Height / (9 * u * u + 1));
-        using (var dark = new SolidBrush(Color.FromArgb(16, 0x5A, 0x48, 0x2A)))
-        using (var light = new SolidBrush(Color.FromArgb(22, 255, 255, 240)))
+        using (var dark = new SolidBrush(Color.FromArgb(20, 0x6A, 0x4E, 0x22)))
+        using (var light = new SolidBrush(Color.FromArgb(18, 0xFF, 0xF6, 0xD8)))
         {
             for (int i = 0; i < specks; i++)
             {
@@ -159,8 +159,8 @@ internal static class KneeboardPanel
             }
         }
 
-        float edge = 16 * u;
-        var shade = Color.FromArgb(55, 0x6E, 0x55, 0x30);
+        float edge = 22 * u;
+        var shade = Color.FromArgb(85, 0x7A, 0x56, 0x1E); // browner towards the edges, where hands and light have aged it most
         void Edge(RectangleF band, LinearGradientMode mode, bool flip)
         {
             using var brush = new LinearGradientBrush(band, flip ? Color.Transparent : shade, flip ? shade : Color.Transparent, mode);
