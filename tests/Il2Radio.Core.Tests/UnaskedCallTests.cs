@@ -491,7 +491,7 @@ public class UnaskedCallTests
         Frame(10, 100_000, 208_000, 90, Enemy(208_600, 100_000));
 
         var contact = Say();
-        Assert.DoesNotContain("heading", contact!.Text);
+        Assert.DoesNotMatch(@"heading \d{3}", contact!.Text); // the contact's own direction of flight is a compass word, not a course call
         Assert.Null(Say());
 
         // Removal takes effect on the next frame. Sure spotting would still see him anywhere on the map.
@@ -509,7 +509,7 @@ public class UnaskedCallTests
     {
         RouteMission(playerFormation: 2, leaderFormation: 1);
         Frame(10, 100_000, 208_000, 90, Enemy(208_600, 100_000));
-        Assert.DoesNotContain("heading", Say()!.Text);
+        Assert.DoesNotMatch(@"heading \d{3}", Say()!.Text);
 
         _acmi.Feed("#20\n-e\n#21\n");
         Frame(21, 100_000, 208_200, 90);

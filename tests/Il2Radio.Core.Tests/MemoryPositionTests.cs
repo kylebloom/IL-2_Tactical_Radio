@@ -152,6 +152,18 @@ public class MemoryPositionTests
     }
 
     [Fact]
+    public void An_enemy_from_memory_is_called_with_its_course_over_ground_once_it_has_moved()
+    {
+        var sure = new RadioSettings { Visibility = new VisibilitySettings { DetectMetresPerSpanMetre = 100_000, MaxDetectFactor = 100, MisidentificationChance = 0 } };
+        Read(10, At(Player, 120000, 157000), At(Raub, 120000, 157100), At(Yak, 121000, 157000, 1100));
+        Assert.DoesNotContain("heading", Assert.Single(EnemyCommands.EnemyContacts(_tracker, sure).Replies).Text); // not moved yet: no course
+
+        Read(11, At(Player, 120000, 157100), At(Raub, 120000, 157200), At(Yak, 121000, 156880, 1100)); // 120 m west
+
+        Assert.EndsWith(", heading west.", Assert.Single(EnemyCommands.EnemyContacts(_tracker, sure).Replies).Text);
+    }
+
+    [Fact]
     public void An_aircraft_reading_is_the_median_of_its_parts()
     {
         var parts = new[]

@@ -28,9 +28,15 @@ public static class RadioGuide
         new(RadioCommand.Rejoin, "rejoin",
             "You have lost your flight and need to get back to it. The main part of your flight answers. If those pilots can see you, they say where they are and add a heading and altitude. If they cannot see you, they still give heading and altitude rather than guessing a clock position. If you are already with them, they say so. Use this when you are separated. While you are still with the formation and only want a position, use Flight position."),
         new(RadioCommand.EnemyContacts, "enemyContacts",
-            "You want the hostile or still-unknown aircraft your side can see, or to hear that the pilots who can answer have nothing in sight. This is not radar. Your own flight reports, and only what those pilots could plausibly see. If you are flying alone, any friendly in radio range reports instead. Use it when you suspect other aircraft, once a fight starts, or to ask whether anyone has a contact. A distant speck stays unidentified; side and type are named only from closer in. A contact that has just passed out of sight can still be reported for about a minute, as where it was last seen."),
+            "You want the hostile or still-unknown aircraft your side can see, or to hear that the pilots who can answer have nothing in sight. This is not radar. Your own flight reports, and only what those pilots could plausibly see. If you are flying alone, any friendly in radio range reports instead. Use it when you suspect other aircraft, once a fight starts, or to ask whether anyone has a contact. A distant speck stays unidentified; side and type are named only from closer in. Once a group is close enough for its shape to be made out, the call also says which way it is flying, on the eight points of the compass (\"heading west\"); a group fighting the pilot who reports it gets no direction. A contact that has just passed out of sight can still be reported for about a minute, as where it was last seen and the way it was then flying."),
         new(RadioCommand.IdentifyContact, "identifyContact",
             "You want the nearest aircraft anyone can see, called in more detail than the contacts picture: shape, side or type, as far as the look allows, and which way it is going when that can be made out. It may be hostile, friendly or still unknown. Use this when one contact is the one you care about. For the whole picture, use Enemy contacts."),
+        new(RadioCommand.RoutePosition, "routePosition",
+            "You want to know where you are on your briefed route without opening the map: your map square (on the Stalingrad map), which leg of the route you are on, and the next waypoint as a course and a distance. Your leader answers when he is flying with you or can see you; when you lead, fly alone, or he cannot see you, it is your own reading of the map, shown on screen and not spoken. The leg and the course need live positions from the game's memory; from a track recording alone you get only the square, and the radio says why."),
+        new(RadioCommand.SteerHome, "steerHome",
+            "You want a course and distance to your home airfield, the field of your side by the briefed landing point. Answered the same way as the route call, and only from positions read from the game's memory: a track recording is not on the same map grid as the briefing, so no steer is guessed from it."),
+        new(RadioCommand.SteerTarget, "steerTarget",
+            "You want a course and distance to the briefed target: the next attack or patrol area on your route. An escort or a mission without an attack area has none, and the answer says so. Like the steer home, it is given only from positions read from the game's memory."),
     ];
 
     /// <summary>A key that is not a radio call. <see cref="Action"/> matches the settings key names.</summary>
@@ -39,7 +45,7 @@ public static class RadioGuide
     public static IReadOnlyList<Utility> OtherKeys { get; } =
     [
         new("menu", "Radio menu",
-            "Opens the radio menu in the game: every call, grouped as Flight, Enemy and Radio log. Choose with numpad 1 to 5; while the menu is open those keys pick from it instead of making their usual call. The menu key steps back a level and closes the menu at the top, and the quit key closes it too. It closes on its own after a few seconds without a key."),
+            "Opens the radio menu in the game: every call, grouped as Flight (including where you are on the route and the steers home and to the target), Enemy and Radio log. Choose with numpad 1 to 5; while the menu is open those keys pick from it instead of making their usual call. The menu key steps back a level and closes the menu at the top, and the quit key closes it too. It closes on its own after a few seconds without a key."),
         new("older", "Earlier messages",
             "Pages back through the radio log. Each line is stamped with the mission time, the same time as the watch in the cockpit."),
         new("newer", "Later messages",

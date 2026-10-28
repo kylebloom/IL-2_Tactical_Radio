@@ -126,6 +126,27 @@ public enum SpeechWord
 
     /// <summary>"Rejoin formation": the flight tells the player, who has run ahead of it, to slow down and close up.</summary>
     Rejoin,
+
+    /// <summary>
+    /// "Leg three of six": the leg of the briefed waypoint chain the player is on. Value is the leg (from 1),
+    /// <see cref="SpeechToken.Name"/> the number of legs. No recording says it; chat only.
+    /// </summary>
+    Leg,
+
+    /// <summary>"14 kilometres off the route": the player's distance from the nearest briefed leg, metres. Chat only.</summary>
+    OffRoute,
+
+    /// <summary>
+    /// "Next waypoint": the <see cref="Course"/> and <see cref="Range"/> that follow are to it. <see cref="SpeechToken.Name"/>
+    /// is its kind when the text says one ("attack area", "landing"). Chat only.
+    /// </summary>
+    Waypoint,
+
+    /// <summary>
+    /// The briefed place a steer is to: <see cref="SpeechToken.Name"/> is the airfield's name ("Tusov") or "target area".
+    /// The <see cref="Course"/> and <see cref="Range"/> that follow are to it. No recording names a field; chat only.
+    /// </summary>
+    Destination,
 }
 
 /// <summary>

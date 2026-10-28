@@ -34,7 +34,9 @@ public class RadioMenuTests
         Assert.True(result.Changed);
         Assert.Null(result.Command);
         Assert.Equal("Radio › Flight", menu.View!.Title);
-        Assert.Equal(["Request flight position", "Separated — request rejoin"], menu.View.Entries.Select(e => e.Label));
+        Assert.Equal(["Request flight position", "Separated — request rejoin", "Where am I on the route", "Steer home", "Steer to target"],
+            menu.View.Entries.Select(e => e.Label));
+        Assert.Equal([1, 2, 3, 4, 5], menu.View.Entries.Select(e => e.Digit)); // still within the radio's numpad keys
         Assert.Equal("Num0 back · Num. closes", menu.View.Footer);
 
         menu.MenuKey(T0.AddSeconds(2));

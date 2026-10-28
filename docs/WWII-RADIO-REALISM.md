@@ -69,6 +69,8 @@ Numpad 4 gives the number, the type or the class, a clock or "on me", a range ba
 
 The report that matches the look is: how many, what they appear to be, where they are, high or low, and which way they are going. "Heading west" can use the eight-point compass clips already mapped. "Crossing to the left" would use `toLeft` / `toRight`, which exist on the pilot actors and are not in the voice manifest; the file names are a guess until someone listens (see the clip table). A "last seen" call keeps the heading from that look. It does not take a newer heading off the track.
 
+**Built 2026-10-28, compass words only.** Numpad 4, and so the unasked picture call, now ends "…, high, heading west." for a group the visibility model has seen at class range or closer (about 4 km for a fighter): the look at which the planform, and so the nose, can be made out. A speck at "sighted" range gets no direction. The direction is the group's course over ground; a "last seen" call keeps the one from the last look that saw it, and none if that look was only a speck. A group on the reporting pilot ("on me") gets none, and neither does a group whose members fly different ways. "Crossing left/right" was not used: since 2026-10-26 `toLeft`/`toRight` are mapped as the close-in "to the left / to the right" of a mate in formation (FEASIBILITY.md, "Placeholder clips"), not a direction of travel, so the headset says the compass clip. A heading change alone is not a new unasked picture: replaying four Career tracks gave the same calls at the same times as before, with only the direction added.
+
 ### 3. The player's transmission is a click, and the request is modern English
 
 The line on screen is "All friendlies, report positions" or "Flight, identify nearest contact." The headset hears the click and then the answer. The answer starts with the speaker's callsign, which is the right opening, and then the facts. Nobody says understood, nobody hands the channel back, and the player never hears his own sentence.
@@ -111,7 +113,7 @@ A model that stays inside the evidence: keep a hard cap near today's 40 km for t
 
 Separated pilots asked the field for a course back. The current mission has seven airfields, each with a name, a country, a callsign and an IL-2 world position. Tusov is the German field, country 201, callsign 30. `Options.WindLayers` gives a direction-like value and a speed-like value at several heights. `MissionWeather` reads cloud, haze and start time, and does not read the wind (VERIFIED, this mission file and `MissionFile.cs`).
 
-The live player position is the ACMI frame. The airfield is IL-2 world metres. Those frames are never compared, because their origins are not known to coincide (`CoordinateFrame`). A steer toward Tusov computed by treating the numbers as one grid would be a bearing the integration cannot establish. The check that would unlock it is the one FEASIBILITY.md already names: a take-off, where the log's world position and the ACMI position are the same aircraft at the same moment. Until that check passes, the radio should not offer a course to the field.
+When this was written (26 October) the live player position was the ACMI frame, the airfield IL-2 world metres, and those frames are never compared (`CoordinateFrame`). That still holds for the ACMI. **Since 2026-10-27 the live position usually comes from IL-2's memory, which is in the mission's own metres (`CoordinateFrame.Il2World`, MEMORY.md): the same frame as the airfields and waypoints.** VERIFIED 2026-10-28: the player's aircraft parked at Tusov read north 119869, east 157810, height 56.9 m in memory (`positions-20261028-115825.csv`), 0.8 km from the mission file's Tusov airfield object (119605, 157026, 55.4 m), well inside the field. So a steer from a memory fix is honest, and was built on 2026-10-28 (radio menu, Flight ›): "Steer home" gives the course to the nearest 5° and the distance to the player's own side's field by the briefed landing waypoint ("Tusov, heading 250, 19 kilometres."), "Steer to target" the same to the next briefed attack area, and "Where am I on the route" the map square, the leg and the next waypoint. With only an ACMI fix the radio still offers no course: the steer answers "no steer" on the chat and the route call gives only the square. Who answers: the AI leader when he is with the player or can see him; otherwise the player's own map reading on the chat. The tower is not used: its German actor cannot say this field's callsign (below), and the pilot clips say the compass point, not the figure.
 
 Wind does not need that check. It is the weather the mission is simulating, and the tower recordings have `wind_n` through `wind_w`, `wind_calm` and `wind_strong` (actor 61, file names). A short wind call is honest. It is also low value once the fight has started, and the game's own tower already talks on the airfield net. The German tower actor's callsign clips are birds 1–20 only. Callsign 30 is a tree in the game's table, so that actor cannot speak this field's callsign (VERIFIED, file list). Taxi and landing clearances are the game's radio; repeating them would be the chatter to avoid.
 
@@ -121,7 +123,7 @@ Actor 71's file names are a controller's: intercept, in contact, hold in sector,
 
 A controller may say only what an observer at a known point could see, under the same visibility model the pilots use. He may not read enemy flights out of `_gen.Mission`. That file is the plan. The honesty rule already stops pilots presenting it as a sighting, and a ground voice is the same rule. On this front in 1942 the picture was eyes, flares and the occasional report, not a Freya commentary. A running plot of the map is the 1944 Reich net, and it needs both the radar and the code book this theatre did not have.
 
-`insector` and `outsector` on the pilot actors are the same kind of temptation. They are honest only if the sector is a briefed area and the aircraft's live position can be tested against it. That test has the same frame problem as the airfield.
+`insector` and `outsector` on the pilot actors are the same kind of temptation. They are honest only if the sector is a briefed area and the aircraft's live position can be tested against it. That test had the same frame problem as the airfield; with memory positions (2026-10-27) it no longer does, for a memory fix only.
 
 ### 9. Every friendly is assumed to have a working transmitter
 
@@ -150,7 +152,7 @@ VERIFIED as file names under `data\Audio\radio\ger\` on this install, 26 October
 | Pilot `const` | `ord_rejoin`, `ord_coverme`, `ord_followme`, `ord_atkair`, the formation orders | Orders. The game menu already speaks these. Easy to duplicate |
 | Pilot `const` | `insector`, `outsector` | Sector. Needs a briefed area in the same frame as the track |
 | Pilot `varDir` | `toLeft`, `toRight`, `toBack`, `toCourse` | Close-in direction. Clock, high, low and the eight compass points are already mapped |
-| Tower actor 61 | `clrtakeoff`, `clrtolnd`, `varWind\*` | Airfield. Wind is in the mission; a bearing to the field is not, until the frames match. Callsign clips are birds 1–20 only |
+| Tower actor 61 | `clrtakeoff`, `clrtolnd`, `varWind\*` | Airfield. Wind is in the mission. A bearing to the field is now given from memory fixes (2026-10-28), but by the flight or the player's own map, not the tower. Callsign clips are birds 1–20 only |
 | Actor 71 | `intercept`, `incontact`, `holdinsec`, storm callsigns 41–45 | A controller voice. No such unit in the current mission, and no licence to read the plan |
 | Actors 81–82 | `gun_*` | Gunners, not the fighter net |
 | Actors 91–93 | tank `varRange` in metres | The wrong voice for a pilot's altitude |
@@ -160,11 +162,11 @@ The longer callsign takes `acs_*` and `acn_*` are still unexplained, as in FEASI
 ## Order, if any of this is built
 
 1. **Own flight only on the position call.** Other flights stay quiet unless they are the eyes for a contact, or the player's flight cannot answer. Speak one contact picture, not four.
-2. **Heading on a contact that is still in sight**, from the fix the call already uses, including on a "last seen" look.
+2. ~~**Heading on a contact that is still in sight**, from the fix the call already uses, including on a "last seen" look.~~ Built 2026-10-28 (finding 2).
 3. **Listen** to `roger`, `copy`, `ord_rejoin`, `toLeft`, `toBack` and `rep_imhit` with `voice-check --country 201 --play` before any of them is mapped. Correct the manifest by ear.
 4. **Trouble calls**, sparse: bail-out, destruction, and heavy damage. One flight to judge the 30-second delay. No fuel and no ammunition.
 5. **Noisier HF, and a shorter reach at low level**, still with a hard cap. Variant-specific VHF only when that variant is actually in the sortie.
-6. **A course to the field** only after a take-off has shown that IL-2 world positions and ACMI positions are the same grid.
+6. ~~**A course to the field** only after a take-off has shown that IL-2 world positions and ACMI positions are the same grid.~~ Built 2026-10-28 from memory fixes, which are already in the mission's grid (finding 7). From an ACMI fix there is still none.
 
 Leave out, for this theatre: Reich-defence code words, a controller who reads `_gen.Mission`, enemy transmissions on the German frequency, IFF, and any fuel or ammunition call. The actors' own plain phrases are the right register to keep.
 

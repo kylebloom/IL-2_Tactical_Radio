@@ -58,7 +58,10 @@ public sealed class RadioMenu(IReadOnlyList<RadioMenuItem> root, double holdSeco
     [
         RadioMenuItem.Submenu("Flight",
             new RadioMenuItem(RadioCommands.Title(RadioCommand.FlightPosition), RadioCommand.FlightPosition),
-            new RadioMenuItem(RadioCommands.Title(RadioCommand.Rejoin), RadioCommand.Rejoin)),
+            new RadioMenuItem(RadioCommands.Title(RadioCommand.Rejoin), RadioCommand.Rejoin),
+            new RadioMenuItem(RadioCommands.Title(RadioCommand.RoutePosition), RadioCommand.RoutePosition),
+            new RadioMenuItem(RadioCommands.Title(RadioCommand.SteerHome), RadioCommand.SteerHome),
+            new RadioMenuItem(RadioCommands.Title(RadioCommand.SteerTarget), RadioCommand.SteerTarget)),
         new RadioMenuItem(RadioCommands.Title(RadioCommand.FriendlyPositions), RadioCommand.FriendlyPositions),
         RadioMenuItem.Submenu("Enemy",
             new RadioMenuItem(RadioCommands.Title(RadioCommand.EnemyContacts), RadioCommand.EnemyContacts),

@@ -143,6 +143,22 @@ public class AppSettingsTests
     }
 
     [Fact]
+    public void Route_and_steer_calls_are_unbound_by_default_and_can_take_a_free_numpad_key()
+    {
+        var keys = new KeySettings();
+        Assert.Null(keys.RoutePosition);
+        Assert.Null(keys.SteerHome);
+        Assert.Null(keys.SteerTarget);
+
+        var (settings, problems) = AppSettings.Parse("""{ "keys": { "routePosition": "Num6", "steerHome": "Num8" } }""");
+        Assert.Empty(problems);
+        Assert.Equal(("Num6", "Num8", (string?)null), (settings.Keys.RoutePosition, settings.Keys.SteerHome, settings.Keys.SteerTarget));
+
+        var (_, clash) = AppSettings.Parse("""{ "keys": { "steerTarget": "Num4" } }""");
+        Assert.Equal("keys.steerTarget \"Num4\": already used for keys.enemyContacts", Assert.Single(clash));
+    }
+
+    [Fact]
     public void An_empty_key_leaves_the_action_unbound()
     {
         var (_, problems) = AppSettings.Parse("""{ "keys": { "quit": "", "older": null } }""");

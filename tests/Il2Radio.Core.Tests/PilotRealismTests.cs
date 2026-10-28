@@ -231,7 +231,7 @@ public class PilotRealismTests
         LogFlightMember("Heinz Koelzig", 1);
         Frame(10, Mate("w", "Heinz Koelzig", 0, 100, alt: 1000, heading: 0), Bogey("e1", 0, 600));
 
-        Assert.Equal("Number one, single Yak, at your three o'clock, close, level.",
+        Assert.Equal("Number one, single Yak, at your three o'clock, close, level, heading east.",
             Assert.Single(EnemyCommands.EnemyContacts(_tracker, See).Replies).Text);
         Assert.Equal("Number one, contact at your three o'clock, close: a Yak, enemy, heading east.",
             Assert.Single(EnemyCommands.Identify(_tracker, See).Replies).Text);
@@ -243,14 +243,14 @@ public class PilotRealismTests
         LogFlightMember("Heinz Koelzig", 1);
         Frame(10, [Mate("w", "Heinz Koelzig", 0, 100, alt: 1000, heading: 0), .. Four(600)]);
 
-        Assert.Equal("Number one, four Yaks, at your three o'clock, close, level.", Contacts());
+        Assert.Equal("Number one, four Yaks, at your three o'clock, close, level, heading east.", Contacts());
 
         Start("");
         LogFlightMember("Heinz Koelzig", 1);
         Frame(10, [Mate("w", "Heinz Koelzig", 0, 100, alt: 1000, heading: 0), .. Eight(600)]);
 
         var many = Assert.Single(EnemyCommands.EnemyContacts(_tracker, See).Replies);
-        Assert.Equal("Number one, many Yaks, at your three o'clock, close, level.", many.Text);
+        Assert.Equal("Number one, many Yaks, at your three o'clock, close, level, heading east.", many.Text);
         Assert.Contains(many.Tokens!, t => t.Word == SpeechWord.ContactAmount && t.Value == 4);
     }
 

@@ -91,18 +91,18 @@ public class EnemyCommandTests
     {
         Frame(10, Enemy("e1", 0, 600));
 
-        Assert.Equal("Number one, single Yak, at your three o'clock, under two kilometres, level.", Contacts());
+        Assert.Equal("Number one, single Yak, at your three o'clock, under two kilometres, level, heading east.", Contacts());
     }
 
     [Fact]
     public void Identification_degrades_with_range()
     {
         Frame(10, Enemy("e1", 2600, 0));   // inside side range
-        Assert.Equal("Number one, single enemy fighter, at your twelve o'clock, approximately 3 kilometres, level.", Contacts());
+        Assert.Equal("Number one, single enemy fighter, at your twelve o'clock, approximately 3 kilometres, level, heading east.", Contacts());
 
         Start("");
         Frame(10, Enemy("e1", 3600, 0));   // class range only
-        Assert.Equal("Number one, single unidentified fighter, at your twelve o'clock, approximately 4 kilometres, level.", Contacts());
+        Assert.Equal("Number one, single unidentified fighter, at your twelve o'clock, approximately 4 kilometres, level, heading east.", Contacts());
 
         Start("");
         Frame(10, Enemy("e1", 6000, 0));   // spotted, nothing more
@@ -113,11 +113,11 @@ public class EnemyCommandTests
     public void Bombers_are_recognised_further_out_than_fighters()
     {
         Frame(10, Enemy("b1", 0, -4800, alt: 2000, model: "Pe-2 ser.87"));  // markings visible at ~4.9 km
-        Assert.Equal("Number one, single enemy bomber, at your nine o'clock, approximately 5 kilometres, high.", Contacts());
+        Assert.Equal("Number one, single enemy bomber, at your nine o'clock, approximately 5 kilometres, high, heading east.", Contacts());
 
         Start("");
         Frame(10, Enemy("b1", 0, -6000, alt: 3000, model: "Pe-2 ser.87"));  // ~6.3 km: shape, not markings
-        Assert.Equal("Number one, single unidentified bomber, at your nine o'clock, approximately 6 kilometres, high.", Contacts());
+        Assert.Equal("Number one, single unidentified bomber, at your nine o'clock, approximately 6 kilometres, high, heading east.", Contacts());
     }
 
     [Fact]
@@ -152,7 +152,7 @@ public class EnemyCommandTests
         Start("Time = 23:30:0;");
         Frame(10, Enemy("e1", 600, 0));
 
-        Assert.Equal("Number one, single unidentified fighter, at your twelve o'clock, under two kilometres, level.", Contacts());
+        Assert.Equal("Number one, single unidentified fighter, at your twelve o'clock, under two kilometres, level, heading east.", Contacts());
     }
 
     [Fact]
@@ -179,8 +179,8 @@ public class EnemyCommandTests
 
         string text = Contacts();
 
-        Assert.Equal("Number one, three Yaks, at your three o'clock, under two kilometres, level. | " +
-                     "Number one, single unidentified ground-attack aircraft, at your nine o'clock, approximately 5 kilometres, high.", text);
+        Assert.Equal("Number one, three Yaks, at your three o'clock, under two kilometres, level, heading east. | " +
+                     "Number one, single unidentified ground-attack aircraft, at your nine o'clock, approximately 5 kilometres, high, heading east.", text);
     }
 
     [Fact]
@@ -248,7 +248,7 @@ public class EnemyCommandTests
         Frame(10, Enemy("e1", 0, 600));
         Frame(25, Enemy("e1", 0, 30_000));
 
-        Assert.Equal("Number one, single Yak, last seen at your three o'clock, close, level.", Contacts(settings, memory));
+        Assert.Equal("Number one, single Yak, last seen at your three o'clock, close, level, heading east.", Contacts(settings, memory));
         Assert.Equal("Number one, contact last seen at your three o'clock, close: a Yak, enemy, heading east.", Identify(settings, memory));
 
         Frame(80, Enemy("e1", 0, 30_000));
@@ -310,7 +310,7 @@ public class EnemyCommandTests
         var contacts = Assert.Single(EnemyCommands.EnemyContacts(_tracker, SureSpotting).Replies);
         var identify = Assert.Single(EnemyCommands.Identify(_tracker, SureSpotting).Replies);
 
-        Assert.Equal("Number one, pair of Yaks, at your three o'clock, under two kilometres, level.", contacts.Text);
+        Assert.Equal("Number one, pair of Yaks, at your three o'clock, under two kilometres, level, heading east.", contacts.Text);
         Assert.Equal(["number.1", "pair", "class.fighters", "clock.3", "range.close", "vertical.level"],
             Audio.ClipPhraser.Phrase(contacts.Tokens!, pack.Contains));
         Assert.Equal(["number.1", "pair", "class.fighters", "clock.3", "range.close", "vertical.level"],
@@ -379,4 +379,108 @@ public class EnemyCommandTests
     [InlineData("", 0.0)]
     public void Cloud_coverage_comes_from_the_preset_name(string config, double expected) =>
         Assert.Equal(expected, MissionWeather.CoverageOf(config));
+
+    // ---- Direction of flight on a contact call (WWII-RADIO-REALISM.md finding 2) ----
+
+    /// <summary>Spotting certain out to about 12 km for a fighter, nothing beyond: a look can be lost on purpose.</summary>
+    private static readonly RadioSettings NearSight = new()
+    {
+        Visibility = new VisibilitySettings { DetectMetresPerSpanMetre = 100_000, MaxDetectFactor = 0.012, MisidentificationChance = 0 },
+    };
+
+    /// <summary>Every closed frame is a look, as in the live session.</summary>
+    private SightingMemory Watching(RadioSettings settings)
+    {
+        var memory = new SightingMemory();
+        _acmi.FrameClosed = stream =>
+        {
+            _tracker.Apply(stream);
+            EnemyCommands.Notice(_tracker, settings, memory);
+        };
+        return memory;
+    }
+
+    [Fact]
+    public void The_direction_of_flight_is_spoken_as_the_compass_clip_and_the_tokens_mirror_the_text()
+    {
+        Frame(10, Enemy("e1", 0, 600, heading: 265));
+
+        var reply = Assert.Single(EnemyCommands.EnemyContacts(_tracker, SureSpotting).Replies);
+
+        Assert.Equal("Number one, single Yak, at your three o'clock, under two kilometres, level, heading west.", reply.Text);
+        Assert.Equal(SpeechWord.Heading, reply.Tokens![^1].Word);
+        Assert.Equal(265, reply.Tokens[^1].Value, 1);
+        Assert.Equal(["number.1", "class.fighter", "clock.3", "range.close", "vertical.level", "compass.w"],
+            Audio.ClipPhraser.Phrase(reply.Tokens, new[] { "number.1", "class.fighter", "clock.3", "range.close", "vertical.level", "compass.w" }.Contains));
+    }
+
+    [Fact]
+    public void A_speck_too_far_to_make_out_its_shape_has_no_direction()
+    {
+        Frame(10, Enemy("e1", 6000, 0, heading: 90)); // sighted only: beyond class range (4 km for a fighter)
+
+        var reply = Assert.Single(EnemyCommands.EnemyContacts(_tracker, SureSpotting).Replies);
+
+        Assert.Equal("Number one, single unidentified aircraft, at your twelve o'clock, approximately 6 kilometres, level.", reply.Text);
+        Assert.DoesNotContain(reply.Tokens!, t => t.Word == SpeechWord.Heading);
+    }
+
+    [Fact]
+    public void A_last_seen_contact_keeps_the_direction_it_had_when_last_seen_not_its_live_heading()
+    {
+        var memory = Watching(NearSight);
+
+        Frame(10, Enemy("e1", 0, 600, heading: 90));       // a close look: flying east
+        Frame(25, Enemy("e1", 0, 30_000, heading: 270));   // out of sight now, and turned west on the track
+
+        var reply = Assert.Single(EnemyCommands.EnemyContacts(_tracker, NearSight, memory).Replies);
+        Assert.Equal("Number one, single Yak, last seen at your three o'clock, under two kilometres, level, heading east.", reply.Text);
+        Assert.Equal(90, reply.Tokens!.Single(t => t.Word == SpeechWord.Heading).Value, 1);
+    }
+
+    [Fact]
+    public void A_last_seen_speck_has_no_direction_even_though_the_track_has_one()
+    {
+        var memory = Watching(NearSight);
+
+        Frame(10, Enemy("e1", 6000, 0, heading: 90));      // seen only as a speck
+        Frame(25, Enemy("e1", 30_000, 0, heading: 90));    // then lost
+
+        var reply = Assert.Single(EnemyCommands.EnemyContacts(_tracker, NearSight, memory).Replies);
+        Assert.Equal("Number one, single unidentified aircraft, last seen at your twelve o'clock, approximately 6 kilometres, level.", reply.Text);
+        Assert.DoesNotContain(reply.Tokens!, t => t.Word == SpeechWord.Heading);
+    }
+
+    [Fact]
+    public void A_group_flying_every_way_has_no_direction()
+    {
+        Frame(10, Enemy("e1", 0, 600, heading: 90), Enemy("e2", 50, 650, heading: 270));
+
+        var reply = Assert.Single(EnemyCommands.EnemyContacts(_tracker, SureSpotting).Replies);
+
+        Assert.Equal("Number one, pair of Yaks, at your three o'clock, under two kilometres, level.", reply.Text);
+        Assert.DoesNotContain(reply.Tokens!, t => t.Word == SpeechWord.Heading);
+    }
+
+    [Fact]
+    public void A_heading_change_alone_is_not_a_new_unasked_picture()
+    {
+        var unasked = new UnaskedCalls();
+        var settings = SureSpotting;
+        var memory = new SightingMemory();
+
+        Frame(10, Enemy("e1", 0, 3000, heading: 90));
+        var first = unasked.Consider(_tracker, settings, memory);
+        Assert.NotNull(first);
+        Assert.Contains("heading east", first.Text);
+
+        // The same aircraft turns north, then west: the same picture, so nothing more is said.
+        Frame(30, Enemy("e1", 500, 3000, heading: 0));
+        Assert.Null(unasked.Consider(_tracker, settings, memory));
+        Frame(50, Enemy("e1", 500, 2500, heading: 270));
+        Assert.Null(unasked.Consider(_tracker, settings, memory));
+
+        // A numpad call still gives its present direction.
+        Assert.EndsWith("heading west.", Contacts(settings, memory));
+    }
 }

@@ -262,6 +262,15 @@ public sealed record KeySettings
     public string? Rejoin { get; init; } = "Num3";
     public string? EnemyContacts { get; init; } = "Num4";
     public string? IdentifyContact { get; init; } = "Num5";
+
+    /// <summary>
+    /// "Where am I on the route", steer home and steer to target. Unbound by default: they are in the radio menu
+    /// (Flight ›), and Num6 and Num8, the numpad keys still free, are IL-2 view keys in many players' bindings.
+    /// </summary>
+    public string? RoutePosition { get; init; }
+    public string? SteerHome { get; init; }
+    public string? SteerTarget { get; init; }
+
     public string? Menu { get; init; } = "Num0";
     public string? Older { get; init; } = "Num7";
     public string? Newer { get; init; } = "Num9";
@@ -271,7 +280,8 @@ public sealed record KeySettings
     public IEnumerable<(string Action, string? Key)> All() =>
     [
         ("friendlyPositions", FriendlyPositions), ("flightPosition", FlightPosition), ("rejoin", Rejoin),
-        ("enemyContacts", EnemyContacts), ("identifyContact", IdentifyContact), ("menu", Menu),
+        ("enemyContacts", EnemyContacts), ("identifyContact", IdentifyContact),
+        ("routePosition", RoutePosition), ("steerHome", SteerHome), ("steerTarget", SteerTarget), ("menu", Menu),
         ("older", Older), ("newer", Newer), ("quit", Quit),
     ];
 

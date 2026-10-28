@@ -235,6 +235,9 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
                      RadioKey.Rejoin => RadioCommand.Rejoin,
                      RadioKey.EnemyContacts => RadioCommand.EnemyContacts,
                      RadioKey.IdentifyContact => RadioCommand.IdentifyContact,
+                     RadioKey.RoutePosition => RadioCommand.RoutePosition,
+                     RadioKey.SteerHome => RadioCommand.SteerHome,
+                     RadioKey.SteerTarget => RadioCommand.SteerTarget,
                      _ => (RadioCommand?)null,
                  } is { } command)
             _ = RequestAsync(command);

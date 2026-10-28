@@ -21,13 +21,9 @@ internal static class PlanSquare
     {
         if (plan is null || !MapGrid.IsStalingrad(plan.GuiMap))
             return null;
-        double north, east;
-        if (group.Speaker.Fix.Position.Frame == CoordinateFrame.Il2World)
-            (north, east) = (group.Speaker.Fix.Position.North, group.Speaker.Fix.Position.East); // memory: the map's own metres, exact
-        else if (group.Speaker.Fix.Latitude is double latitude && group.Speaker.Fix.Longitude is double longitude)
-            (north, east) = MapGrid.ProjectStalingrad(latitude, longitude); // ACMI: the four-town fit, within ~360 m
-        else
+        if (MapMetres(group.Speaker.Fix, plan) is not { } at)
             return null;
+        var (north, east) = at;
 
         if (group.Speaker.Contact.InPlayerFlight
             && DistanceToRoute(north, east, Routes(plan, group.Speaker.Contact)) > OnRouteMetres)
@@ -35,25 +31,51 @@ internal static class PlanSquare
         return MapGrid.TryLabel(north, east);
     }
 
-    /// <summary>Briefed waypoint chains for this pilot's flight (same callsign), in mission-file metres.</summary>
-    internal static List<IReadOnlyList<WorldPoint>> Routes(MissionPlan plan, Contact speaker)
+    /// <summary>
+    /// Where a live fix lies in mission-file metres, the frame of the waypoints, airfields and map grid. A memory fix is
+    /// already there, exactly, on any map. An ACMI fix is brought there only through the Stalingrad latitude fit (within
+    /// about 360 m), good enough to name a 10 km square or to tell whether a flight is on its route. That fit is never
+    /// used for a course or a distance to a briefed point: those are given from memory fixes alone (<see cref="RouteCommands"/>).
+    /// </summary>
+    internal static (double North, double East)? MapMetres(PositionFix fix, MissionPlan plan)
     {
-        var self = plan.AircraftOf(speaker.PilotName, speaker.Country);
-        if (self is null)
-            return [];
+        if (fix.Position.Frame == CoordinateFrame.Il2World)
+            return (fix.Position.North, fix.Position.East);
+        if (MapGrid.IsStalingrad(plan.GuiMap) && fix.Latitude is double latitude && fix.Longitude is double longitude)
+            return MapGrid.ProjectStalingrad(latitude, longitude);
+        return null;
+    }
 
-        IEnumerable<PlannedAircraft> flight = self.Callsign > 0
-            ? plan.Aircraft.Where(a => a.Country == self.Country && a.Callsign == self.Callsign)
-            : [self];
+    /// <summary>Briefed waypoint chains for this pilot's flight (same callsign), in mission-file metres.</summary>
+    internal static List<IReadOnlyList<WorldPoint>> Routes(MissionPlan plan, Contact speaker) =>
+        Chains(plan, speaker).Select(path => (IReadOnlyList<WorldPoint>)path.Select(w => w.Position).ToList()).ToList();
 
-        var paths = new List<IReadOnlyList<WorldPoint>>();
-        foreach (var aircraft in flight)
+    /// <summary>The same chains as <see cref="Routes"/>, with each waypoint's name.</summary>
+    internal static List<IReadOnlyList<PlannedWaypoint>> Chains(MissionPlan plan, Contact speaker)
+    {
+        var paths = new List<IReadOnlyList<PlannedWaypoint>>();
+        foreach (var aircraft in Flight(plan, speaker))
         {
-            if (plan.Routes.TryGetValue(aircraft.Index, out var route))
+            if (plan.Waypoints.TryGetValue(aircraft.Index, out var route))
                 paths.AddRange(route);
         }
 
         return paths;
+    }
+
+    /// <summary>This pilot's flight's waypoints in briefed order (<see cref="MissionPlan.BriefedRoutes"/>); empty when the plan has none.</summary>
+    internal static IReadOnlyList<PlannedWaypoint> Briefed(MissionPlan plan, Contact speaker) =>
+        Flight(plan, speaker).Select(a => plan.BriefedRoutes.GetValueOrDefault(a.Index)).FirstOrDefault(r => r is { Count: > 0 }) ?? [];
+
+    /// <summary>The planned aircraft of this pilot's flight (same country and callsign), or himself without a callsign.</summary>
+    private static IEnumerable<PlannedAircraft> Flight(MissionPlan plan, Contact speaker)
+    {
+        var self = plan.AircraftOf(speaker.PilotName, speaker.Country);
+        if (self is null)
+            return [];
+        return self.Callsign > 0
+            ? plan.Aircraft.Where(a => a.Country == self.Country && a.Callsign == self.Callsign)
+            : [self];
     }
 
     private static double DistanceToRoute(double north, double east, List<IReadOnlyList<WorldPoint>> paths)

@@ -34,7 +34,7 @@ This is the one supported way to fly with the radio. You don't need anything els
    | Numpad 3 | Separated: ask your flight to help you rejoin |
    | Numpad 4 | Ask your flight what enemy or unknown aircraft it can see |
    | Numpad 5 | Ask your flight to identify the nearest aircraft it can see |
-   | Numpad 0 | Open the radio menu in game (choose with Numpad 1–5) |
+   | Numpad 0 | Open the radio menu in game (choose with Numpad 1–5). Flight › also has *Where am I on the route*, *Steer home* and *Steer to target*; they have no key of their own unless you set one (`keys.routePosition`, `keys.steerHome`, `keys.steerTarget`) |
    | Numpad 7 / 9 | Page back / forward through earlier radio messages |
    | Numpad . | Quit (also writes a session report to `logs\` next to the program) |
 
@@ -62,7 +62,7 @@ The first start creates `settings.json` next to `Il2Radio.exe` with every settin
 | `chat.rtssColumns`, `chat.rtssZoom`, `chat.rtssCell` | `72`, `null`, `null` | RTSS line width; OSD zoom (`null`: from IL-2's RTSS profile); character size `[w, h]` for the right and bottom presets |
 | `chat.screen`, `chat.windowArea`, `chat.fontPixels` | `0`, `[0.015, 0.40, 0.42, 0.30]`, `16` | Overlay/window: screen number, area (left, top, width, height as screen fractions), font size on a 1080-line screen |
 | `chat.keepClear` | `true` | Keep the text out of IL-2's own message line and subtitles |
-| `keys.*` | `Num1` … `Num.` | One key per action: `friendlyPositions`, `flightPosition`, `rejoin`, `enemyContacts`, `identifyContact`, `menu`, `older`, `newer`, `quit`. Names: `Num0`–`Num9`, `Num.`, `Num+`, `Num-`, `Num*`, `Num/`, `F1`–`F24`, `A`–`Z`, `0`–`9`, `Insert`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, arrows, `Pause`, `ScrollLock`. `""` leaves an action unbound |
+| `keys.*` | `Num1` … `Num.` | One key per action: `friendlyPositions`, `flightPosition`, `rejoin`, `enemyContacts`, `identifyContact`, `routePosition`, `steerHome`, `steerTarget` (these three unbound by default; they are in the radio menu), `menu`, `older`, `newer`, `quit`. Names: `Num0`–`Num9`, `Num.`, `Num+`, `Num-`, `Num*`, `Num/`, `F1`–`F24`, `A`–`Z`, `0`–`9`, `Insert`, `Delete`, `Home`, `End`, `PageUp`, `PageDown`, arrows, `Pause`, `ScrollLock`. `""` leaves an action unbound |
 
 Keys are watched, not taken: IL-2 still receives them, so pick keys IL-2 doesn't use. The options are described in more detail under [Radio text](#radio-text-chat), where they appear as `live` flags of the diagnostic console.
 
@@ -123,19 +123,24 @@ The UDP telemetry port can only point to one listener. If you use SRS or a bass-
 | Numpad 1 | Request friendly positions | "Oriole one, five aircraft together, at your three o'clock, far, level with you." |
 | Numpad 2 | Request flight position | "Oriole one, flight of five, at your three o'clock, far, above you." |
 | Numpad 3 | Separated, request rejoin | "Oriole one, at your four o'clock, far, above you. Heading east, altitude 2500 metres." |
-| Numpad 4 | Request enemy contacts | "Oriole two, four Yaks, at your four o'clock, a few kilometres, high." |
+| Numpad 4 | Request enemy contacts | "Oriole two, four Yaks, at your four o'clock, a few kilometres, high, heading west." |
 | Numpad 5 | Identify nearest contact | "Oriole two, contact at your two o'clock, close: a Messerschmitt, enemy, heading east." |
 | Numpad 0 | Open the radio menu: numpad digits choose an entry or open a submenu (they don't fire their own calls while it is open), Numpad 0 steps back and closes it at the top, Numpad . closes it | |
+| Menu: Flight › 3 (or `keys.routePosition`) | Where am I on the route | "Oriole one, grid 1118-5, leg three of eight. Next waypoint, attack area, heading 095, 10 kilometres." |
+| Menu: Flight › 4 (or `keys.steerHome`) | Steer home | "Oriole one, Tusov, heading 250, 19 kilometres." |
+| Menu: Flight › 5 (or `keys.steerTarget`) | Steer to target | "Oriole one, target area, heading 155, 23 kilometres." |
 | Numpad 7 / 9 | Page back / forward through the radio log (paging forward past the newest page returns to the live lines) | |
 | Numpad . | Quit (writes the evidence file) | |
 
 Aircraft within 2 km and 600 m of each other answer as one group through their lowest-numbered member. Only your own flight answers Numpad 2 and 3.
 
+**Route and steers (radio menu, Flight ›)** answer what you would otherwise open the map (O) for: your map square (Stalingrad only), which leg of the briefed route you are on, and the next waypoint, home field or briefed attack area as a course to the nearest 5° and a distance in kilometres. Your AI leader answers when he is in formation with you or can see you (`pilot`; under `precise`, whenever he can hear you); when you lead, fly alone, or he cannot see you, it is your own reading of the map, on the chat as "[Route]" and not spoken. They are measured only from positions read from IL-2's memory, which are in the same map metres as the briefing. From a track recording alone the route call gives the square and nothing more, the steers give nothing, and the chat says "no steer: only IL-2's memory puts you on the briefing map". An escort with no attack area says "no target area in the briefing".
+
 Those examples are `realism` `pilot`, the default. A pilot gives a position relative to you when he can see you, or when your own flight is in formation. Anyone who can hear the call but cannot see you answers with his own heading and altitude ("Oriole one, I cannot see you. Heading east, altitude 2500 metres.") and does not invent a clock position. He also names the map square he is in ("Grid 1022-5"), or the four digits alone when he is close to a line inside that square. Your own flight does that only while it is still on its briefed route; another friendly flight does it whenever it can hear you. Ranges are close, a few kilometres, or far. Set `realism` to `precise` for the earlier wording ("bearing one-one-zero, approximately 18 kilometres, altitude 2700 metres", and a steer on Numpad 3).
 
 **Unasked calls** are on until you turn them off, each on its own, under `unasked` in `settings.json` or the two checkboxes on the Settings tab. On a cruise leg the chat says the new course once as the leader starts the turn at a corner, to the nearest 5° ("turning to heading 180"), and "heading 180" once he is already flying it, so you can follow an AI leader without the map. If he turns off his course, for the enemy or otherwise, he says "turning left. Follow me." while he is still with the flight and still flying, with "engaging" when that fight is his. A turn after he has left the others, or from the ground, stays quiet. If you run out in front of the flight, a mate who can see you tells you to slow down and rejoin, and if they lose sight of you, and you are not far, the leader says so and gives his heading and altitude. His own voice says his callsign and number; the degrees stay on the chat. When you are the leader, that line is labelled "Route" and nothing is spoken. In a fight you get one line when the picture changes, and then silence until it changes again. A numpad press still cuts whatever is waiting. While a track is recording, hearing these means reading the locked file about every 10 seconds; turning both off stops that.
 
-**Contacts and identification (Numpad 4 and 5) aren't radar.** Your flight reports only what its pilots could plausibly see. Flying alone, any friendly in radio range reports instead. In `pilot`, that call is in your clock when the spotter is with you. A pilot in the fight who cannot see you says "four Yaks, on me." One who can see them but not you gives his own clock ("at my three o'clock, a few kilometres"). Up to four aircraft are counted once their shape is visible; otherwise the call is "a few" or "many".
+**Contacts and identification (Numpad 4 and 5) aren't radar.** Your flight reports only what its pilots could plausibly see. Flying alone, any friendly in radio range reports instead. In `pilot`, that call is in your clock when the spotter is with you. A pilot in the fight who cannot see you says "four Yaks, on me." One who can see them but not you gives his own clock ("at my three o'clock, a few kilometres"). Up to four aircraft are counted once their shape is visible; otherwise the call is "a few" or "many". From the same range the shape is visible (about 4 km for a fighter), Numpad 4 also says which way the group is flying, on the eight compass points ("heading west"); a group fighting the pilot who reports it ("on me") gets none, and a "last seen" group keeps the direction it had when it was last seen.
 - **Spotting:** likelier for larger aircraft and at closer range. Haze, darkness, a target below you against the ground, and cloud between observer and target all make it harder. It's a game-design model, not physiology.
 - **What gets said:** depends on range. In order of getting closer, about four ranges apart for a fighter:
   - a speck: "unidentified aircraft"

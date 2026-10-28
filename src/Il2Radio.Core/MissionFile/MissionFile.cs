@@ -100,6 +100,30 @@ public sealed record PlannedAircraft(
     bool StartInAir,
     WorldPoint StartPosition);
 
+/// <summary>
+/// One briefed waypoint: where it is and the name Career gave it. Plan, not a live position.
+/// Career names its own flight's waypoints <c>WAYPOINT-TAKEOFF</c>, <c>CMD_Waypoint</c>, <c>CMD_AttackArea</c> (where the
+/// flight is sent to attack or patrol; an <c>MCU_CMD_AttackArea</c> sits on the same spot) and <c>WAYPOINT_LAND</c>
+/// (over the home field). VERIFIED in the <c>_gen.mission</c> IL-2 saved beside each Career track on this install,
+/// 2026-10-25 to 2026-10-27 (sweeps, a patrol loop, an escort with only the landing waypoint).
+/// </summary>
+public sealed record PlannedWaypoint(WorldPoint Position, string Name)
+{
+    /// <summary>An attack or patrol area: Career's <c>CMD_AttackArea</c>, or an editor-style <c>…AT_AREA…</c> name.</summary>
+    public bool IsAttack =>
+        Name.Contains("AttackArea", StringComparison.OrdinalIgnoreCase) || Name.Contains("AT_AREA", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The landing waypoint over the home field (<c>WAYPOINT_LAND</c>).</summary>
+    public bool IsLanding => Name.Contains("WAYPOINT_LAND", StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// An airfield in the mission (<c>Airfield</c> block). Career writes each field with its name, country and
+/// position in mission metres; Tusov, country 201, sat at the same place in every Career mission checked
+/// (VERIFIED, 2026-10-25 to 2026-10-28, within a kilometre between missions as the active runway changes).
+/// </summary>
+public sealed record PlannedAirfield(string Name, int Country, int Callsign, WorldPoint Position);
+
 public sealed record MissionPlan(
     string GuiMap,
     string Date,
@@ -144,6 +168,49 @@ public sealed record MissionPlan(
     public IReadOnlyDictionary<int, IReadOnlyList<IReadOnlyList<WorldPoint>>> Routes { get; init; }
         = new Dictionary<int, IReadOnlyList<IReadOnlyList<WorldPoint>>>();
 
+    /// <summary>The same chains as <see cref="Routes"/>, point for point, with each waypoint's name.</summary>
+    public IReadOnlyDictionary<int, IReadOnlyList<IReadOnlyList<PlannedWaypoint>>> Waypoints { get; init; }
+        = new Dictionary<int, IReadOnlyList<IReadOnlyList<PlannedWaypoint>>>();
+
+    /// <summary>
+    /// The briefed order of each flight's waypoints, by planned-aircraft index, as one sequence from take-off to
+    /// landing. Career does not link its route only waypoint to waypoint, so <see cref="Waypoints"/> breaks a real
+    /// sortie into pieces; this follows the links Career uses to move a flight on. VERIFIED on the Career
+    /// <c>_gen.mission</c> files saved beside this install's tracks (22 distinct missions, 2026-10-20 to 2026-10-27; the
+    /// walk takes every one of them to its landing waypoint):
+    /// <list type="bullet">
+    /// <item>a waypoint's own <c>Targets</c> name the next waypoint on a plain leg, and round a patrol loop;</item>
+    /// <item>"go on after the patrol time" runs through <c>MCU_Timer</c> and <c>MCU_Counter</c> blocks (an attack area to
+    /// its patrol loop, the loop to the way home);</item>
+    /// <item><c>MCU_Deactivate</c> and <c>MCU_CheckZone</c> links point back or branch, and are not followed.</item>
+    /// </list>
+    /// The walk starts at <c>WAYPOINT-TAKEOFF</c> (or a waypoint nothing leads to), takes a direct link before a timed
+    /// one, and visits each waypoint once, so a patrol loop is flown once round and its closing leg is not in the
+    /// sequence. When the walk stops short of the landing waypoint, a chain of direct links that ends there is
+    /// appended (the timed exit from a loop can be deeper than the walk looks). Attack areas Career leaves unlinked
+    /// from this sequence (alternates for the same flight) stay out of it. Plan, not a live position.
+    /// </summary>
+    public IReadOnlyDictionary<int, IReadOnlyList<PlannedWaypoint>> BriefedRoutes { get; init; }
+        = new Dictionary<int, IReadOnlyList<PlannedWaypoint>>();
+
+    /// <summary>Every airfield in the mission, any country.</summary>
+    public IReadOnlyList<PlannedAirfield> Airfields { get; init; } = [];
+
+    /// <summary>
+    /// The player's home field: his country's airfield nearest the flight's landing waypoint, or, without one,
+    /// nearest where the player is briefed to start. Null when his country has no airfield in the mission.
+    /// </summary>
+    public PlannedAirfield? HomeField(IEnumerable<IReadOnlyList<PlannedWaypoint>> chains)
+    {
+        if (Player is not { } player)
+            return null;
+        var landing = chains.SelectMany(c => c).FirstOrDefault(w => w.IsLanding);
+        var from = landing?.Position ?? player.StartPosition;
+        return Airfields
+            .Where(a => a.Country == player.Country)
+            .MinBy(a => Math.Pow(a.Position.North - from.North, 2) + Math.Pow(a.Position.East - from.East, 2));
+    }
+
     public static MissionPlan FromBlocks(IReadOnlyList<MissionBlock> blocks)
     {
         var options = blocks.FirstOrDefault(b => b.Type == "Options") ?? new MissionBlock("Options");
@@ -177,17 +244,35 @@ public sealed record MissionPlan(
             })
             .ToList();
 
+        var waypoints = ParseRoutes(blocks, out var briefed);
         return new MissionPlan(options.GetString("GuiMap"), options.Get("Date") ?? "", options.Get("Time") ?? "", countries, aircraft)
         {
             Weather = MissionWeather.FromOptions(options),
-            Routes = ParseRoutes(blocks),
+            Waypoints = waypoints,
+            BriefedRoutes = briefed,
+            Routes = waypoints.ToDictionary(
+                kv => kv.Key,
+                kv => (IReadOnlyList<IReadOnlyList<WorldPoint>>)kv.Value.Select(path => (IReadOnlyList<WorldPoint>)path.Select(w => w.Position).ToList()).ToList()),
+            Airfields = Walk(blocks)
+                .Where(b => b.Type == "Airfield" && !double.IsNaN(b.GetDouble("XPos")) && !double.IsNaN(b.GetDouble("ZPos")))
+                .Select(b => new PlannedAirfield(b.GetString("Name"), b.GetInt("Country"), b.GetInt("Callsign", 0),
+                    WorldPoint.FromIl2(b.GetDouble("XPos"), double.IsNaN(b.GetDouble("YPos")) ? 0 : b.GetDouble("YPos"), b.GetDouble("ZPos"))))
+                .ToList(),
         };
     }
 
     /// <summary>Waypoint chains keyed by the plane index their entity points at (<c>MisObjID</c>).</summary>
-    private static Dictionary<int, IReadOnlyList<IReadOnlyList<WorldPoint>>> ParseRoutes(IReadOnlyList<MissionBlock> roots)
+    private static Dictionary<int, IReadOnlyList<IReadOnlyList<PlannedWaypoint>>> ParseRoutes(IReadOnlyList<MissionBlock> roots,
+        out Dictionary<int, IReadOnlyList<PlannedWaypoint>> briefed)
     {
         var all = Walk(roots).ToList();
+        var blockByIndex = new Dictionary<int, MissionBlock>();
+        foreach (var block in all)
+        {
+            int index = block.GetInt("Index");
+            if (index >= 0)
+                blockByIndex.TryAdd(index, block);
+        }
         var planeOfEntity = new Dictionary<int, int>();
         foreach (var entity in all.Where(b => b.Type == "MCU_TR_Entity"))
         {
@@ -206,7 +291,8 @@ public sealed record MissionPlan(
                 block.GetInt("Index"),
                 IntList(block.Get("Targets")),
                 IntList(block.Get("Objects")),
-                WorldPoint.FromIl2(x, double.IsNaN(y) ? 0 : y, z)));
+                WorldPoint.FromIl2(x, double.IsNaN(y) ? 0 : y, z),
+                block.GetString("Name")));
         }
 
         var byEntity = new Dictionary<int, List<WaypointNode>>();
@@ -220,7 +306,7 @@ public sealed record MissionPlan(
             }
         }
 
-        var routes = new Dictionary<int, IReadOnlyList<IReadOnlyList<WorldPoint>>>();
+        var routes = new Dictionary<int, IReadOnlyList<IReadOnlyList<PlannedWaypoint>>>();
         foreach (var (entity, points) in byEntity)
         {
             if (!planeOfEntity.TryGetValue(entity, out int plane))
@@ -234,10 +320,99 @@ public sealed record MissionPlan(
                 routes[plane] = [.. existing, .. paths];
         }
 
+        briefed = new Dictionary<int, IReadOnlyList<PlannedWaypoint>>();
+        foreach (var (entity, points) in byEntity)
+        {
+            if (planeOfEntity.TryGetValue(entity, out int plane) && !briefed.ContainsKey(plane)
+                && BriefedOrder(points, blockByIndex) is { Count: > 0 } order)
+                briefed[plane] = order;
+        }
+
         return routes;
     }
 
-    private static List<IReadOnlyList<WorldPoint>> OrderPaths(List<WaypointNode> points)
+    /// <summary>How many timer and counter blocks a "go on" link may pass through between two waypoints.</summary>
+    private const int TimedLinkDepth = 6;
+
+    /// <summary>One flight's waypoints in briefed order; see <see cref="MissionPlan.BriefedRoutes"/>.</summary>
+    private static List<PlannedWaypoint> BriefedOrder(List<WaypointNode> points, Dictionary<int, MissionBlock> blocks)
+    {
+        var byIndex = points.GroupBy(p => p.Index).ToDictionary(g => g.Key, g => g.First());
+        int[] Direct(WaypointNode w) => w.Targets.Where(byIndex.ContainsKey).ToArray();
+        List<int> Timed(WaypointNode w)
+        {
+            var found = new List<int>();
+            var seen = new HashSet<int>();
+            var frontier = w.Targets.Where(t => IsTimer(t)).ToList();
+            for (int depth = 0; depth < TimedLinkDepth && frontier.Count > 0; depth++)
+            {
+                var next = new List<int>();
+                foreach (int t in frontier.Where(seen.Add))
+                {
+                    foreach (int u in IntList(blocks[t].Get("Targets")))
+                    {
+                        if (byIndex.ContainsKey(u))
+                            found.Add(u);
+                        else if (IsTimer(u))
+                            next.Add(u);
+                    }
+                }
+                frontier = next;
+            }
+
+            return found;
+        }
+        bool IsTimer(int index) => blocks.TryGetValue(index, out var b) && b.Type is "MCU_Timer" or "MCU_Counter";
+
+        var incoming = new HashSet<int>();
+        foreach (var w in byIndex.Values)
+        {
+            incoming.UnionWith(Direct(w));
+            incoming.UnionWith(Timed(w));
+        }
+
+        var ordered = byIndex.Values.OrderBy(w => w.Index).ToList();
+        var head = ordered.FirstOrDefault(w => w.Name.Contains("TAKEOFF", StringComparison.OrdinalIgnoreCase))
+                   ?? ordered.FirstOrDefault(w => !incoming.Contains(w.Index))
+                   ?? ordered.FirstOrDefault();
+        if (head is null)
+            return [];
+
+        var visited = new HashSet<int> { head.Index };
+        var sequence = new List<WaypointNode> { head };
+        for (var at = head; ;)
+        {
+            int next = Direct(at).Concat(Timed(at)).FirstOrDefault(t => !visited.Contains(t), -1);
+            if (next < 0)
+                break;
+            at = byIndex[next];
+            visited.Add(next);
+            sequence.Add(at);
+        }
+
+        // A loop's timed exit can run deeper than the walk looks: the way home is then a direct chain to the landing waypoint.
+        static bool Landing(WaypointNode w) => w.Name.Contains("WAYPOINT_LAND", StringComparison.OrdinalIgnoreCase);
+        if (!Landing(sequence[^1]))
+        {
+            foreach (var start in ordered.Where(w => !visited.Contains(w.Index)))
+            {
+                var tail = new List<WaypointNode>();
+                var seen = new HashSet<int>(visited);
+                for (var w = start; w is not null && seen.Add(w.Index); w = Direct(w).Where(t => !seen.Contains(t)).Select(t => byIndex[t]).FirstOrDefault())
+                    tail.Add(w);
+                bool fed = ordered.Any(o => !visited.Contains(o.Index) && o != start && Direct(o).Contains(start.Index));
+                if (!fed && tail.Count > 0 && Landing(tail[^1]))
+                {
+                    sequence.AddRange(tail);
+                    break;
+                }
+            }
+        }
+
+        return sequence.Select(w => new PlannedWaypoint(w.Position, w.Name)).ToList();
+    }
+
+    private static List<IReadOnlyList<PlannedWaypoint>> OrderPaths(List<WaypointNode> points)
     {
         var byIndex = points.GroupBy(p => p.Index).ToDictionary(g => g.Key, g => g.First());
         var incoming = Incoming(byIndex.Values, byIndex.Keys.ToHashSet());
@@ -247,7 +422,7 @@ public sealed record MissionPlan(
             heads.Add(byIndex.Values.OrderBy(p => p.Index).First());
 
         var visited = new HashSet<int>();
-        var paths = new List<IReadOnlyList<WorldPoint>>();
+        var paths = new List<IReadOnlyList<PlannedWaypoint>>();
         foreach (var head in heads)
             AddChain(byIndex, visited, paths, head);
 
@@ -289,7 +464,7 @@ public sealed record MissionPlan(
     private static void AddChain(
         Dictionary<int, WaypointNode> byIndex,
         HashSet<int> visited,
-        List<IReadOnlyList<WorldPoint>> paths,
+        List<IReadOnlyList<PlannedWaypoint>> paths,
         WaypointNode start)
     {
         var line = new List<WaypointNode>();
@@ -315,9 +490,9 @@ public sealed record MissionPlan(
         if (line.Count == 0)
             return;
 
-        var positions = line.Select(p => p.Position).ToList();
+        var positions = line.Select(p => new PlannedWaypoint(p.Position, p.Name)).ToList();
         if (line[^1].Targets.Contains(line[0].Index))
-            positions.Add(line[0].Position);
+            positions.Add(positions[0]);
         paths.Add(positions);
     }
 
@@ -342,7 +517,7 @@ public sealed record MissionPlan(
             .ToArray();
     }
 
-    private sealed record WaypointNode(int Index, int[] Targets, int[] Objects, WorldPoint Position);
+    private sealed record WaypointNode(int Index, int[] Targets, int[] Objects, WorldPoint Position, string Name);
 
     /// <summary>
     /// Loads a mission file. For a mission inside an IL-2 install (<c>data\Missions\…</c>), callsign words

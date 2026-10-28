@@ -39,6 +39,9 @@ public static class RadioChat
         RadioCommand.Rejoin => "Flight, I am separated. Request rejoin.",
         RadioCommand.EnemyContacts => "Flight, report contacts.",
         RadioCommand.IdentifyContact => "Flight, identify nearest contact.",
+        RadioCommand.RoutePosition => "Flight, where are we on the route?",
+        RadioCommand.SteerHome => "Flight, request steer home.",
+        RadioCommand.SteerTarget => "Flight, request steer to the target.",
         _ => RadioCommands.Title(command) + ".",
     };
 
@@ -110,6 +113,7 @@ public static class RadioChat
             _ when problem is not null => $"no reply: {problem}",
             ReplyOutcome.PlayerPositionUnknown => "no reply: no live position for your aircraft",
             ReplyOutcome.NoReply => "no reply: nobody can answer",
+            ReplyOutcome.NoCourse => "no steer: only IL-2's memory puts you on the briefing map; the track recording is another frame",
             _ => "no reply",
         };
         if (silence is not null)

@@ -12,7 +12,11 @@ namespace Il2Radio.Core.Radio;
 /// </summary>
 public sealed class SightingMemory
 {
-    internal sealed record Sighting(double LastSeen, IdentificationLevel Level, AircraftType? CalledType, bool Hedged, WorldPoint Where, double? Heading);
+    /// <param name="Course">
+    /// Its direction of flight as made out on the last look that saw it, when that look was at
+    /// <see cref="EnemyCommands.CourseLevel"/> or better; null when that look could not tell. Frozen once it is out of sight.
+    /// </param>
+    internal sealed record Sighting(double LastSeen, IdentificationLevel Level, AircraftType? CalledType, bool Hedged, WorldPoint Where, double? Heading, double? Course = null);
 
     private readonly Dictionary<string, Sighting> _sightings = new(StringComparer.Ordinal);
     private int _missionStarts = -1;
@@ -38,7 +42,7 @@ public sealed class SightingMemory
 /// on this look; <see cref="Where"/> is then the place it was last seen, and the reply must not use the
 /// live position.
 /// </summary>
-internal sealed record SightedContact(LiveContact Target, AircraftType Type, IdentificationLevel Level, AircraftType? CalledType, bool Hedged, LiveContact Reporter, bool Held, WorldPoint Where, double? SeenHeading)
+internal sealed record SightedContact(LiveContact Target, AircraftType Type, IdentificationLevel Level, AircraftType? CalledType, bool Hedged, LiveContact Reporter, bool Held, WorldPoint Where, double? SeenHeading, double? SeenCourse = null)
 {
     public WorldPoint Plot => Held ? Where : Target.Fix.Position;
 }
@@ -59,6 +63,21 @@ public static class EnemyCommands
     private const double ContactGroupRadiusMetres = 3_000;
     private const double ContactGroupAltitudeBandMetres = 1_000;
     private const int MaxReportedGroups = 4;
+
+    /// <summary>
+    /// A contact call says which way a group is flying only from a look at least this good. At class range (about
+    /// 4 km for a fighter, 400 m per metre of span) the planform is made out, and with it which way the nose points;
+    /// a speck at "sighted" range shows only that it is there (SPECULATIVE, the same game-design scale as the rest
+    /// of the visibility model). The direction is the group's course over ground (memory: measured over
+    /// <see cref="ContactTracker.CourseBaselineMetres"/>; ACMI: the track's yaw), on the eight-point compass.
+    /// </summary>
+    public const IdentificationLevel CourseLevel = IdentificationLevel.Class;
+
+    /// <summary>
+    /// The members' courses must agree this well (mean resultant length, 1 = all the same) for the group to have a
+    /// direction of flight. About ±45° of spread; a furball going every way has none.
+    /// </summary>
+    private const double CourseAgreement = 0.7;
 
     /// <summary>Command 2: spotted aircraft that are hostile or not yet identified, nearest first.</summary>
     public static RadioResult EnemyContacts(ContactTracker tracker, RadioSettings? settings = null, SightingMemory? memory = null)
@@ -91,7 +110,7 @@ public static class EnemyCommands
             var reporter = g.Reporter;
             string seen = g.Held ? "last seen " : "";
             string text = $"{RadioPhrases.Who(reporter.Contact)}, {Describe(g, look.Player)}, {seen}at your {RadioPhrases.Clock(g.Relative.BearingDegrees, look.PlayerHeading)}, " +
-                          $"{RadioPhrases.Range(g.Relative.RangeMetres)}, {HighLow(g.Relative.AltitudeDeltaMetres)}.";
+                          $"{RadioPhrases.Range(g.Relative.RangeMetres)}, {HighLow(g.Relative.AltitudeDeltaMetres)}";
             List<SpeechToken> tokens = [.. SpeechToken.Identify(reporter.Contact), new(SpeechWord.ContactCount, g.Members.Count)];
             if (g.Held)
                 tokens.Add(new(SpeechWord.LastSeen));
@@ -110,6 +129,7 @@ public static class EnemyCommands
             tokens.Add(new(SpeechWord.Clock, RadioPhrases.ClockHour(g.Relative.BearingDegrees, look.PlayerHeading)));
             tokens.Add(new(SpeechWord.Range, g.Relative.RangeMetres));
             tokens.Add(new(SpeechWord.Vertical, g.Relative.AltitudeDeltaMetres));
+            text += FlyingTo(g, tokens) + ".";
             return new RadioReply(reporter.Contact, g.Members.Select(m => m.Target.Contact).ToList(), g.Relative, g.Members.Max(m => m.Target.AgeSeconds), text, tokens);
         }).ToList();
 
@@ -188,6 +208,33 @@ public static class EnemyCommands
 
         /// <summary>Every member is being reported from memory: nobody has them in sight on this look.</summary>
         public bool Held => Members.All(m => m.Held);
+
+        /// <summary>
+        /// Which way the group is flying, from the members whose look showed it (<see cref="SightedContact.SeenCourse"/>),
+        /// or null when none did or their courses disagree by more than <see cref="CourseAgreement"/> allows.
+        /// </summary>
+        public double? Course
+        {
+            get
+            {
+                var courses = Members.Select(m => m.SeenCourse).OfType<double>().ToList();
+                if (courses.Count == 0)
+                    return null;
+                double x = courses.Sum(c => Math.Cos(c * Math.PI / 180)), y = courses.Sum(c => Math.Sin(c * Math.PI / 180));
+                if (Math.Sqrt(x * x + y * y) / courses.Count < CourseAgreement)
+                    return null;
+                return (Math.Atan2(y, x) * 180 / Math.PI + 360) % 360;
+            }
+        }
+    }
+
+    /// <summary>", heading west" and its <see cref="SpeechWord.Heading"/> token, when the group has a direction of flight; else nothing.</summary>
+    private static string FlyingTo(SightedGroup g, List<SpeechToken> tokens)
+    {
+        if (g.Course is not double course)
+            return "";
+        tokens.Add(new(SpeechWord.Heading, course));
+        return $", heading {Navigation.CompassPoint(course)}";
     }
 
     /// <summary>
@@ -268,9 +315,12 @@ public static class EnemyCommands
 
             var where = held ? previous!.Where : target.Fix.Position;
             double? heading = held ? previous!.Heading : target.Fix.Heading;
+            // Direction of flight: from this look only when it is good enough to see the shape; a held contact keeps
+            // the one it had when last seen, never the live track's.
+            double? course = held ? previous!.Course : level >= CourseLevel ? target.Fix.Heading : null;
             memory.Set(target.Contact.Key, new SightingMemory.Sighting(
-                level > IdentificationLevel.None ? now : previous?.LastSeen ?? now, known, called, hedged, where, heading));
-            sighted.Add(new SightedContact(target, type, known, called, hedged, spotter, held, where, heading));
+                level > IdentificationLevel.None ? now : previous?.LastSeen ?? now, known, called, hedged, where, heading, course));
+            sighted.Add(new SightedContact(target, type, known, called, hedged, spotter, held, where, heading, course));
         }
 
         return new LookResult(friendly.Player, friendly.PlayerFix, friendly.PlayerFix.Heading ?? 0, observers, sighted);
@@ -400,7 +450,7 @@ public static class EnemyCommands
             tokens.Add(new(SpeechWord.LastSeen));
         if (WithPlayer(reporter, look, tracker, settings))
         {
-            text = ContactFrom(who, what, tokens, g.Relative, look.PlayerFix.Heading, mine: false, seen);
+            text = ContactFrom(who, what, tokens, g.Relative, look.PlayerFix.Heading, mine: false, seen, g);
         }
         else
         {
@@ -417,7 +467,7 @@ public static class EnemyCommands
             }
             else
             {
-                text = ContactFrom(who, what, tokens, fromHim.Value, reporter.Fix.Heading, mine: true, seen);
+                text = ContactFrom(who, what, tokens, fromHim.Value, reporter.Fix.Heading, mine: true, seen, g);
             }
         }
 
@@ -491,14 +541,17 @@ public static class EnemyCommands
         }
     }
 
-    /// <summary>Clock, coarse range and high/low. Contact calls say "high", not "above you".</summary>
-    private static string ContactFrom(string who, string what, List<SpeechToken> tokens, RelativePosition relative, double? noseDegrees, bool mine, string seen = "")
+    /// <summary>
+    /// Clock, coarse range and high/low, then which way they are flying when the look showed it. Contact calls say
+    /// "high", not "above you". A group "on me" or "with me" gets no direction: it is fighting or flying with him.
+    /// </summary>
+    private static string ContactFrom(string who, string what, List<SpeechToken> tokens, RelativePosition relative, double? noseDegrees, bool mine, string seen, SightedGroup g)
     {
         var where = PilotReport.Direction(relative.BearingDegrees, noseDegrees, mine);
         tokens.Add(where.Token);
         tokens.Add(new(SpeechWord.RangeBand, PilotReport.RangeBand(relative.RangeMetres)));
         tokens.Add(new(SpeechWord.Vertical, relative.AltitudeDeltaMetres));
-        return $"{who}, {what}, {seen}{where.Text}, {PilotReport.Range(relative.RangeMetres)}, {HighLow(relative.AltitudeDeltaMetres)}.";
+        return $"{who}, {what}, {seen}{where.Text}, {PilotReport.Range(relative.RangeMetres)}, {HighLow(relative.AltitudeDeltaMetres)}{FlyingTo(g, tokens)}.";
     }
 
     private static bool WithPlayer(LiveContact reporter, LookResult look, ContactTracker tracker, RadioSettings settings) =>

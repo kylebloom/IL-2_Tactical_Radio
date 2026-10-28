@@ -3,6 +3,7 @@ using System.IO.Compression;
 using Il2Radio.Core;
 using Il2Radio.Core.Acmi;
 using Il2Radio.Core.Contacts;
+using Il2Radio.Core.Geometry;
 using Il2Radio.Core.MissionFile;
 using Il2Radio.Core.MissionLog;
 using Il2Radio.Core.Radio;
@@ -352,6 +353,41 @@ int MissionCmd(string? path)
     Console.WriteLine("\nLikely flight-mates (same country + callsign):");
     foreach (var a in plan.LikelyFlightMates)
         Console.WriteLine($"  {a.Callnum,2} {a.PilotName,-24} {a.TypeKey,-12} start {a.StartPosition}");
+    if (player is not null)
+    {
+        // What the route and steer calls measure against (memory fixes only; this is the plan, not a position).
+        var chains = plan.Aircraft
+            .Where(a => a.Country == player.Country && (player.Callsign > 0 ? a.Callsign == player.Callsign : a.IsPlayer))
+            .SelectMany(a => plan.Waypoints.TryGetValue(a.Index, out var c) ? c : [])
+            .ToList();
+        Console.WriteLine($"\nBriefed waypoint chains of the player's flight ({chains.Count}):");
+        foreach (var chain in chains)
+        {
+            Console.WriteLine($"  {chain.Count} waypoints{(chain.Count >= 3 && chain[0] == chain[^1] ? " (closed loop)" : "")}:");
+            foreach (var w in chain)
+            {
+                string square = MapGrid.IsStalingrad(plan.GuiMap) && MapGrid.TryLabel(w.Position.North, w.Position.East) is { } g ? g.Text : "-";
+                Console.WriteLine($"    {w.Name,-18} {(w.IsAttack ? "attack" : w.IsLanding ? "landing" : ""),-8} grid {square,-8} {w.Position}");
+            }
+        }
+        var briefed = plan.Aircraft
+            .Where(a => a.Country == player.Country && (player.Callsign > 0 ? a.Callsign == player.Callsign : a.IsPlayer))
+            .Select(a => plan.BriefedRoutes.GetValueOrDefault(a.Index))
+            .FirstOrDefault(r => r is { Count: > 0 }) ?? [];
+        Console.WriteLine($"Briefed order (what the route and steer calls use), {briefed.Count} waypoints, {Math.Max(0, briefed.Count - 1)} legs:");
+        for (int i = 0; i < briefed.Count; i++)
+        {
+            var w = briefed[i];
+            string square = MapGrid.IsStalingrad(plan.GuiMap) && MapGrid.TryLabel(w.Position.North, w.Position.East) is { } g ? g.Text : "-";
+            string leg = i == 0 ? "" : $"leg {i}: {Navigation.CourseDegrees(Navigation.Relative(briefed[i - 1].Position, w.Position)!.Value.BearingDegrees):000}, " +
+                $"{Navigation.Relative(briefed[i - 1].Position, w.Position)!.Value.RangeMetres / 1000:F0} km";
+            Console.WriteLine($"    {i + 1,2} {w.Name,-18} grid {square,-8} {leg}");
+        }
+        Console.WriteLine(plan.HomeField(chains) is { } home
+            ? $"Home field: {home.Name} (country {home.Country}) {home.Position}"
+            : "Home field: none of the player's country in this mission");
+    }
+
     Console.WriteLine("\nPlanned aircraft by coalition and type:");
     foreach (var g in plan.Aircraft.GroupBy(a => (a.Coalition, a.TypeKey)).OrderBy(g => g.Key))
         Console.WriteLine($"  coalition {g.Key.Coalition}: {g.Count(),3} × {g.Key.TypeKey}");
@@ -442,7 +478,18 @@ int AcmiCmd(string? path)
 
     var replayVoices = install is null ? null : VoiceSelection.Create("auto", install.Root);
     var tracker = new ContactTracker();
-    if (install is not null && File.Exists(install.GeneratedMission))
+    // IL-2 saves the mission beside each track, in a folder named after it ("<track>\_gen.mission"). That is this
+    // recording's own plan; data\Missions\_gen.Mission is whatever was generated last.
+    string trackMission = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, Path.GetFileNameWithoutExtension(path), "_gen.mission");
+    if (File.Exists(trackMission))
+    {
+        var plan = MissionPlan.Load(trackMission);
+        if (install is not null)
+            plan = plan with { CallsignNames = CallsignTable.Load(install.DataDir) };
+        tracker.SetPlan(plan);
+        Console.WriteLine($"Mission plan: {trackMission} (saved with the track)");
+    }
+    else if (install is not null && File.Exists(install.GeneratedMission))
         tracker.SetPlan(MissionPlan.Load(install.GeneratedMission));
     List<string> chunks = install is null ? [] : LatestLogChunks(install.DataDir);
     if (chunks.Count > 0 && !SameMission(path, chunks[0]))

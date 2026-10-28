@@ -573,8 +573,8 @@ public sealed class UnaskedCalls
         if (playerLeads || ai is null)
         {
             _pendingCorner = null;
-            return flight.PlayerFix is { Heading: double heading, Latitude: double latitude, Longitude: double longitude }
-                && Imminent(plan, flight.Player, latitude, longitude, heading) is { } corner
+            return flight.PlayerFix is { Heading: double heading }
+                && Imminent(plan, flight.Player, flight.PlayerFix, heading) is { } corner
                 && _corners.Add(corner.Key)
                 ? RouteLine(flight, corner.OutboundDegrees)
                 : null;
@@ -601,8 +601,8 @@ public sealed class UnaskedCalls
     private void FindCorner(RadioPicture flight, MissionPlan? plan)
     {
         var (ai, playerLeads) = Pick(flight);
-        if (!playerLeads && ai?.Fix is { Heading: double heading, Latitude: double latitude, Longitude: double longitude } fix
-            && Imminent(plan, ai.Contact, latitude, longitude, heading) is { } corner
+        if (!playerLeads && ai?.Fix is { Heading: double heading } fix
+            && Imminent(plan, ai.Contact, fix, heading) is { } corner
             && _corners.Add(corner.Key))
             _pendingCorner = new(corner.OutboundDegrees, heading, fix.SourceTime);
     }
@@ -764,12 +764,17 @@ public sealed class UnaskedCalls
 
     private readonly record struct Corner(string Key, double OutboundDegrees);
 
-    private static Corner? Imminent(MissionPlan? plan, Contact navigator, double latitude, double longitude, double heading)
+    /// <summary>
+    /// The briefed corner ahead of this navigator's live fix. A memory fix is already in mission metres; an ACMI fix
+    /// goes through the Stalingrad fit (<see cref="PlanSquare.MapMetres"/>). Before 2026-10-28 only the ACMI's
+    /// latitude was used, so with memory positions (no latitude) no corner was ever found.
+    /// </summary>
+    private static Corner? Imminent(MissionPlan? plan, Contact navigator, PositionFix fix, double heading)
     {
-        if (plan is null || !MapGrid.IsStalingrad(plan.GuiMap))
+        if (plan is null || PlanSquare.MapMetres(fix, plan) is not { } at)
             return null;
 
-        var (north, east) = MapGrid.ProjectStalingrad(latitude, longitude);
+        var (north, east) = at;
         Corner? best = null;
         double bestTravel = double.PositiveInfinity;
         foreach (var path in PlanSquare.Routes(plan, navigator))

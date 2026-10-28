@@ -29,6 +29,12 @@ namespace Il2Radio.Core.Audio;
 /// behind the player says where he is ("to the left"); "a few" and "many" to
 /// <c>group</c>. A course is said as the eight-point compass clip, after "turning left/right" when the
 /// leader is about to turn. The three-figure course stays on the chat: the clips have 1–20 and no zero.
+/// A contact's direction of flight (<see cref="SpeechWord.Heading"/>) is the compass clip too.
+/// </para>
+/// <para>
+/// Chat only, with no recording to say them: <see cref="SpeechWord.Leg"/>, <see cref="SpeechWord.OffRoute"/>,
+/// <see cref="SpeechWord.Waypoint"/> and <see cref="SpeechWord.Destination"/> (a place name such as "Tusov"); a route
+/// or steer reply says the speaker, the compass point of the course and the range.
 /// </para>
 /// </remarks>
 public static class ClipPhraser

@@ -69,6 +69,13 @@ public enum ReplyOutcome
 
     /// <summary>No friendly could answer with information the integration can establish.</summary>
     NoReply,
+
+    /// <summary>
+    /// A course or distance to a briefed point was asked for, but the player's live fix is not in the mission's own
+    /// frame. Waypoints and airfields are mission metres (<see cref="Geometry.CoordinateFrame.Il2World"/>), which only
+    /// IL-2's memory gives; an ACMI fix is never measured against them. Any reply is what could still be said (a map square).
+    /// </summary>
+    NoCourse,
 }
 
 /// <summary>

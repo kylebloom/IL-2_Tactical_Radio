@@ -9,6 +9,9 @@ public enum RadioCommand
     Rejoin,
     EnemyContacts,
     IdentifyContact,
+    RoutePosition,
+    SteerHome,
+    SteerTarget,
 }
 
 public static class RadioCommands
@@ -20,6 +23,9 @@ public static class RadioCommands
         RadioCommand.Rejoin => "Separated — request rejoin",
         RadioCommand.EnemyContacts => "Request enemy contacts",
         RadioCommand.IdentifyContact => "Identify nearest contact",
+        RadioCommand.RoutePosition => "Where am I on the route",
+        RadioCommand.SteerHome => "Steer home",
+        RadioCommand.SteerTarget => "Steer to target",
         _ => command.ToString(),
     };
 
@@ -31,6 +37,9 @@ public static class RadioCommands
         RadioCommand.Rejoin => FlightCommands.Rejoin(tracker, settings),
         RadioCommand.EnemyContacts => EnemyCommands.EnemyContacts(tracker, settings, memory),
         RadioCommand.IdentifyContact => EnemyCommands.Identify(tracker, settings, memory),
+        RadioCommand.RoutePosition => RouteCommands.RoutePosition(tracker, settings),
+        RadioCommand.SteerHome => RouteCommands.SteerHome(tracker, settings),
+        RadioCommand.SteerTarget => RouteCommands.SteerTarget(tracker, settings),
         _ => throw new ArgumentOutOfRangeException(nameof(command)),
     };
 }
