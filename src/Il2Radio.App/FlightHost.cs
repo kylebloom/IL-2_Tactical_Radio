@@ -78,10 +78,15 @@ internal sealed class FlightHost
             }
 
             StartupChecks.Ok($"Voice: {voices.Describe()}");
-            StartupChecks.Info("Track recording: press LCtrl+R once in the cockpit; positions come from that track."
-                + (settings.RecordingReminderSeconds > 0
-                    ? $" You'll be reminded {settings.RecordingReminderSeconds} s into a mission if it isn't on."
-                    : ""));
+            string reminder = settings.RecordingReminderSeconds > 0
+                ? $" You'll be reminded {settings.RecordingReminderSeconds} s into a mission if positions aren't live."
+                : "";
+            StartupChecks.Info(settings.PositionsMode switch
+            {
+                PositionsMode.Track => "Positions: from the track recording; press LCtrl+R once in the cockpit." + reminder,
+                PositionsMode.Memory => "Positions: from IL-2's memory only (read-only); no track recording needed.",
+                _ => "Positions: from IL-2's memory (read-only), no recording needed; if memory can't be read, press LCtrl+R to record a track instead." + reminder,
+            });
 
             var keys = KeyBindings.From(settings.Keys);
             _voice = new RadioVoice(settings.Volume, voices);
@@ -95,6 +100,7 @@ internal sealed class FlightHost
                 OutputDir = Path.Combine(home, "logs"),
                 RecordingReminder = TimeSpan.FromSeconds(settings.RecordingReminderSeconds),
                 Realism = settings.RealismMode,
+                Positions = settings.PositionsMode,
                 UnaskedRoute = settings.Unasked?.Route ?? true,
                 UnaskedContacts = settings.Unasked?.Contacts ?? true,
                 UnaskedLosses = settings.Unasked?.Losses ?? true,

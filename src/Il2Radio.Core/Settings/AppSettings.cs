@@ -35,6 +35,27 @@ public sealed record AppSettings
     public RadioRealism RealismMode =>
         string.Equals(Realism, "precise", StringComparison.OrdinalIgnoreCase) ? RadioRealism.Precise : RadioRealism.Pilot;
 
+    /// <summary>
+    /// Where live positions come from. auto (the default): IL-2's memory, read-only, so no track recording
+    /// is needed; the Tacview track when memory can't be read. memory: memory only. track: the track only,
+    /// as before 2026-10-27 (needs recording and administrator rights). See docs/MEMORY.md.
+    /// </summary>
+    public string Positions { get; init; } = "auto";
+
+    public static readonly string[] PositionsModes = ["auto", "memory", "track"];
+
+    /// <summary>The <see cref="Settings.PositionsMode"/> for this file. Call after <see cref="Validate"/>.</summary>
+    public PositionsMode PositionsMode => ParsePositions(Positions) ?? PositionsMode.Auto;
+
+    /// <summary>auto, memory or track (any case); null for anything else.</summary>
+    public static PositionsMode? ParsePositions(string? value) => value?.Trim().ToLowerInvariant() switch
+    {
+        "auto" => Settings.PositionsMode.Auto,
+        "memory" => Settings.PositionsMode.Memory,
+        "track" => Settings.PositionsMode.Track,
+        _ => null,
+    };
+
     /// <summary>Hold replies while IL-2's own radio is talking (its audio peaks above the engine).</summary>
     public bool RadioWait { get; init; } = true;
 
@@ -116,6 +137,8 @@ public sealed record AppSettings
             problems.Add("voice \"tts\": Windows text-to-speech was removed; expected auto (the game's pilot voices), off or a voice pack's name");
         if (Realism is null || !RealismModes.Contains(Realism.ToLowerInvariant()))
             problems.Add($"realism \"{Realism}\": expected {string.Join(" or ", RealismModes)}");
+        if (ParsePositions(Positions) is null)
+            problems.Add($"positions \"{Positions}\": expected {string.Join(", ", PositionsModes)}");
 
         if (Chat is null)
             problems.Add("chat: missing");
@@ -132,6 +155,9 @@ public sealed record AppSettings
         return problems;
     }
 }
+
+/// <summary>Where live positions come from; see <see cref="AppSettings.Positions"/>.</summary>
+public enum PositionsMode { Auto, Memory, Track }
 
 /// <summary>
 /// Calls spoken without a numpad request. All are on until turned off. Turning all off also stops

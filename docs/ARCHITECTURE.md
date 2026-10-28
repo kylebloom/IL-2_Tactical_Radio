@@ -25,6 +25,7 @@ IL-2 writes ──────────────────────�
  data\missionReport(<start>)[N].mlg chunks ──► BinaryMissionLogTail ─┐
  data\Missions\_gen.Mission (Career plan) ───► MissionPlan ──────────┤
  data\Tracks\*.acmi (Tacview, LOCKED) ──────► AcmiStream ───────────┼─► ContactTracker
+ Il-2.exe memory (read-only) ───────────────► MemoryPositions ───────┤   (memory, or the ACMI as fallback; never both)
  UDP 29373 motion/telemetry ────────────────► TelemetryDecoder (display only)
                                                                       │
 Numpad key (GetAsyncKeyState) ─► Keyed event: request line + mic click (immediately)
@@ -36,7 +37,12 @@ Numpad key (GetAsyncKeyState) ─► Keyed event: request line + mic click (imme
 ```
 
 ### Game data sources (all read-only; the game process is never written to)
-Reading `Il-2.exe`'s memory is allowed since 2026-10-27 but not used in flight yet; the Diag tools for finding its structures and the plan are in [MEMORY.md](MEMORY.md).
+- **IL-2's memory** (`Core/Memory/ObjectRoster`, `Windows/MemoryPositions`, `Windows/ProcessMemory`; since 2026-10-27, setting `positions`, default `auto`). How the layout was found and verified is in [MEMORY.md](MEMORY.md).
+  - **Discovery, once per mission, in the background:** the player's log id (AType 10, `ISPL:1`) is searched for in the game's heap; the object 0x2E88 bytes before it whose first qword points into `Il-2.exe` (its class) and whose position is plausible is the player's. One scan for that class pointer then finds every object of the class (about 6 s in all). The class address differed in each of three missions, so it is learned, never fixed. A rescan every 30 s picks up spawns.
+  - **Reading, every poll (~1 s) and on each radio key:** id `+0x2E88`, marker `0x84222325` at `+0x2E90`, speed `+0x2EB4`, position f64 north/height/east at `+0x2FF8`. An aircraft has one to ten objects (its parts) within its own size; `MemoryAircraft.Of` takes their median. An object whose class pointer or marker changes is dropped (freed: a wreck at ground impact, a despawn).
+  - **Into the tracker:** `ContactTracker.Apply(IReadOnlyCollection<MemoryAircraft>, time)`: only ids the mission log has confirmed as aircraft; positions in `CoordinateFrame.Il2World` (the mission's own metres, so map squares need no latitude fit); `PositionSource.Memory` with the session's clock; heading = course over ground once the aircraft has moved `CourseBaselineMetres` (30 m). An aircraft memory showed before and no longer shows is `Despawned` (undone if it reappears). **Kills come only from the log:** a shot-down aircraft keeps a live memory position while it falls (~40 s, VERIFIED).
+  - **One source at a time** (`LiveSession.TrackPositionsOff`): while memory is live the ACMI is still read (mission clock) but its positions are not applied and no snapshots are taken; the two frames never mix. When memory stops (IL-2 closed, a mission not generated here, nothing found), its fixes age out in 10 s and the track takes over. `positions: memory` never uses the track; `track` never reads memory.
+  - **Single-player guard:** memory is read only when the log's AType 0 `MFile` contains `_gen` (Career and quick missions generate `Missions\_gen.msnbin`).
 
 - **Mission log** (`Core/MissionLog`). IL-2's "AType" event log.
   - With `mission_text_log = 1`, IL-2 writes rotating chunks `missionReport(<start>)[N].mlg` plus `.txt` directly in `data\`, about every 33 s, and deletes the previous mission's chunks.
@@ -49,7 +55,7 @@ Reading `Il-2.exe`'s memory is allowed since 2026-10-27 but not used in flight y
   - `MissionPlan` gives the player (`AILevel = 0`), each plane's `Callsign`/`Callnum`, country to coalition, and `MissionWeather` (cloud base and depth, coverage from the preset name, haze, start time).
   - Callsign words come from the install's `data\GUI\DefaultCallsigns.*` (`CallsignTable`), in English, so the text names the callsign exactly as IL-2's own chat does ("Rook"). The German recordings say other words ("Saatkrähe"); the game itself speaks one and shows the other, and so do we. A voice pack's manifest `words` only labels its clips for `voice-check`.
   - Career prefixes flight-mates' names with a 0x01 byte, here and in the log and the ACMI. Strip control characters when matching names.
-- **Tacview ACMI** (`Core/Acmi/AcmiStream`). The only source of continuous positions: every aircraft and vehicle at about 5 Hz, with absolute lat/lon.
+- **Tacview ACMI** (`Core/Acmi/AcmiStream`). The other source of continuous positions, and the fallback when memory can't be read: every aircraft and vehicle at about 5 Hz, with absolute lat/lon.
   - Written only while a track is recording (`tacviewrecord = 1` + LCtrl+R). One mission can produce several files (`_00`, `_01`).
   - IL-2 holds the file **without read sharing**. The session reads only the new bytes through an on-demand Volume Shadow Copy (`Windows/ShadowCopy.cs`, WMI `Win32_ShadowCopy`, needs admin, about 1 s). Every snapshot is recorded in a ledger file, and leftover snapshots are cleaned up on start.
   - IL-2 quirks the parser handles:
@@ -68,7 +74,7 @@ Reading `Il-2.exe`'s memory is allowed since 2026-10-27 but not used in flight y
   - the player's ACMI object folded into the logged player contact.
 - ACMI positions (`AcmiStream.PositionOf`): north is latitude × 111 320 m; east is longitude × 111 320 m × cos of one latitude for the whole stream, the first one seen. IL-2 writes absolute degrees (about 43° E at Stalingrad), so scaling each aircraft by its own latitude moved it east or west as it flew north: 36 km for a true 45 km on the 2026-10-26 track, which let a heading call through from beyond radio range.
 - `Loss` (`LossReport`): from the log's kills and bail-outs, the aircraft credited (`AID`, null for -1: a collision or crash), whether the pilot was killed, whether he bailed out.
-- `PositionFix` = position + `PositionSource` (`LogEvent` snapshot or `AcmiTrack`) + source time + heading.
+- `PositionFix` = position + `PositionSource` (`LogEvent` snapshot, or the live tracks `AcmiTrack` and `Memory`; `IsTrack`) + source time + heading.
 - `AgeSeconds` = how far the source clock moved since the fix, plus wall time since the source last updated. A source that stops updating ages all of its fixes.
 - `CoordinateFrame`: IL-2 world (log) and ACMI positions are never compared (`Navigation.Relative` returns null across frames).
 - Status (`Airborne`, `Landed`, `Destroyed`, `BailedOut`, `Despawned`) comes from log events and ACMI removal. A track-caused despawn is undone if the aircraft reappears in the next segment.
@@ -76,7 +82,7 @@ Reading `Il-2.exe`'s memory is allowed since 2026-10-27 but not used in flight y
 
 ### Radio commands (`Core/Radio`)
 - `RadioCommands.Execute` dispatches `RadioCommand` → `RadioResult(Outcome, Replies, Suppressed)`. `Suppressed` lists every contact deliberately left out and why; the monitor and tests use it.
-- `RadioPicture.Build` (shared gate): the player must have a live ACMI fix (else `PlayerPositionUnknown`). Candidates need a live fix younger than `MaxFixAgeSeconds` (10), must be operational, and must be within `RadioRangeMetres` (40 km).
+- `RadioPicture.Build` (shared gate): the player must have a live track fix, memory or ACMI (else `PlayerPositionUnknown`). Candidates need a live fix younger than `MaxFixAgeSeconds` (10), must be operational, and must be within `RadioRangeMetres` (40 km).
 - `FriendlyPositionsCommand` (Num1) and `FlightCommands.FlightPosition`/`Rejoin` (Num2/3) group aircraft with single-linkage (2 km, 600 m). The lowest formation number speaks.
 - `EnemyCommands` (Num4/5) and `Visibility`:
   - **Observers** are the player's flight, or, flying alone, any friendly in radio range.
@@ -155,7 +161,7 @@ Reading `Il-2.exe`'s memory is allowed since 2026-10-27 but not used in flight y
 - **Publish:** `dotnet publish src/Il2Radio.App` → `publish\Il2Radio.exe` (win-x64, self-contained, single file, compressed; publish-only properties under `_IsPublishing`).
 
 ## Diag commands
-`check [--apply]` · `mission` · `mlg` · `acmi [file]` (offline replay of all commands, with the clip keys the German game pack would play for each reply; reads a locked file by snapshot when elevated) · `snapshot-test` · `live` · `chat-test` · `audio-meter` · `say` · `voice-check` · `mem-info` · `mem-scan` · `mem-next` · `mem-list` · `mem-dump` · `mem-refs` · `mem-watch` (read-only memory tools for reverse-engineering IL-2; see [MEMORY.md](MEMORY.md)). Run without arguments for the full flag list.
+`check [--apply]` · `mission` · `mlg` · `acmi [file]` (offline replay of all commands, with the clip keys the German game pack would play for each reply; reads a locked file by snapshot when elevated) · `snapshot-test` · `live` · `chat-test` · `audio-meter` · `say` · `voice-check` · `mem-radio` (every radio command answered once from the log and IL-2's memory; safe beside a flight) · `mem-roster` · `mem-compare` · `mem-info` · `mem-scan` · `mem-next` · `mem-list` · `mem-dump` · `mem-refs` · `mem-watch` (read-only memory tools for reverse-engineering IL-2; see [MEMORY.md](MEMORY.md)). Run without arguments for the full flag list.
 
 ## Working on this repo
 - **Build and test:** `dotnet test` at the root. If the user's `live` session or `Il2Radio.exe` is running it locks its `bin\Debug`; then run `dotnet test tests/Il2Radio.Core.Tests` and build the programs elsewhere with `dotnet build src/Il2Radio.Diag -o <scratch dir>` (or `src/Il2Radio.App`).

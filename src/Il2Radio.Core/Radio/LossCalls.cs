@@ -51,7 +51,7 @@ internal sealed class LossCalls
         }
 
         var tracked = tracker.Contacts
-            .Where(c => c.Loss is null && c.LastFix is { Source: PositionSource.AcmiTrack })
+            .Where(c => c.Loss is null && c.LastFix is { IsTrack: true })
             .ToList();
         if (tracked.Count == 0)
             return;

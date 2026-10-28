@@ -9,8 +9,8 @@ Why: IL-2 stops a track recording when the `.trk` reaches about 500 MiB, and the
 | 0 | Diag tools (`mem-*`) | Done, and used against IL-2 on 2026-10-27 (`mem-near` and `--fields` added during that session) |
 | 1 | Find the player's aircraft and its fields | Done: position, velocity, speed and orientation for every object, by id (see Findings) |
 | 2 | Find all aircraft | Done another way: learn the aircraft class from the player's object, then scan for it once per mission (`ObjectRoster`, `Diag mem-roster`; second-mission section). No static path, none needed so far |
-| 3 | Survive game updates (byte patterns, version check, fall back to ACMI) | Not started |
-| 4 | `PositionSource.Memory` in the radio, checked against ACMI for a whole sortie | Not started |
+| 3 | Survive game updates | By design: only data layouts are assumed (the class address is learned each mission), and the radio falls back to the ACMI when memory finds nothing. A layout change after a patch would show as "your aircraft isn't in IL-2's memory" |
+| 4 | `PositionSource.Memory` in the radio | Built 2026-10-27 (`positions: auto`, the default; ARCHITECTURE.md, "IL-2's memory"); unit-tested; not yet flown with the radio. `Diag mem-radio` answers every command from memory beside a flight |
 
 ## The tools
 
@@ -107,3 +107,7 @@ The player shot down two Ju 52s of his own side while `mem-roster --rescan 30 --
 - Kurt Mex (598015): steady at 431 m, a dive from 22:22:58, all five objects gone at 22:23:28 at 62–66 m. His kill was not yet in the mission log at that moment (the text log is written in 30 s chunks).
 - **No "destroyed" field has been found in these objects.** Memory alone would let a falling wreck answer the radio for tens of seconds, against the honesty rule. Deaths must keep coming from the mission log (AType:3, AType:4, AType:18 of the pilot), with memory objects vanishing as confirmation. A field that flips at the moment of the kill could still exist; finding it would mean comparing an aircraft's object before and after a kill (`mem-dump` both, diff).
 - Mid-mission spawns: none happened in this mission while watched, so still unchecked.
+
+### Mid-mission spawns (VERIFIED, third mission, 22:26–22:28)
+
+With `--rescan 30`, every aircraft the game spawned during the mission was picked up at the next rescan: two Bf 109 G-2s of another German flight (22:26:55), then a Pe-2 with three P-40E-1 escorts and three Yak-1s taking off from an airfield (22:28:26, at 104 m and 8–110 km/h). All nine match AType:12 lines in the mission log; nothing appeared that the log does not know. At the rescan the log's chunk naming them was sometimes not yet written, so names must be looked up again later rather than once at spawn. Each spawned aircraft had six objects, like those present from the start.

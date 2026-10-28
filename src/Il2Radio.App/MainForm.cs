@@ -72,6 +72,7 @@ internal sealed class MainForm : Form
     private readonly Label _volumeReadout = new() { AutoSize = true, Padding = new Padding(8, 8, 0, 0) };
     private readonly ComboBox _voice = new() { DropDownStyle = ComboBoxStyle.DropDown, Width = 280 };
     private readonly ComboBox _realism = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
+    private readonly ComboBox _positions = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
     private readonly CheckBox _unaskedRoute = new() { Text = "Call a new heading on a cruise leg", AutoSize = true, Checked = true };
     private readonly CheckBox _unaskedContacts = new() { Text = "Call when the contact picture changes", AutoSize = true, Checked = true };
     private readonly CheckBox _unaskedLosses = new() { Text = "Call a loss the game's pilots don't", AutoSize = true, Checked = true };
@@ -437,6 +438,9 @@ internal sealed class MainForm : Form
         _realism.Items.AddRange(AppSettings.RealismModes);
         Row("Realism", _realism, 160);
         Hint("pilot: he reports a position relative to you only when he can see you or is with you. Otherwise your flight gives its heading and altitude, and a pilot in a fight says the enemy is on him. precise: bearings and ranges from the track.", ref y);
+        _positions.Items.AddRange(AppSettings.PositionsModes);
+        Row("Positions", _positions, 160);
+        Hint("auto: read where everyone is from IL-2's memory (read-only, no track recording needed), and use the track recording when memory can't be read. memory: memory only. track: the track recording only (LCtrl+R), as before.", ref y);
         Check(_unaskedRoute);
         Check(_unaskedContacts);
         Check(_unaskedLosses);
@@ -445,7 +449,7 @@ internal sealed class MainForm : Form
         Row("Talking threshold", _radioWaitRatio, 80);
         Hint("How far above its engine IL-2's audio must peak to count as talking. More than 1.", ref y);
         Row("Recording reminder (s)", _reminder, 80);
-        Hint("Remind you to press LCtrl+R this long into a mission with no track. 0 never reminds.", ref y);
+        Hint("Remind you to press LCtrl+R this long into a mission with neither memory positions nor a track. 0 never reminds.", ref y);
 
         Section("Radio text");
         _chatOutput.Items.AddRange(ChatSettings.Outputs);
@@ -644,6 +648,7 @@ internal sealed class MainForm : Form
             _volumeReadout.Text = $"{_volume.Value} %";
             ReloadVoices(settings.Voice);
             Select(_realism, settings.Realism, AppSettings.RealismModes);
+            Select(_positions, settings.Positions, AppSettings.PositionsModes);
             var unasked = settings.Unasked ?? new UnaskedSettings();
             _unaskedRoute.Checked = unasked.Route;
             _unaskedContacts.Checked = unasked.Contacts;
@@ -693,6 +698,7 @@ internal sealed class MainForm : Form
         Volume = _volume.Value / 100.0,
         Voice = string.IsNullOrWhiteSpace(_voice.Text) ? "auto" : _voice.Text.Trim(),
         Realism = string.IsNullOrWhiteSpace(_realism.Text) ? "pilot" : _realism.Text.Trim().ToLowerInvariant(),
+        Positions = string.IsNullOrWhiteSpace(_positions.Text) ? "auto" : _positions.Text.Trim().ToLowerInvariant(),
         Unasked = new UnaskedSettings { Route = _unaskedRoute.Checked, Contacts = _unaskedContacts.Checked, Losses = _unaskedLosses.Checked },
         RadioWait = _radioWait.Checked,
         RadioWaitRatio = (double)_radioWaitRatio.Value,

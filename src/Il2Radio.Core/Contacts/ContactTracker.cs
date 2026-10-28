@@ -1,5 +1,6 @@
 using Il2Radio.Core.Acmi;
 using Il2Radio.Core.Geometry;
+using Il2Radio.Core.Memory;
 using Il2Radio.Core.MissionFile;
 using Il2Radio.Core.MissionLog;
 
@@ -15,7 +16,7 @@ public enum ContactStatus
     Despawned,
 }
 
-/// <summary>Where a position came from. Only <see cref="AcmiTrack"/> is a continuous live track.</summary>
+/// <summary>Where a position came from. <see cref="AcmiTrack"/> and <see cref="Memory"/> are continuous live tracks.</summary>
 public enum PositionSource
 {
     /// <summary>Snapshot attached to a mission-log event (spawn, take-off, damage, landing...).</summary>
@@ -23,6 +24,12 @@ public enum PositionSource
 
     /// <summary>Continuous position from a Tacview ACMI stream written by IL-2.</summary>
     AcmiTrack,
+
+    /// <summary>
+    /// Continuous position read from IL-2's memory (docs/MEMORY.md), in the mission's own metres (<see cref="CoordinateFrame.Il2World"/>).
+    /// Its clock is the radio's: seconds since the session started.
+    /// </summary>
+    Memory,
 }
 
 /// <summary>A position observation. <see cref="SourceTime"/> is in the producing source's own clock.</summary>
@@ -30,7 +37,11 @@ public enum PositionSource
 /// <param name="Latitude">Absolute degrees from an ACMI fix. Mission-log fixes leave this empty; the two frames are not the same grid.</param>
 /// <param name="Longitude">Absolute degrees, paired with <see cref="Latitude"/>.</param>
 /// <param name="AboveGroundMetres">Height above the ground when the source reports it (ACMI <c>AGL</c>). Empty when that sample did not.</param>
-public sealed record PositionFix(WorldPoint Position, PositionSource Source, double SourceTime, string Detail, double? Heading = null, double? Latitude = null, double? Longitude = null, double? AboveGroundMetres = null);
+public sealed record PositionFix(WorldPoint Position, PositionSource Source, double SourceTime, string Detail, double? Heading = null, double? Latitude = null, double? Longitude = null, double? AboveGroundMetres = null)
+{
+    /// <summary>From a continuous track (ACMI or memory), not an event snapshot. Whether it is fresh is <see cref="ContactTracker.AgeSeconds"/>.</summary>
+    public bool IsTrack => Source is PositionSource.AcmiTrack or PositionSource.Memory;
+}
 
 public sealed class Contact(string key)
 {
@@ -50,8 +61,14 @@ public sealed class Contact(string key)
     /// <summary>How the mission log says this aircraft was lost; null while nothing says so.</summary>
     public LossReport? Loss { get; internal set; }
 
-    /// <summary>The despawn came from the Tacview track (object removed), not the mission log, so a reappearance can undo it.</summary>
+    /// <summary>The despawn came from a track (ACMI object removed, or memory objects gone), not the mission log, so a reappearance can undo it.</summary>
     internal bool DespawnedByTrack { get; set; }
+
+    /// <summary>Memory has shown this aircraft, so its objects going missing means it is gone (a wreck vanishes at ground impact).</summary>
+    internal bool SeenInMemory { get; set; }
+
+    /// <summary>Where the course over ground was last measured from (memory gives position, not heading).</summary>
+    internal (double North, double East)? CourseAnchor { get; set; }
     public PositionFix? LastFix { get; internal set; }
 
     /// <summary>Callsign number from the mission plan (8 = "Oriole"); 0 when the plan has none for this pilot.</summary>
@@ -247,6 +264,54 @@ public sealed class ContactTracker(TimeProvider? time = null)
             {
                 c.IsPlayer = true;
                 MergeIntoLoggedPlayer(c);
+            }
+        }
+    }
+
+    /// <summary>Distance flown before the course over ground is measured again: well above the parts' spread, a fraction of a second at speed.</summary>
+    public const double CourseBaselineMetres = 30;
+
+    /// <summary>
+    /// Synchronises aircraft from one read of IL-2's memory (positions in the mission's own metres).
+    /// <paramref name="time"/> is the radio's clock in seconds; <paramref name="aircraft"/> is everything read,
+    /// so an aircraft memory showed before and no longer does is gone (its objects vanish when a wreck hits
+    /// the ground). Only aircraft the mission log has confirmed take part: memory gives no name, type or side,
+    /// and its kills come only from the log (a falling wreck keeps a live position for tens of seconds).
+    /// </summary>
+    public void Apply(IReadOnlyCollection<MemoryAircraft> aircraft, double time)
+    {
+        AdvanceClock(PositionSource.Memory, time);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var a in aircraft)
+        {
+            if (Find(a.Id) is not { } c)
+                continue; // not (yet) an aircraft the log has named: a vehicle, a static object, or a spawn the next log chunk will name
+            seen.Add(c.Key);
+            c.SeenInMemory = true;
+            if (c.Status == ContactStatus.Despawned && c.DespawnedByTrack)
+            {
+                c.Status = ContactStatus.Airborne;
+                c.DespawnedByTrack = false;
+            }
+
+            // Heading is the course over ground: within a few degrees of the nose, except sideslip and wind drift.
+            double? heading = c.LastFix is { Source: PositionSource.Memory } previous ? previous.Heading : null;
+            if (c.CourseAnchor is not { } anchor)
+                c.CourseAnchor = (a.North, a.East);
+            else if (Math.Sqrt(Math.Pow(a.North - anchor.North, 2) + Math.Pow(a.East - anchor.East, 2)) >= CourseBaselineMetres)
+            {
+                heading = (Math.Atan2(a.East - anchor.East, a.North - anchor.North) * 180 / Math.PI + 360) % 360;
+                c.CourseAnchor = (a.North, a.East);
+            }
+            c.LastFix = new PositionFix(WorldPoint.FromIl2(a.North, a.Height, a.East), PositionSource.Memory, time, "memory", heading);
+        }
+
+        foreach (var c in _contacts.Values)
+        {
+            if (c.SeenInMemory && !seen.Contains(c.Key) && c.IsOperational)
+            {
+                c.Status = ContactStatus.Despawned;
+                c.DespawnedByTrack = true;
             }
         }
     }

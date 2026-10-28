@@ -6,7 +6,7 @@
 
 A companion app for IL-2 Sturmovik: Great Battles single-player Career Mode. It adds a few realistic radio requests, such as asking friendly aircraft for their positions. It runs outside the game and only reads data IL-2 already exports, so it works with Mods Off and doesn't touch game files or the game process.
 
-**Current milestone:** a proof of concept to find out what IL-2 actually exposes. Read [docs/FEASIBILITY.md](docs/FEASIBILITY.md) first. In short: aircraft identities, flights and statuses are available live. AI positions are only available at discrete events. Continuous positions depend on IL-2's Tacview export, which still needs a live test.
+**Current milestone:** a proof of concept to find out what IL-2 actually exposes. Read [docs/FEASIBILITY.md](docs/FEASIBILITY.md) first. In short: aircraft identities, flights and statuses are available live. AI positions are only available at discrete events. Continuous positions come from IL-2's memory (read-only, since 2026-10-27; [docs/MEMORY.md](docs/MEMORY.md)), with IL-2's Tacview export as the fallback.
 
 ## How to run it
 This is the one supported way to fly with the radio. You don't need anything else in this README to use it; the rest is reference.
@@ -21,10 +21,10 @@ This is the one supported way to fly with the radio. You don't need anything els
 
 **Every flight**
 1. Start RivaTuner Statistics Server; it sits in the system tray.
-2. Double-click `Il2Radio.exe` and accept the administrator prompt. Administrator rights are needed to read aircraft positions while IL-2 is writing them. A window opens; leave it open while you fly.
+2. Double-click `Il2Radio.exe` and accept the administrator prompt. Positions from IL-2's memory don't need administrator rights; the track-recording fallback does, to read the file IL-2 keeps locked. A window opens; leave it open while you fly.
    - The Status tab checks that it runs as administrator, that IL-2 exports its mission log and Tacview tracks, and that RTSS is running. Each check is `[ok]` or `[!!]` with what to do; problems are also shown in game at the start of each mission.
    - **On the first start**, if IL-2 is closed and isn't exporting that data yet, it asks whether to switch it on in `startup.cfg` (Yes; the file is backed up first). If IL-2 is running, close it and start the radio again.
-3. Start IL-2 and fly a Career mission. Once you're in the cockpit, press **LCtrl+R** to start track recording; the positions come from that track. If no track is recording a minute into the mission, the radio reminds you in game.
+3. Start IL-2 and fly a Career mission. The radio reads where everyone is straight from IL-2's memory (read-only; see [Live positions](#live-positions)), so no track recording is needed. If memory can't be read, it falls back to the track: press **LCtrl+R** in the cockpit to record one, and the radio reminds you in game if neither is available a minute into the mission.
 4. With Num Lock on, use the numpad:
 
    | Key | Does |
@@ -51,11 +51,12 @@ The first start creates `settings.json` next to `Il2Radio.exe` with every settin
 | `volume` | `0.8` | Radio volume, 0 to 1, independent of IL-2's own |
 | `voice` | `"auto"` | `auto`: the game's pilot voices by nation; words they have no recording for stay on the radio text. `off`: radio text only (the key click still plays). Or a voice pack's name or folder. Windows text-to-speech was removed on 2026-10-26, so `tts` is reported as an error |
 | `realism` | `"pilot"` | `pilot`: a friendly says only what that pilot could know (below). `precise`: bearings and ranges from the live track |
+| `positions` | `"auto"` | Where live positions come from. `auto`: IL-2's memory, and the track recording when memory can't be read. `memory`: memory only. `track`: the track recording only (LCtrl+R, administrator rights), as before 2026-10-27 |
 | `unasked.route` | `true` | On a cruise leg, one course call per turn, the new heading to the nearest 5°. The chat says "Number one, turning to heading 180" once an AI leader starts the turn at a corner, and "Number one, heading 180" once he is already on it. The headset says his callsign and number, "turning left" or "turning right" for a corner ahead, and the compass point ("south"); the degrees stay on the chat. When you are the leader, the chat shows "Route, turning to heading 180" and the headset stays quiet. Off once you leave the briefed route, except a gentle turn by an AI leader. Also: an AI leader turning 45° off his course says "turning left. Follow me." while he is still flying and someone in the flight is within 4 km ("engaging, turning left" when an enemy within 15 km of him is in the picture, or when his turn points him at an enemy aircraft). A turn once he has left the others, or on the ground, stays quiet. A mate who can see you running ahead of the flight says "you are a few kilometres ahead of us. Slow down and rejoin." If they lose sight of you out in front, and you are not far, the leader says so with his heading and altitude |
 | `unasked.contacts` | `true` | One call when the contact picture changes: a group gained, lost, or "on me". The same sentence as Numpad 4. A clock that merely slides is left unsaid, the same aircraft are not called again within a minute (unless one comes onto a pilot or lets go of him), and picture calls are at least 15 s apart except a new "on me" |
 | `unasked.losses` | `true` | A flight mate who saw it calls a loss on the chat: "Lumme six is down. Hurricane down." An enemy going down is also "target destroyed" in his voice; a mate's loss has no recording, so it is text only. Left to the game's own pilots: their own kills, yours, and a mate shot down who can still call that he is hit |
 | `radioWait`, `radioWaitRatio` | `true`, `1.8` | Hold replies while IL-2's own radio is talking ([details](#audio)) |
-| `recordingReminderSeconds` | `60` | Remind you to press LCtrl+R this long into a mission without a track; `0` never |
+| `recordingReminderSeconds` | `60` | Remind you to press LCtrl+R this long into a mission with neither memory positions nor a track; `0` never |
 | `chat.output` | `"rtss"` | `rtss` (in game, works in fullscreen), `overlay` (windowed IL-2 only), `window` (e.g. a second screen) or `off` |
 | `chat.rtssPosition`, `chat.rtssMargin` | `"left-middle"`, `32` | RTSS text position: `left-middle`, `top-left`, `top-right`, `bottom-left`, `bottom-right`, `default` or `"X,Y"`; margin in screen pixels |
 | `chat.rtssColumns`, `chat.rtssZoom`, `chat.rtssCell` | `72`, `null`, `null` | RTSS line width; OSD zoom (`null`: from IL-2's RTSS profile); character size `[w, h]` for the right and bottom presets |
@@ -235,8 +236,10 @@ dotnet run --project src/Il2Radio.Diag -- live --chat off
 
 RTSS hooks the game's Direct3D output to draw its OSD; this tool only writes text into RTSS's shared memory. If IL-2 doesn't show the OSD, try **Application detection level** Medium in RTSS.
 
-### Live positions need administrator rights
-While a track is recording, IL-2 writes the Tacview ACMI file (every aircraft, ~5 updates/s) but keeps it locked. When you press Numpad 1, `live` takes a Windows Volume Shadow Copy snapshot, reads only the new part of the file, and deletes the snapshot straight away. The game process is never touched. Snapshots need administrator rights, so run the terminal as administrator. Snapshots left behind by a crash are removed on the next start.
+### Live positions
+**From IL-2's memory (the default, since 2026-10-27).** At the start of each mission the radio finds your aircraft in IL-2's memory by the id the mission log gives it, learns how the game stores aircraft from it, and then finds every aircraft in a few seconds; a rescan every 30 s picks up aircraft that spawn later. From then on it reads every aircraft's position once a second (about a millisecond). It only reads: the game is opened with read rights, nothing is written to it or loaded into it, and no game file changes. It is used only in missions IL-2 generated on your own PC (Career, quick missions), never on a server. Against a recorded track, memory positions agreed to a few metres (docs/MEMORY.md). Memory gives no name, side or "destroyed": those still come from the mission log, so an aircraft is reported only once the log has named it (up to about 30 s after it spawns), and a shot-down aircraft is silent from the moment the log records the kill, though its wreck is still falling. Heading is the course over ground, within a few degrees of the nose.
+
+**From the track recording (the fallback, or `positions: track`).** While a track is recording, IL-2 writes the Tacview ACMI file (every aircraft, ~5 updates/s) but keeps it locked. When you press a radio key, the radio takes a Windows Volume Shadow Copy snapshot, reads only the new part of the file, and deletes the snapshot straight away. Snapshots need administrator rights. Snapshots left behind by a crash are removed on the next start. IL-2 stops a recording when its replay file reaches about 500 MiB (about 20 minutes); press LCtrl+R again to go on.
 
 ## Known limitations
 - IL-2 telemetry contains no world position, not even the player's.

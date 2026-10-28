@@ -29,6 +29,8 @@ switch (command)
     case "live":
         if (install is null) return Fail("IL-2 installation not found. Pass --game <path> or set IL2_PATH.");
         if (!RealismOk(out int liveCode)) return liveCode;
+        if (Option("--positions") is { } positions && Il2Radio.Core.Settings.AppSettings.ParsePositions(positions) is null)
+            return Fail($"--positions \"{positions}\": expected auto, memory or track");
         int port = int.TryParse(Option("--port"), out int p) ? p : ConfiguredPort(install) ?? 29373;
         TimeSpan? duration = int.TryParse(Option("--seconds"), out int secs) ? TimeSpan.FromSeconds(secs) : null;
         VoiceSelection? voices = args.Contains("--no-audio") ? null : Voices();
@@ -41,6 +43,7 @@ switch (command)
                 UdpPort = port,
                 Duration = duration,
                 Realism = ChosenRealism(),
+                Positions = Il2Radio.Core.Settings.AppSettings.ParsePositions(Option("--positions") ?? "auto") ?? Il2Radio.Core.Settings.PositionsMode.Auto,
                 UnaskedRoute = FlagOn("--unasked-route"),
                 UnaskedContacts = FlagOn("--unasked-contacts"),
                 UnaskedLosses = FlagOn("--unasked-losses"),
@@ -56,6 +59,8 @@ switch (command)
         return Say();
     case "voice-check":
         return VoiceCheck();
+    case "mem-radio":
+        return MemRadio();
     case "mem-compare":
         return MemCompare.Run(Positional(1), Positional(2) ?? Newest(install?.TracksDir, "*.acmi"));
     case "mem-info" or "mem-scan" or "mem-next" or "mem-near" or "mem-list" or "mem-dump" or "mem-ptrs" or "mem-roster" or "mem-refs" or "mem-watch":
@@ -73,6 +78,7 @@ switch (command)
                                   --realism pilot (default): a pilot says only what he could know. precise: bearings and ranges from the track
               live [--port N] [--seconds S] [--volume V] [--voice V] [--no-audio] [--radio-wait on|off] [--radio-wait-ratio R]
                                   [--realism pilot|precise] [--unasked-route on|off] [--unasked-contacts on|off] [--unasked-losses on|off]
+                                  [--positions auto|memory|track]  (auto: IL-2's memory, the track when memory can't be read)
                                   Run during a mission: telemetry + log tail + ACMI tail + contact table + radio
                                   --radio-wait (default on): hold replies while IL-2's own audio peaks R x above its floor (1.8)
                                   Chat text: --chat overlay|window|rtss|ingame|off  --chat-screen N  --chat-pos L,T,W,H  --chat-font PX
@@ -90,6 +96,8 @@ switch (command)
                                   List the clips a voice pack resolves to; --play plays each, with its key, to check by ear
 
             Memory (read-only, for finding IL-2's structures; see docs/MEMORY.md):
+              mem-radio [--realism pilot|precise]
+                                  Answer every radio command once from this mission's log and IL-2's memory (safe beside a flight)
             """ + "\n" + MemTools.Help + """
 
 
@@ -100,6 +108,73 @@ switch (command)
               --game <path>       IL-2 install root (otherwise IL2_PATH or common Steam locations)
             """);
         return 0;
+}
+
+// Answers every radio command once from this mission's log and IL-2's memory, without the numpad or the chat
+// outputs, so it can run beside a flight: the check that memory positions reach the radio as they should.
+int MemRadio()
+{
+    if (install is null)
+        return Fail("IL-2 installation not found. Pass --game <path> or set IL2_PATH.");
+    if (!RealismOk(out int realismCode))
+        return realismCode;
+    var tracker = new ContactTracker();
+    if (File.Exists(install.GeneratedMission))
+        tracker.SetPlan(MissionPlan.Load(install.GeneratedMission));
+    var events = LatestLogChunks(install.DataDir).SelectMany(c => BinaryMissionLog.DecodeAll(File.ReadAllBytes(c))).ToList();
+    if (events.Count == 0) // at mission end IL-2 moves the binary chunks to FlightLogs and leaves the text ones
+        events = LatestLogChunks(install.DataDir, ".txt").SelectMany(File.ReadLines).Select(TextMissionLog.ParseLine).OfType<MissionLogEvent>().ToList();
+    events = events.OrderBy(e => e.Tick).ToList();
+    foreach (var e in events)
+        tracker.Apply(e);
+    string? missionFile = events.OfType<MissionStarted>().LastOrDefault()?.MissionFile;
+    if (missionFile?.Contains("_gen", StringComparison.OrdinalIgnoreCase) != true)
+        return Fail($"The newest mission log is not a mission generated here ({missionFile ?? "no AType:0"}); memory is read only for those.");
+    if (tracker.Player?.LogId is not long playerId)
+        return Fail("The mission log does not name the player yet.");
+
+    using var memory = ProcessMemory.Open(ProcessMemory.Il2ProcessName);
+    if (memory is null)
+        return Fail("Il-2.exe is not running.");
+    var clock = Stopwatch.StartNew();
+    if (Il2Radio.Core.Memory.ObjectRoster.FindPlayer(memory, (int)playerId, out ulong cls) is null)
+        return Fail($"Player {playerId} not found in memory.");
+    var objects = Il2Radio.Core.Memory.ObjectRoster.FindAll(memory, cls);
+    Console.WriteLine($"Found {objects.Count} objects in {clock.Elapsed.TotalSeconds:F1} s; {events.Count} log events; player {tracker.Player.DisplayName} ({playerId}).");
+
+    // Two reads 1.5 s apart, so courses over ground (headings) exist.
+    List<Il2Radio.Core.Memory.MemoryAircraft> ReadAll() =>
+        Il2Radio.Core.Memory.MemoryAircraft.Of(objects.Select(o => Il2Radio.Core.Memory.ObjectRoster.Read(memory, o.Address, cls)).OfType<Il2Radio.Core.Memory.MemoryObject>());
+    tracker.Apply(ReadAll(), 0);
+    Thread.Sleep(1500);
+    tracker.Apply(ReadAll(), 1.5);
+
+    var radio = new RadioSettings { Realism = ChosenRealism() };
+    var sightings = new SightingMemory();
+    EnemyCommands.Notice(tracker, radio, sightings);
+
+    var me = tracker.Player.LastFix;
+    Console.WriteLine($"\n{"contact",-30} {"type",-16} {"side",4} {"status",-10} {"source",-7} {"heading",7}  relative to you");
+    foreach (var c in tracker.Contacts.Where(c => c.LastFix?.Source == PositionSource.Memory).OrderByDescending(c => c.IsPlayer).ThenBy(c => c.Coalition).ThenBy(c => c.FormationIndex ?? 99))
+    {
+        var f = c.LastFix!;
+        string rel = !c.IsPlayer && me is not null && Il2Radio.Core.Geometry.Navigation.Relative(me.Position, f.Position) is { } r
+            ? $"brg {r.BearingDegrees:000} rng {r.RangeMetres / 1000:F1} km Δalt {r.AltitudeDeltaMetres:+0;-0} m"
+            : c.IsPlayer ? $"{f.Position.North:F0} N {f.Position.East:F0} E {f.Position.Altitude:F0} m" : "";
+        Console.WriteLine($"{Trunc((c.IsPlayer ? "YOU " : "") + c.DisplayName, 30),-30} {Trunc(c.TypeName, 16),-16} {c.Coalition,4} {c.Status,-10} {f.Source,-7} {(f.Heading is double h ? $"{h:000}" : "-"),7}  {rel}");
+    }
+
+    Console.WriteLine($"\nRadio, realism {radio.Realism}:");
+    foreach (var command in Enum.GetValues<RadioCommand>())
+    {
+        var result = RadioCommands.Execute(command, tracker, radio, sightings);
+        Console.WriteLine($"\n  {RadioCommands.Title(command)} → {result.Outcome}");
+        foreach (var r in result.Replies)
+            Console.WriteLine($"    RADIO: \"{r.Text}\"");
+        foreach (var x in result.Suppressed.Take(6))
+            Console.WriteLine($"    silent: {x.Contact.DisplayName} — {x.Reason}");
+    }
+    return 0;
 }
 
 // Prints the IL-2 audio meter twice a second, to tune --radio-wait-ratio while AI pilots talk.

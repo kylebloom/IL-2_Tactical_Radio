@@ -217,5 +217,5 @@ internal sealed record RadioPicture(Contact Player, PositionFix PlayerFix, IRead
     }
 
     private static bool IsLive(ContactTracker tracker, PositionFix fix, RadioSettings settings) =>
-        fix.Source == PositionSource.AcmiTrack && tracker.AgeSeconds(fix) <= settings.MaxFixAgeSeconds;
+        fix.IsTrack && tracker.AgeSeconds(fix) <= settings.MaxFixAgeSeconds;
 }

@@ -2,6 +2,7 @@ using Il2Radio.Core.Acmi;
 using Il2Radio.Core.Audio;
 using Il2Radio.Core.Contacts;
 using Il2Radio.Core.Geometry;
+using Il2Radio.Core.Memory;
 using Il2Radio.Core.MissionFile;
 using Il2Radio.Core.MissionLog;
 using Il2Radio.Core.Radio;
@@ -409,6 +410,21 @@ public class PilotRealismTests
         Assert.Equal("Number two, I cannot see you. Heading east, altitude 1000 metres. Grid 1022-5.", reply.Text);
         Assert.Contains(reply.Tokens!, t => t.Word == SpeechWord.Grid && t.Value == 1022 && t.Name == "5");
         Assert.Null(ClipPhraser.Phrase(reply.Tokens!, _ => false)); // no clips: chat only
+    }
+
+    [Fact]
+    public void From_memory_the_square_comes_from_the_map_metres_themselves()
+    {
+        StartMission(RouteMission(offRoute: false));
+        LogFlightMember("Felix Knierim", 2); // log ids: the player 1000, Felix 1002
+        // IL-2's memory gives the mission's own metres, so no latitude fit stands between him and his square.
+        // Two reads give his course over ground: east.
+        _tracker.Apply([new MemoryAircraft(1000, 120864, 1000, 214900, 100), new MemoryAircraft(1002, 135864, 1000, 214900, 100)], 10);
+        _tracker.Apply([new MemoryAircraft(1000, 120964, 1000, 214900, 100), new MemoryAircraft(1002, 135864, 1000, 215000, 100)], 11);
+
+        var reply = Assert.Single(FriendlyPositionsCommand.Execute(_tracker, Pilot).Replies);
+
+        Assert.Equal("Number two, I cannot see you. Heading east, altitude 1000 metres. Grid 1022-5.", reply.Text);
     }
 
     [Fact]

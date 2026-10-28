@@ -11,6 +11,27 @@ namespace Il2Radio.Core.Memory;
 /// <param name="Speed">Metres per second.</param>
 public sealed record MemoryObject(ulong Address, int Id, double North, double Height, double East, float Speed);
 
+/// <summary>One aircraft at one read: the median of its objects, which are its parts and lie within its own size of each other.</summary>
+public sealed record MemoryAircraft(int Id, double North, double Height, double East, double Speed)
+{
+    /// <summary>
+    /// One reading per id. The median rather than the mean, so one odd part cannot pull the aircraft (a single
+    /// part once read 360 km/h on the ground while the aircraft was on its take-off run; docs/MEMORY.md).
+    /// </summary>
+    public static List<MemoryAircraft> Of(IEnumerable<MemoryObject> objects) =>
+        objects.GroupBy(o => o.Id)
+            .Select(g => new MemoryAircraft(g.Key,
+                Median(g.Select(o => o.North)), Median(g.Select(o => o.Height)), Median(g.Select(o => o.East)), Median(g.Select(o => (double)o.Speed))))
+            .ToList();
+
+    private static double Median(IEnumerable<double> values)
+    {
+        var sorted = values.Order().ToList();
+        int mid = sorted.Count / 2;
+        return sorted.Count % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+}
+
 /// <summary>
 /// Finds IL-2's scene objects once per mission and re-reads them cheaply (docs/MEMORY.md, "find the nodes once").
 /// Only data layouts are assumed, never code addresses: the class pointer is learned from the player's own

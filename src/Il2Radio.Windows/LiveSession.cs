@@ -9,6 +9,7 @@ using Il2Radio.Core.Geometry;
 using Il2Radio.Core.MissionFile;
 using Il2Radio.Core.MissionLog;
 using Il2Radio.Core.Radio;
+using Il2Radio.Core.Settings;
 using Il2Radio.Core.Telemetry;
 
 namespace Il2Radio.Windows;
@@ -39,6 +40,9 @@ internal sealed record LiveOptions
 
     /// <summary>How much a pilot is allowed to say. The player's program and Diag default to pilot.</summary>
     public RadioRealism Realism { get; init; } = RadioRealism.Pilot;
+
+    /// <summary>Where live positions come from: IL-2's memory, the Tacview track, or memory with the track as fallback.</summary>
+    public PositionsMode Positions { get; init; } = PositionsMode.Auto;
 
     /// <summary>An AI leader calls a cruise heading, or the chat shows a route line when the player leads.</summary>
     public bool UnaskedRoute { get; init; } = true;
@@ -142,6 +146,14 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     private long _acmiSizeOnDisk;
     private int _acmiGrowthCount;
 
+    // IL-2's memory (docs/MEMORY.md); null when positions come from the track only
+    private MemoryPositions? _memoryPositions;
+    private bool _memoryLive;
+    private string? _missionFile; // MFile of the mission log's AType:0: memory is read only for missions generated here
+
+    /// <summary>The track's positions are not applied: memory supplies them, or the player chose memory only. The two frames never mix.</summary>
+    private bool TrackPositionsOff => _memoryLive || options.Positions == PositionsMode.Memory;
+
     private string _lastCommandOutput = $"Keys: {options.Keys.Legend}";
     private string _lastExchange = $"Keys: {options.Keys.Legend}"; // the compact view's: replies only
 
@@ -164,6 +176,10 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         {
             Note("snapshots: NOT running as administrator — a locked ACMI cannot be read during recording");
         }
+
+        if (options.Positions != PositionsMode.Track)
+            _memoryPositions = new MemoryPositions(text => Note(text));
+        using var memoryPositions = _memoryPositions;
 
         var udp = _udpPort is int port ? Task.Run(() => ListenUdpAsync(port, cts.Token)) : Task.CompletedTask;
         while (!cts.IsCancellationRequested)
@@ -357,12 +373,13 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             try { PollBinaryLog(); } catch (Exception ex) { Note($"mlg: {ex.Message}"); }
             try { PollTextLogs(); } catch (Exception ex) { Note($"text log: {ex.Message}"); }
             try { PollAcmi(); } catch (Exception ex) { Note($"acmi: {ex.Message}"); }
+            try { PollMemory(); } catch (Exception ex) { Note($"memory: {ex.Message}"); }
             try { PollRecording(); } catch (Exception ex) { Note($"recording: {ex.Message}"); }
-            if (!_acmiLocked && options.AnyUnasked && Volatile.Read(ref _requestInFlight) == 0)
+            if ((_memoryLive || !_acmiLocked) && options.AnyUnasked && Volatile.Read(ref _requestInFlight) == 0)
                 unasked = _unasked.Consider(_tracker, Radio(), _sightings, CallSettings());
             var now = DateTime.UtcNow;
             var mission = RunningMissionStartUtc(now);
-            remind = _recordingWatch.Update(now, mission, _recording);
+            remind = _recordingWatch.Update(now, mission, _recording || _memoryLive); // memory needs no recording
 
             // A mission found in the first seconds was already running at start-up, when the alerts were shown.
             if (mission is { } m && m != _alertedMission)
@@ -395,6 +412,11 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         {
             if (DateTime.UtcNow - _unaskedAttemptUtc < TimeSpan.FromSeconds(10))
                 return;
+            lock (_gate)
+            {
+                if (TrackPositionsOff)
+                    return; // memory is read every poll; no snapshot needed
+            }
             if (Volatile.Read(ref _requestInFlight) == 1 || Volatile.Read(ref _snapshotInFlight) == 1)
                 return;
 
@@ -567,6 +589,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
                 {
                     sawStart = true;
                     _gameOrigin = started.GameDateTime;
+                    _missionFile = started.MissionFile;
                     _latestLogTime = TimeSpan.MinValue;
                 }
                 if (e.GameTime > _latestLogTime)
@@ -707,11 +730,41 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
     }
 
     /// <summary>
+    /// Reads every aircraft's position from IL-2's memory, when memory is a source (docs/MEMORY.md), and records
+    /// what the flight could see, as each track frame does. Only for a mission IL-2 generated on this machine
+    /// (Career and quick missions: "_gen" in the log's mission file), never a server's: the memory rule is
+    /// single-player only. Caller holds _gate.
+    /// </summary>
+    private void PollMemory()
+    {
+        if (_memoryPositions is null)
+            return;
+        bool local = _missionFile?.Contains("_gen", StringComparison.OrdinalIgnoreCase) == true;
+        int? playerId = local && _tracker.Player?.LogId is long id ? (int)id : null;
+        var aircraft = _memoryPositions.Read(playerId);
+        bool live = aircraft is not null;
+        if (aircraft is not null)
+        {
+            _tracker.Apply(aircraft, (DateTime.UtcNow - _startedUtc).TotalSeconds);
+            EnemyCommands.Notice(_tracker, Radio(), _sightings);
+        }
+        if (live != _memoryLive)
+        {
+            Note(live ? "positions: live from IL-2's memory (no track recording needed)"
+                : options.Positions == PositionsMode.Memory ? $"positions: IL-2's memory not readable ({_memoryPositions.Status})"
+                : $"positions: IL-2's memory not readable ({_memoryPositions.Status}); using the track recording");
+            _memoryLive = live;
+        }
+    }
+
+    /// <summary>
     /// A track frame has closed. Record what the flight could see there, so a glimpse between radio calls
     /// is still mentioned for the next minute. Caller holds _gate, from inside <see cref="FeedAcmi"/>.
     /// </summary>
     private void NoticeFrame(AcmiStream stream)
     {
+        if (TrackPositionsOff)
+            return;
         _tracker.Apply(stream);
         EnemyCommands.Notice(_tracker, new RadioSettings { Realism = options.Realism }, _sightings);
     }
@@ -735,7 +788,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         _acmiOffset += bytes.Length;
         _acmiLastGrowthUtc = DateTime.UtcNow;
         _acmiGrowthCount++;
-        _tracker.Apply(_acmi);
+        if (!TrackPositionsOff)
+            _tracker.Apply(_acmi);
         // ReferenceTime is the in-game clock at #0, and CurrentTime is seconds of simulation
         // since then. That is the cockpit watch at the last frame in this read.
         if (MissionClock.TryParseReference(_acmi.ReferenceTime, out var reference))
@@ -753,6 +807,18 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             lock (_gate)
                 player = _tracker.Player;
             Keyed?.Invoke(command, player);
+
+            // From memory: a fresh read takes milliseconds, so answer at once without touching the track.
+            lock (_gate)
+            {
+                if (_memoryPositions is not null && TrackPositionsOff)
+                    PollMemory();
+                if (TrackPositionsOff)
+                {
+                    _lastCommandOutput = Describe(command, _memoryLive ? null : $"positions from IL-2's memory not available: {_memoryPositions?.Status}");
+                    return;
+                }
+            }
 
             string? path;
             long offset;
@@ -886,7 +952,11 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
         string mission = missionStart is { } start
             ? $"running since {start.ToLocalTime():HH:mm:ss}"
             : _chunkStamp is null ? "waiting for a mission to start" : "none running (ended, paused or loading)";
-        string track = _recording
+        string track = _memoryLive
+            ? "positions live from IL-2's memory; no recording needed"
+            : options.Positions == PositionsMode.Memory
+                ? $"waiting for IL-2's memory: {_memoryPositions?.Status}"
+            : _recording
             ? $"recording ({Path.GetFileName(_acmiPath)}, {_acmiSizeOnDisk / 1024} KB): positions are live"
             : missionStart is not null
                 ? "NOT recording: press LCtrl+R in the cockpit, or nobody can report positions"
@@ -933,7 +1003,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             sb.AppendLine($"   IAS {(s.IndicatedAirspeedMs * 3.6):F0} km/h  AGL {s.AboveGroundLevelM:F0} m  paused {s.Paused}");
         sb.AppendLine($"Binary log    {(_mlg is null ? "(no mission log yet)" : Path.GetFileName(_mlg.Path))}  events {_mlgEvents}  growth {_mlgGrowthCount}×  last {Ago(_mlgLastGrowthUtc, now)}");
         sb.AppendLine($"Text log      events {_textEvents}  files {_textLogOffsets.Count}");
-        sb.AppendLine($"ACMI          {(_acmiPath is null ? "(no new .acmi yet — enable tacviewrecord and record a track)" : Path.GetFileName(_acmiPath))}{(_acmiLocked ? $"  LOCKED by IL-2 ({_acmiSizeOnDisk / 1024} KB; read {_acmiOffset / 1024} KB, refreshed on each call)" : "")}  growth {_acmiGrowthCount}×  last {Ago(_acmiLastGrowthUtc, now)}  t={_acmi?.CurrentTime:F0}s");
+        sb.AppendLine($"ACMI          {(_acmiPath is null ? "(no new .acmi yet — enable tacviewrecord and record a track)" : Path.GetFileName(_acmiPath))}{(_acmiLocked ? $"  LOCKED by IL-2 ({_acmiSizeOnDisk / 1024} KB; read {_acmiOffset / 1024} KB, refreshed on each call)" : "")}  growth {_acmiGrowthCount}×  last {Ago(_acmiLastGrowthUtc, now)}  t={_acmi?.CurrentTime:F0}s{(TrackPositionsOff ? "  (positions not used: memory)" : "")}");
+        sb.AppendLine($"Memory        {(_memoryPositions is null ? "off (positions: track)" : _memoryPositions.Status)}");
         sb.AppendLine(new string('─', 110));
 
         var player = _tracker.Player;
@@ -944,7 +1015,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             string age = c.LastFix is { } f2 ? _tracker.AgeSeconds(f2).ToString("F0") : "-";
             string rel = "";
             // Only live tracks give a current relative position; event snapshots are history.
-            if (!c.IsPlayer && player?.LastFix is { Source: PositionSource.AcmiTrack } pf && c.LastFix is { Source: PositionSource.AcmiTrack } cf
+            if (!c.IsPlayer && player?.LastFix is { IsTrack: true } pf && c.LastFix is { IsTrack: true } cf
                 && Navigation.Relative(pf.Position, cf.Position) is { } r)
                 rel = $"brg {r.BearingDegrees:000} rng {r.RangeMetres / 1000:F1} km Δalt {r.AltitudeDeltaMetres:+0;-0} m";
             else if (c.LastFix is { } snap)
@@ -973,6 +1044,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
                 : "- UDP telemetry: not listened to");
             sb.AppendLine($"- Binary mission log: {(_mlg?.Path ?? "none")} — {_mlgEvents} events, file grew during session {_mlgGrowthCount} times (last {(_mlgLastGrowthUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "never")})");
             sb.AppendLine($"- Text mission log: {_textEvents} events across {_textLogOffsets.Count} files");
+            sb.AppendLine($"- Positions: {options.Positions}; memory {(_memoryPositions is null ? "off" : _memoryPositions.Status)}");
             sb.AppendLine($"- ACMI: {(_acmiPath ?? "none")} — grew {_acmiGrowthCount} times (last {(_acmiLastGrowthUtc?.ToLocalTime().ToString("HH:mm:ss") ?? "never")}), stream time {_acmi?.CurrentTime:F0} s");
             if (_acmi is not null)
             {

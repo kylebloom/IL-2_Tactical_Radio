@@ -21,10 +21,14 @@ internal static class PlanSquare
     {
         if (plan is null || !MapGrid.IsStalingrad(plan.GuiMap))
             return null;
-        if (group.Speaker.Fix.Latitude is not double latitude || group.Speaker.Fix.Longitude is not double longitude)
+        double north, east;
+        if (group.Speaker.Fix.Position.Frame == CoordinateFrame.Il2World)
+            (north, east) = (group.Speaker.Fix.Position.North, group.Speaker.Fix.Position.East); // memory: the map's own metres, exact
+        else if (group.Speaker.Fix.Latitude is double latitude && group.Speaker.Fix.Longitude is double longitude)
+            (north, east) = MapGrid.ProjectStalingrad(latitude, longitude); // ACMI: the four-town fit, within ~360 m
+        else
             return null;
 
-        var (north, east) = MapGrid.ProjectStalingrad(latitude, longitude);
         if (group.Speaker.Contact.InPlayerFlight
             && DistanceToRoute(north, east, Routes(plan, group.Speaker.Contact)) > OnRouteMetres)
             return null;
