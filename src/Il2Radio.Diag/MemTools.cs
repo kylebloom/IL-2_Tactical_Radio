@@ -36,6 +36,8 @@ static class MemTools
                     "mem-info" => Info(memory),
                     "mem-scan" => Scan(memory, options),
                     "mem-next" => Next(memory, options),
+                    "mem-near" => Near(memory, options),
+                    "mem-ptrs" => Pointers(memory, options),
                     "mem-list" => List(memory, options),
                     "mem-dump" => Dump(memory, options),
                     "mem-refs" => Refs(memory, options),
@@ -56,8 +58,15 @@ static class MemTools
                                          Search memory. type: i32 i64 f32 f64 ascii utf16. A float matches to the
                                          precision written (1234 is ±0.5); a..b is a range. Saves the results
           mem-next <filter>              Narrow the saved results: changed, unchanged, increased, decreased, or a value/range
+          mem-near <type> <value|a..b> [--within N] [--count K]
+                                         Keep saved results with at least K (default 1) matching values within N
+                                         (hex, default 200) bytes, e.g. an object id with its position nearby
           mem-list [--max N]             Show the saved results with their current values
+                                         --fields off:type,... (scan, next, near, list) also shows values at hex offsets
+                                         from each hit, e.g. --fields -8:i32,+170:f64
           mem-dump <address> [--bytes N] Show memory as hex, i32, f32, f64, text and pointers (default 256 bytes)
+          mem-ptrs <address> [--count N] [--fields off:type,...]
+                                         Walk an array of pointers; --fields reads values inside each object pointed to
           mem-refs <address> [--before N] [--module M] [--max N]
                                          Find pointers to the address or up to N (hex, default 400) bytes before it,
                                          i.e. to a structure holding it. Saves the results like a scan
@@ -84,7 +93,7 @@ static class MemTools
         foreach (var m in memory.Modules.Take(8))
             Console.WriteLine($"  {m.Name,-28} 0x{m.Base:X12}  {m.Size / 1024,8} KB");
         if (memory.Modules.Count > 8)
-            Console.WriteLine($"  … and {memory.Modules.Count - 8} more");
+            Console.WriteLine($"  ... and {memory.Modules.Count - 8} more");
         Console.WriteLine("Reading only. Use these tools in single-player missions only.");
         return 0;
     }
@@ -108,7 +117,7 @@ static class MemTools
         Console.WriteLine($"Scanned {result.BytesScanned / (1 << 20)} MB in {result.RegionsScanned} regions in {clock.Elapsed.TotalSeconds:F1} s: "
             + $"{result.Hits.Count} hits{(result.Truncated ? " (stopped at --max)" : "")} for {type} {pattern.Text}");
         Save(memory, type, $"{type} {pattern.Text}", result.Hits);
-        PrintHits(memory, type, result.Hits.Select(h => (h, h.Value)).ToList(), options.Int("--max-show") ?? 20);
+        PrintHits(memory, type, result.Hits.Select(h => (h, h.Value)).ToList(), options.Int("--max-show") ?? 20, options);
         return 0;
     }
 
@@ -120,9 +129,63 @@ static class MemTools
             return 1;
         var filter = RefineFilter.Parse(filterText, state.Type);
         var kept = MemoryScanner.Refine(memory, state.Hits, state.Type, filter);
-        Console.WriteLine($"{state.Hits.Count} → {kept.Count} hits ({filterText}) for {state.Description}");
+        Console.WriteLine($"{state.Hits.Count} -> {kept.Count} hits ({filterText}) for {state.Description}");
         Save(memory, state.Type, state.Description, kept);
-        PrintHits(memory, state.Type, kept.Select(h => (h, h.Value)).ToList(), options.Int("--max") ?? 20);
+        PrintHits(memory, state.Type, kept.Select(h => (h, h.Value)).ToList(), options.Int("--max") ?? 20, options);
+        return 0;
+    }
+
+    private static int Near(ProcessMemory memory, Options options)
+    {
+        if (options.Positional(1) is not { } typeText || options.Positional(2) is not { } valueText)
+            return Fail("Usage: mem-near <type> <value|a..b> [--within N] [--count K]");
+        if (LoadFor(memory) is not { } state)
+            return 1;
+        var type = ScanPattern.ParseType(typeText);
+        var pattern = ScanPattern.Parse(type, valueText);
+        int within = options.Get("--within") is { } w ? int.Parse(w.Replace("0x", ""), NumberStyles.HexNumber, CultureInfo.InvariantCulture) : 0x200;
+        int minimum = options.Int("--count") ?? 1;
+
+        var kept = MemoryScanner.Near(memory, state.Hits, pattern, within, minimum, options.Int("--align"));
+        Console.WriteLine($"{state.Hits.Count} -> {kept.Count} hits with at least {minimum} {type} {pattern.Text} within 0x{within:X} bytes, for {state.Description}");
+        if (kept.Count == 0)
+        {
+            Console.WriteLine("Nothing kept; the saved results are unchanged, so another mem-near can try a different type or range.");
+            return 0;
+        }
+        Save(memory, state.Type, state.Description, kept.Select(k => k.Hit).ToList());
+
+        var book = new AddressBook(memory);
+        int max = options.Int("--max") ?? 20;
+        for (int i = 0; i < Math.Min(max, kept.Count); i++)
+        {
+            var (hit, nearby) = kept[i];
+            string values = string.Join("  ", nearby.Take(8).Select(n => $"{(n.Offset < 0 ? "-" : "+")}0x{Math.Abs(n.Offset):X} {ScanPattern.Format(type, n.Value)}"));
+            Console.WriteLine($"  r{i,-4} {book.Name(hit.Address),-24} {values}{(nearby.Count > 8 ? $"  (+{nearby.Count - 8} more)" : "")}{Fields(memory, options, hit.Address)}");
+        }
+        if (kept.Count > max)
+            Console.WriteLine($"  ... {kept.Count - max} more (--max N)");
+        return 0;
+    }
+
+    /// <summary>Walks an array of 8-byte pointers and shows --fields read from each object they point to.</summary>
+    private static int Pointers(ProcessMemory memory, Options options)
+    {
+        if (options.Positional(1) is not { } addressText)
+            return Fail("Usage: mem-ptrs <address> [--count N] [--fields off:type,...]");
+        ulong address = ResolveAddress(memory, addressText);
+        int count = Math.Clamp(options.Int("--count") ?? 64, 1, 100_000);
+        var data = new byte[count * 8];
+        int read = memory.Read(address, data);
+        var book = new AddressBook(memory);
+        Console.WriteLine($"{read / 8} of {count} entries readable at {book.Name(address)}");
+        for (int i = 0; i < read / 8; i++)
+        {
+            ulong value = BitConverter.ToUInt64(data, i * 8);
+            string target = value == 0 ? "null" : book.IsMapped(value) ? book.Name(value) : $"(not a pointer: 0x{value:X})";
+            string fields = value != 0 && book.IsMapped(value) ? Fields(memory, options, value) : "";
+            Console.WriteLine($"  [{i,5}] +0x{i * 8:X5}  {target,-20}{fields}");
+        }
         return 0;
     }
 
@@ -132,7 +195,7 @@ static class MemTools
             return 1;
         Console.WriteLine($"{state.Hits.Count} saved hits for {state.Description}");
         var now = MemoryScanner.ReadAgain(memory, state.Hits).ToDictionary(x => x.Hit.Address, x => x.Now);
-        PrintHits(memory, state.Type, state.Hits.Select(h => (h, now.GetValueOrDefault(h.Address) ?? [])).ToList(), options.Int("--max") ?? 50);
+        PrintHits(memory, state.Type, state.Hits.Select(h => (h, now.GetValueOrDefault(h.Address) ?? [])).ToList(), options.Int("--max") ?? 50, options);
         return 0;
     }
 
@@ -220,17 +283,45 @@ static class MemTools
         }
     }
 
-    private static void PrintHits(ProcessMemory memory, ScanType type, List<(ScanHit Hit, byte[] Now)> hits, int max)
+    private static void PrintHits(ProcessMemory memory, ScanType type, List<(ScanHit Hit, byte[] Now)> hits, int max, Options options)
     {
         var book = new AddressBook(memory);
         for (int i = 0; i < Math.Min(max, hits.Count); i++)
         {
             var (hit, now) = hits[i];
             string value = now.Length == 0 ? "(unreadable)" : ScanPattern.Format(type, now);
-            Console.WriteLine($"  r{i,-4} {book.Name(hit.Address),-32} {value}");
+            Console.WriteLine($"  r{i,-4} {book.Name(hit.Address),-32} {value}{Fields(memory, options, hit.Address)}");
         }
         if (hits.Count > max)
-            Console.WriteLine($"  … {hits.Count - max} more (mem-list --max N)");
+            Console.WriteLine($"  ... {hits.Count - max} more (mem-list --max N)");
+    }
+
+    /// <summary>
+    /// The values --fields asks to show beside each hit: "offset:type" pairs, comma-separated, offsets in hex
+    /// relative to the hit ("-8:i32,+170:f64"). Lets one listing show, say, the id and position of every match.
+    /// </summary>
+    private static string Fields(ProcessMemory memory, Options options, ulong address)
+    {
+        if (options.Get("--fields") is not { } spec)
+            return "";
+        var parts = new List<string>();
+        foreach (string field in spec.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var pieces = field.Split(':');
+            if (pieces.Length != 2)
+                throw new FormatException($"--fields \"{field}\": expected offset:type, e.g. -8:i32");
+            string offsetText = pieces[0].Trim();
+            bool negative = offsetText.StartsWith('-');
+            string digits = offsetText.TrimStart('+', '-').Replace("0x", "", StringComparison.OrdinalIgnoreCase);
+            long offset = long.Parse(digits, NumberStyles.HexNumber, CultureInfo.InvariantCulture) * (negative ? -1 : 1);
+            var type = ScanPattern.ParseType(pieces[1].Trim());
+            if (type is ScanType.Ascii or ScanType.Utf16)
+                throw new FormatException("--fields shows numbers: i32, i64, f32 or f64");
+            var buffer = new byte[ScanPattern.SizeOf(type)];
+            bool ok = memory.Read((ulong)((long)address + offset), buffer) == buffer.Length;
+            parts.Add($"{offsetText}={(ok ? ScanPattern.Format(type, buffer) : "?")}");
+        }
+        return "  | " + string.Join("  ", parts);
     }
 
     private static ulong ResolveAddress(ProcessMemory memory, string text)

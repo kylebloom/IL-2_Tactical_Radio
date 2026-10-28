@@ -137,6 +137,46 @@ public static class MemoryScanner
         }
     }
 
+    /// <summary>
+    /// For each hit, the values matching <paramref name="pattern"/> within <paramref name="within"/> bytes either side
+    /// (offsets relative to the hit, on the pattern's alignment, the hit's own bytes excluded). Only hits with at
+    /// least <paramref name="minimum"/> such values are returned: e.g. an object id with its position nearby.
+    /// </summary>
+    public static List<(ScanHit Hit, List<(long Offset, byte[] Value)> Nearby)> Near(
+        IProcessMemory memory, IReadOnlyList<ScanHit> hits, ScanPattern pattern, int within, int minimum = 1, int? alignment = null)
+    {
+        int align = alignment ?? pattern.DefaultAlignment;
+        var book = new AddressBook(memory);
+        var kept = new List<(ScanHit, List<(long, byte[])>)>();
+        foreach (var hit in hits)
+        {
+            if (book.RegionOf(hit.Address) is not { } region)
+                continue;
+            // Stay inside the hit's region, so one unreadable neighbour does not hide the rest.
+            ulong start = Math.Max(region.Base, hit.Address - Math.Min((ulong)within, hit.Address));
+            ulong end = Math.Min(region.End, hit.Address + (ulong)within + (ulong)pattern.Size);
+            start += (ulong)((align - (long)(start % (ulong)align)) % align);
+            if (end <= start)
+                continue;
+            var data = new byte[end - start];
+            if (memory.Read(start, data) != data.Length)
+                continue;
+
+            var nearby = new List<(long, byte[])>();
+            for (int at = 0; at + pattern.Size <= data.Length; at += align)
+            {
+                ulong address = start + (ulong)at;
+                if (address + (ulong)pattern.Size > hit.Address && address < hit.Address + (ulong)hit.Value.Length)
+                    continue;
+                if (pattern.Matches(data.AsSpan(at, pattern.Size)))
+                    nearby.Add(((long)address - (long)hit.Address, data.AsSpan(at, pattern.Size).ToArray()));
+            }
+            if (nearby.Count >= minimum)
+                kept.Add((hit, nearby));
+        }
+        return kept;
+    }
+
     private static bool Passes(ScanType type, RefineFilter filter, byte[] before, byte[] now)
     {
         switch (filter.Kind)

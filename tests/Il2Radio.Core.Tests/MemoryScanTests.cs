@@ -122,6 +122,26 @@ public class MemoryScanTests
     }
 
     [Fact]
+    public void Near_keeps_ids_with_a_position_beside_them()
+    {
+        var memory = new FakeMemory();
+        // The aircraft: its id, then x and z (game metres) a little further on. Elsewhere, a bare reference to the id.
+        BinaryPrimitives.WriteInt32LittleEndian(memory.Heap.AsSpan(0x400), 1217535);
+        memory.PutDouble(memory.Heap, 0x440, 119848.3);
+        memory.PutDouble(memory.Heap, 0x448, 57.1);
+        memory.PutDouble(memory.Heap, 0x450, 157764.2);
+        BinaryPrimitives.WriteInt32LittleEndian(memory.Heap.AsSpan(0x1000), 1217535);
+        memory.PutDouble(memory.Heap, 0x1100, 150000); // one coordinate-like value is not enough for --count 2
+        var ids = MemoryScanner.Scan(memory, ScanPattern.Parse(ScanType.I32, "1217535")).Hits;
+
+        var kept = MemoryScanner.Near(memory, ids, ScanPattern.Parse(ScanType.F64, "50000..250000"), within: 0x200, minimum: 2);
+
+        var (hit, nearby) = Assert.Single(kept);
+        Assert.Equal(HeapBase + 0x400, hit.Address);
+        Assert.Equal([0x40L, 0x50], nearby.Select(n => n.Offset));
+    }
+
+    [Fact]
     public void Pointer_search_finds_structures_holding_the_target()
     {
         var memory = new FakeMemory();

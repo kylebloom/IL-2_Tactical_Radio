@@ -56,7 +56,7 @@ switch (command)
         return Say();
     case "voice-check":
         return VoiceCheck();
-    case "mem-info" or "mem-scan" or "mem-next" or "mem-list" or "mem-dump" or "mem-refs" or "mem-watch":
+    case "mem-info" or "mem-scan" or "mem-next" or "mem-near" or "mem-list" or "mem-dump" or "mem-ptrs" or "mem-refs" or "mem-watch":
         return MemTools.Run(command, args);
     default:
         Console.WriteLine("""
