@@ -89,7 +89,7 @@ public static class EnemyCommands
         if (look.Observers.Count == 0)
             return new RadioResult(ReplyOutcome.NoReply, [], suppressed);
 
-        var groups = Group(look.Sighted.Where(s => s.Level < IdentificationLevel.Side || !IsFriendly(look.Player, s.Target.Contact)), look)
+        var groups = Group(look.Sighted.Where(s => ReportsAsContact(s, look.Player)), look)
             .OrderBy(g => g.Relative.RangeMetres)
             .Take(MaxReportedGroups)
             .ToList();
@@ -136,7 +136,10 @@ public static class EnemyCommands
         return new RadioResult(ReplyOutcome.Position, replies, suppressed);
     }
 
-    /// <summary>Command 4: the nearest spotted aircraft (any side, except the player's own flight), identified as far as possible.</summary>
+    /// <summary>
+    /// Command 4: the nearest hostile or not-yet-identified aircraft, in more detail than the contacts picture.
+    /// A friendly the flight has already made out is not it (2026-10-28: Numpad 5 named the He 111s alongside).
+    /// </summary>
     public static RadioResult Identify(ContactTracker tracker, RadioSettings? settings = null, SightingMemory? memory = null)
     {
         settings ??= new RadioSettings();
@@ -146,7 +149,9 @@ public static class EnemyCommands
         if (look.Observers.Count == 0)
             return new RadioResult(ReplyOutcome.NoReply, [], suppressed);
 
-        var nearest = Group(look.Sighted, look).OrderBy(g => g.Relative.RangeMetres).FirstOrDefault();
+        var nearest = Group(look.Sighted.Where(s => ReportsAsContact(s, look.Player)), look)
+            .OrderBy(g => g.Relative.RangeMetres)
+            .FirstOrDefault();
         if (nearest is null)
         {
             var lead = Leader(look.Observers);
@@ -426,6 +431,10 @@ public static class EnemyCommands
 
     private static string HighLow(double altitudeDeltaMetres) =>
         altitudeDeltaMetres > 300 ? "high" : altitudeDeltaMetres < -300 ? "low" : "level";
+
+    /// <summary>Hostile, or not yet identified to a side. A known friendly is left out of Numpad 4 and 5.</summary>
+    private static bool ReportsAsContact(SightedContact s, Contact player) =>
+        s.Level < IdentificationLevel.Side || !IsFriendly(player, s.Target.Contact);
 
     private static bool IsFriendly(Contact player, Contact c) => RadioPicture.IsFriendly(player, c);
 

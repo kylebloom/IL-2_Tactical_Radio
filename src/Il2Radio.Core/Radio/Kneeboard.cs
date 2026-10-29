@@ -55,12 +55,13 @@ public sealed record PlotEntry(PlotMark Mark, TimeSpan Age, double Alpha)
 
 /// <summary>Everything the overlay draws for one frame of the kneeboard.</summary>
 public sealed record KneeboardPicture(KneeboardView View, KneeboardSheet Sheet, IReadOnlyList<PlotEntry> Marks, PlotEntry? Player, string? OffSheet,
-    IReadOnlyList<string> WithPlayer, IReadOnlyList<string> Footer)
+    IReadOnlyList<string> WithPlayer, IReadOnlyList<string> Footer, IReadOnlyList<(double North, double East)> Pencil)
 {
     /// <summary>A string that changes whenever the drawing would, so the overlay redraws only then.</summary>
     public string Signature =>
-        $"{View}|{Player?.Mark.North:F0},{Player?.Mark.East:F0},{Player?.Mark.Size:F0},{Player?.AgeText},{Player?.Alpha:F2}|{OffSheet}|{string.Join(",", WithPlayer)}|" +
-        string.Join(";", Marks.Select(m => $"{m.Mark.Key}@{m.Mark.North:F0},{m.Mark.East:F0},{m.Mark.Size:F0},{m.AgeText},{m.Alpha:F2}")) + "|" + string.Join("/", Footer);
+        $"{View}|{Sheet.RouteOf}|{Sheet.South:F0},{Sheet.West:F0},{Sheet.North:F0},{Sheet.East:F0}|{Player?.Mark.North:F0},{Player?.Mark.East:F0},{Player?.Mark.Size:F0},{Player?.AgeText},{Player?.Alpha:F2}|{OffSheet}|{string.Join(",", WithPlayer)}|" +
+        string.Join(";", Marks.Select(m => $"{m.Mark.Key}@{m.Mark.North:F0},{m.Mark.East:F0},{m.Mark.Size:F0},{m.AgeText},{m.Alpha:F2}")) + "|" + string.Join("/", Footer) + "|" +
+        string.Join(";", Pencil.Select(p => $"{p.North:F0},{p.East:F0}"));
 }
 
 /// <summary>
@@ -69,8 +70,8 @@ public sealed record KneeboardPicture(KneeboardView View, KneeboardSheet Sheet, 
 /// clock and a range band, "on me") and the player's own instruments (his compass for a clock position), never from the
 /// tracker's positions; it stays put until a newer reply moves it, and fades as it ages. The player's own mark comes from
 /// an ally who places him (his leader's route reply, a mate who has him in formation) or from his own fix by a landmark
-/// (<see cref="FixCommand"/>), and is then carried on by dead reckoning, whose patch grows quickly enough that it never
-/// works as a free GPS. Not thread-safe: the session drives it under its lock.
+/// (<see cref="FixCommand"/>), and is then carried on by dead reckoning: a course and speed noted at the fix and held,
+/// walked off by a wrong wind, so the plus is his pencil and not the aircraft. Not thread-safe: the session drives it under its lock.
 /// </summary>
 public sealed class Kneeboard
 {
@@ -86,20 +87,29 @@ public sealed class Kneeboard
     public static readonly TimeSpan AnchorFor = TimeSpan.FromMinutes(3);
 
     /// <summary>
-    /// Dead reckoning grows its patch by this share of the distance flown since the fix, plus <see cref="DriftPerMinute"/>,
-    /// standing for compass error, wind and a rough speed. At 400 km/h the patch grows about 6 km across in three minutes
-    /// and 20 km in ten, on top of the fix's own size. SPECULATIVE; to be tuned in a flight.
+    /// Dead reckoning grows its patch by this share of the distance the pencil has plotted since the fix, plus
+    /// <see cref="DriftPerMinute"/>, and by <see cref="ManeuverDriftPerMinute"/> while the heading will not settle.
+    /// At 400 km/h the patch grows about 6 km across in three minutes and 20 km in ten, on top of the fix's own size.
+    /// SPECULATIVE; to be tuned in a flight.
     /// </summary>
-    public const double DriftPerMetre = 0.10, DriftPerMinute = 300;
+    public const double DriftPerMetre = 0.10, DriftPerMinute = 300, ManeuverDriftPerMinute = 1_200;
 
     /// <summary>Past this radius the dead reckoning is no use and is dropped.</summary>
     public const double LostBeyondMetres = 25_000;
 
     /// <summary>
-    /// The deliberate error of one stretch of dead reckoning: a steady compass error up to this and a speed error up to
-    /// <see cref="SpeedErrorShare"/>, seeded by the fix, so the patch's middle is not the truth either.
+    /// What he writes on the knee. The course is noted to the nearest <see cref="CourseStepDegrees"/> and the speed to
+    /// the nearest <see cref="SpeedStepKmh"/>, then held. A new leg starts only once the live course has been more than
+    /// <see cref="NewLegDegrees"/> off that note, and steady within <see cref="SettleBandDegrees"/>, for
+    /// <see cref="LegSettle"/>. A heading that keeps changing for <see cref="ManeuverAfter"/> freezes the pencil.
     /// </summary>
-    public const double HeadingErrorDegrees = 6, SpeedErrorShare = 0.08;
+    public const double CourseStepDegrees = 10, SpeedStepKmh = 10, NewLegDegrees = 15, SettleBandDegrees = 15;
+
+    /// <summary>The wind noted at the fix is wrong by this many km/h, in a direction drawn once per fix.</summary>
+    public const double WindErrorMinKmh = 15, WindErrorMaxKmh = 25;
+
+    /// <summary>How long a new course must hold before it is plotted, and how long an unsettled heading freezes the pencil.</summary>
+    public static readonly TimeSpan LegSettle = TimeSpan.FromSeconds(8), ManeuverAfter = TimeSpan.FromSeconds(20);
 
     private const double FormationSpread = 1_000;
 
@@ -167,9 +177,12 @@ public sealed class Kneeboard
     }
 
     /// <summary>
-    /// Carries the player's mark on from his last fix by his own heading and speed (his compass and airspeed, read from
-    /// memory), with this stretch's steady error. Called with each memory read, about once a second; null instruments
-    /// leave the patch where it is, still growing. A gap is bridged for at most 5 s, so a pause does not fling it on.
+    /// Carries the pencil on from the last fix. The first sample notes his course and speed; later samples hold that
+    /// vector, start a new leg once a new course has settled, or freeze the pencil while the heading will not settle.
+    /// <paramref name="heading"/> is his course over ground and <paramref name="speedMetresPerSecond"/> the speed read
+    /// from memory, which already include the real wind: what is plotted is the note, not this sample. Called with each
+    /// memory read, about once a second; null instruments leave the patch where it is, still growing. A gap is bridged
+    /// for at most 5 s, so a pause does not fling it on.
     /// </summary>
     public void Advance(DateTime utc, double? heading, double? speedMetresPerSecond)
     {
@@ -178,9 +191,9 @@ public sealed class Kneeboard
         if (heading is double h && speedMetresPerSecond is double v)
         {
             double seconds = Math.Clamp((utc - r.LastUtc).TotalSeconds, 0, 5);
-            double step = v > 1 ? v * (1 + r.SpeedError) * seconds : 0;
-            double course = (h + r.HeadingError) * Math.PI / 180;
-            r = r with { North = r.North + step * Math.Cos(course), East = r.East + step * Math.Sin(course), Flown = r.Flown + step, LastUtc = utc };
+            if (v > 1)
+                Plot(r, utc, h, v, seconds);
+            r.LastUtc = utc;
         }
         _reckoning = RadiusOf(r, utc) > LostBeyondMetres ? null : r;
     }
@@ -208,7 +221,8 @@ public sealed class Kneeboard
         if (_fix is { Source: { } source })
             footer.Add($"Last fix {source}{(_reckoning is null ? "" : "; dead reckoning since")}");
         footer.AddRange(_steers.TakeLast(2));
-        return new KneeboardPicture(view, sheet, marks, player, off, with, footer);
+        var pencil = _reckoning is { } reckoned ? reckoned.Corners.ToArray() : [];
+        return new KneeboardPicture(view, sheet, marks, player, off, with, footer, pencil);
     }
 
     /// <summary>The player's best place now: the dead-reckoning patch, else the fix itself.</summary>
@@ -231,9 +245,17 @@ public sealed class Kneeboard
     {
         _fix = new PlotMark(PlotSubject.Player, "fix", "fix", shape, north, east, size, utc) { Source = source };
         var (n, e, radius) = _fix.Spread;
-        int seed = (int)(utc.Ticks / TimeSpan.TicksPerSecond % int.MaxValue);
-        _reckoning = new Reckoning(n, e, radius, 0, utc, utc,
-            (Unit(seed, 1) * 2 - 1) * HeadingErrorDegrees, (Unit(seed, 2) * 2 - 1) * SpeedErrorShare);
+        var (windNorth, windEast) = WindError(utc);
+        _reckoning = new Reckoning
+        {
+            North = n,
+            East = e,
+            FixRadius = radius,
+            FixUtc = utc,
+            LastUtc = utc,
+            WindNorth = windNorth,
+            WindEast = windEast,
+        };
     }
 
     private void Mate(RadioReply reply, IReadOnlyList<SpeechToken> tokens, double? playerHeading, DateTime utc, string? clock, string who)
@@ -404,7 +426,97 @@ public sealed class Kneeboard
     }
 
     private static double RadiusOf(Reckoning r, DateTime utc) =>
-        r.FixRadius + DriftPerMetre * r.Flown + DriftPerMinute * (utc - r.FixUtc).TotalMinutes;
+        r.FixRadius + DriftPerMetre * r.Flown + DriftPerMinute * (utc - r.FixUtc).TotalMinutes + r.ManeuverMetres;
+
+    /// <summary>The course he would write down: the live course, to the nearest <see cref="CourseStepDegrees"/>.</summary>
+    public static double NotedCourse(double headingDegrees)
+    {
+        double rounded = Math.Round(headingDegrees / CourseStepDegrees, MidpointRounding.AwayFromZero) * CourseStepDegrees;
+        rounded %= 360;
+        if (rounded < 0)
+            rounded += 360;
+        return rounded;
+    }
+
+    /// <summary>The speed he would write down, in m/s: the live speed, to the nearest <see cref="SpeedStepKmh"/>.</summary>
+    public static double NotedSpeed(double metresPerSecond)
+    {
+        double kmh = Math.Round(metresPerSecond * 3.6 / SpeedStepKmh, MidpointRounding.AwayFromZero) * SpeedStepKmh;
+        return Math.Max(0, kmh) / 3.6;
+    }
+
+    /// <summary>The wind this fix plots, in m/s north and east. Steady for the whole stretch, and wrong by design.</summary>
+    public static (double North, double East) WindError(DateTime fixUtc)
+    {
+        int seed = (int)(fixUtc.Ticks / TimeSpan.TicksPerSecond % int.MaxValue);
+        double metresPerSecond = (WindErrorMinKmh + Unit(seed, 3) * (WindErrorMaxKmh - WindErrorMinKmh)) / 3.6;
+        double direction = Unit(seed, 4) * 2 * Math.PI;
+        return (metresPerSecond * Math.Cos(direction), metresPerSecond * Math.Sin(direction));
+    }
+
+    /// <summary>One sample of the plot. The pencil moves by the noted vector, never by this sample's own course and speed.</summary>
+    private static void Plot(Reckoning r, DateTime utc, double heading, double speed, double seconds)
+    {
+        if (!r.HasNote)
+        {
+            r.NotedHeading = NotedCourse(heading);
+            r.NotedSpeed = NotedSpeed(speed);
+            r.HasNote = true;
+        }
+        else if (AngleBetween(heading, r.NotedHeading) <= NewLegDegrees)
+        {
+            r.CandidateHeading = null;
+            r.CandidateSince = null;
+            r.OffSince = null;
+            r.Frozen = false;
+        }
+        else
+        {
+            r.OffSince ??= utc;
+            bool moved = r.CandidateHeading is not double candidate || AngleBetween(heading, candidate) > SettleBandDegrees;
+            if (moved)
+            {
+                r.CandidateHeading = heading;
+                r.CandidateSince = utc;
+            }
+            else if (r.CandidateSince is DateTime since && utc - since >= LegSettle)
+            {
+                r.Corners.Add((r.North, r.East));
+                r.NotedHeading = NotedCourse(heading);
+                r.NotedSpeed = NotedSpeed(speed);
+                r.CandidateHeading = null;
+                r.CandidateSince = null;
+                r.OffSince = null;
+                r.Frozen = false;
+            }
+            if (r.OffSince is DateTime offSince && utc - offSince >= ManeuverAfter)
+                r.Frozen = true;
+        }
+
+        if (seconds <= 0 || !r.HasNote)
+            return;
+        if (r.Frozen)
+            r.ManeuverMetres += ManeuverDriftPerMinute * seconds / 60;
+        else
+            Step(r, seconds);
+    }
+
+    private static void Step(Reckoning r, double seconds)
+    {
+        double course = r.NotedHeading * Math.PI / 180;
+        r.North += (r.NotedSpeed * Math.Cos(course) + r.WindNorth) * seconds;
+        r.East += (r.NotedSpeed * Math.Sin(course) + r.WindEast) * seconds;
+        r.Flown += r.NotedSpeed * seconds;
+    }
+
+    /// <summary>The smaller angle between two headings, in degrees.</summary>
+    private static double AngleBetween(double a, double b)
+    {
+        double d = (a - b) % 360;
+        if (d < 0)
+            d += 360;
+        return d > 180 ? 360 - d : d;
+    }
 
     private static string Source(string? clock, string who) => clock is null ? who : $"{clock}, {who}";
 
@@ -453,5 +565,16 @@ public sealed class Kneeboard
         }
     }
 
-    private sealed record Reckoning(double North, double East, double FixRadius, double Flown, DateTime FixUtc, DateTime LastUtc, double HeadingError, double SpeedError);
+    /// <summary>One stretch of the pilot's own plot, from the last fix. The pencil is where he thinks he is.</summary>
+    private sealed class Reckoning
+    {
+        public double North, East, FixRadius, Flown, NotedHeading, NotedSpeed, WindNorth, WindEast, ManeuverMetres;
+        public DateTime FixUtc, LastUtc;
+        public bool HasNote, Frozen;
+        public double? CandidateHeading;
+        public DateTime? CandidateSince, OffSince;
+
+        /// <summary>Where each new leg started. The moving end is <see cref="North"/>/<see cref="East"/>.</summary>
+        public List<(double North, double East)> Corners { get; } = [];
+    }
 }

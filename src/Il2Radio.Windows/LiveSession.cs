@@ -820,7 +820,7 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
             _tracker.Apply(aircraft, time);
             EnemyCommands.Notice(_tracker, Radio(), _sightings);
             LogPositions(aircraft, time);
-            // Dead reckoning from the player's own instruments: his course and speed, read from memory.
+            // Course and speed for the kneeboard to note. The plot holds what he would have written down.
             var own = playerId is int pid ? aircraft.FirstOrDefault(a => a.Id == pid) : null;
             _kneeboard.Advance(DateTime.UtcNow, own is null ? null : _tracker.Player?.LastFix?.Heading, own?.Speed);
         }
@@ -1167,6 +1167,8 @@ internal sealed partial class LiveSession(Il2Install install, LiveOptions option
                     sb.AppendLine($"  - `{o.Id}` {o.Name} / {o.Pilot} / {o.Coalition}: {o.PositionUpdates} updates, {o.FirstSeenTime:F0}–{o.LastPositionTime:F0} s{(o.Removed ? " (removed)" : "")}");
             }
 
+            if (AudioStatus?.Invoke() is { } audio)
+                sb.AppendLine($"- {audio}");
             if (voice?.Held is var (heldCount, heldTotal) && heldCount > 0)
                 sb.AppendLine($"- Replies held for IL-2's own radio: {heldCount}, {heldTotal.TotalSeconds:F1} s in total (max {RadioVoice.MaxHold.TotalSeconds:F0} s each)");
 

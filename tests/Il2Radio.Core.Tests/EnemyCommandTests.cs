@@ -156,12 +156,22 @@ public class EnemyCommandTests
     }
 
     [Fact]
-    public void Identified_friendlies_are_not_reported_as_contacts_but_can_be_identified()
+    public void Identified_friendlies_are_not_reported_as_contacts()
     {
         Frame(10, Acmi.Object("f1", 0, 800, 1000, "Other Unit", "Axis", "Bf 109 F-4", heading: 180));
 
         Assert.Equal("Number one, no contacts.", Contacts());
-        Assert.Equal("Number one, contact at your three o'clock, under two kilometres: a Messerschmitt, friendly, heading south.", Identify());
+        Assert.Equal("Number one, no contacts to identify.", Identify());
+    }
+
+    [Fact]
+    public void Identify_names_the_nearest_enemy_when_a_friendly_is_closer()
+    {
+        Frame(10,
+            Acmi.Object("f1", 0, 250, 1000, "Other Unit", "Axis", "Bf 109 F-4", heading: 180),
+            Enemy("e1", 0, 700));
+
+        Assert.Equal("Number one, contact at your three o'clock, under two kilometres: a Yak, enemy, heading east.", Identify());
     }
 
     [Fact]

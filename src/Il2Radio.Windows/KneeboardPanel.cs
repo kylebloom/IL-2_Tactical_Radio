@@ -78,7 +78,7 @@ internal static class KneeboardPanel
         if (large)
         {
             Text(g, $"KNEEBOARD  ·  {sheet.MapName.ToUpperInvariant()}", typed, Print, map.Left - margin, paper.Top + paperPad);
-            string right = "BRIEFED ROUTE";
+            string right = sheet.RouteHeading;
             Text(g, right, typedSmall, Print, map.Right - Measure(g, right, typedSmall).Width, paper.Top + paperPad + 2 * u);
         }
 
@@ -91,7 +91,7 @@ internal static class KneeboardPanel
         foreach (var entry in picture.Marks.Where(m => m.Mark.Subject == PlotSubject.Player))
             DrawFix(g, entry, At, scale, u, handSmall, map, picture.Player is null ? picture.WithPlayer : []);
         if (picture.Player is { } you && picture.OffSheet is null)
-            DrawReckoning(g, you, At, scale, u, hand, handSmall, map, picture.WithPlayer, picture.Marks.FirstOrDefault(m => m.Mark.Subject == PlotSubject.Player));
+            DrawReckoning(g, you, At, scale, u, hand, handSmall, map, picture.WithPlayer, picture.Marks.FirstOrDefault(m => m.Mark.Subject == PlotSubject.Player), picture.Pencil);
         g.Restore(save);
         if (picture.OffSheet is { } edgeName)
             OffSheet(g, edgeName, map, hand, u);
@@ -304,6 +304,7 @@ internal static class KneeboardPanel
     private static void DrawRoute(Graphics g, KneeboardSheet sheet, Func<double, double, PointF> at, float scale, float u, Font hand, Font handSmall, bool large)
     {
         var route = sheet.Route;
+        var legs = new List<(PointF P, PointF Q, string Note)>();
         using (var line = new Pen(Color.FromArgb(215, Graphite), 1.8f * u) { LineJoin = LineJoin.Round, StartCap = LineCap.Round, EndCap = LineCap.Round })
         {
             var noted = new HashSet<(int, int, int, int)>();
@@ -313,17 +314,33 @@ internal static class KneeboardPanel
                 var b = route[i].Position;
                 var p = at(a.North, a.East);
                 var q = at(b.North, b.East);
+                // The covered flight's legs are dashed. The escort's own leg home, from OwnFrom on, is his pencil.
+                bool theirs = sheet.RouteOf is not null && (sheet.OwnFrom is not int own || i < own);
+                line.DashStyle = theirs ? DashStyle.Dash : DashStyle.Solid;
                 Pencil(g, line, p, q, u, Seed(a.North, b.East));
                 var leg = Navigation.Relative(a, b);
                 // Each leg once (a patrol loop is flown round once; the way home repeats no leg), long enough to letter.
                 var key = ((int)p.X, (int)p.Y, (int)q.X, (int)q.Y);
                 if (large && leg is { RangeMetres: > 8_000 } r && noted.Add(key))
-                    LegNote(g, $"{Navigation.CourseDegrees(r.BearingDegrees):000}°  {r.RangeMetres / 1000:0}", handSmall, p, q, u);
+                    legs.Add((p, q, $"{Navigation.CourseDegrees(r.BearingDegrees):000}°  {r.RangeMetres / 1000:0} km"));
             }
         }
 
         using var dot = new Pen(Graphite, 1.5f * u);
         using var red = new Pen(RedPencil, 1.8f * u);
+        // Notes keep off the rings, the dots, the target word and the field's name. The name then keeps off the notes.
+        var forNotes = new List<SheetNotes.Ink>();
+        var forName = new List<SheetNotes.Ink>();
+        var captions = new List<(string Word, PointF At, float Below, Color Ink)>();
+        void HoldCaption(string word, PointF p, float below, Color ink)
+        {
+            var size = Measure(g, word, handSmall);
+            float x = p.X - size.Width / 2, y = p.Y + below;
+            var box = SheetNotes.Ink.Upright(x, y, size.Width, size.Height);
+            forNotes.Add(box);
+            forName.Add(box);
+            captions.Add((word, p, below, ink));
+        }
         bool targetNamed = false;
         foreach (var w in route)
         {
@@ -334,43 +351,72 @@ internal static class KneeboardPanel
                 float r = Math.Max(10 * u, 3_000 * scale);
                 Hatch(g, Color.FromArgb(70, RedPencil), new RectangleF(p.X - r, p.Y - r, 2 * r, 2 * r), ellipse: true, 5 * u, u);
                 PencilCircle(g, red, p, r, u, seed);
+                forNotes.Add(SheetNotes.Ink.Upright(p.X - r, p.Y - r, 2 * r, 2 * r));
                 if (!targetNamed)
                 {
-                    Centred(g, "target", handSmall, RedPencil, p.X, p.Y + r + 2 * u);
+                    HoldCaption(sheet.RouteOf ?? "target", p, r + 2 * u, RedPencil);
                     targetNamed = true;
                 }
             }
             else if (!w.IsLanding && !w.Name.Contains("TAKEOFF", StringComparison.OrdinalIgnoreCase))
             {
                 PencilCircle(g, dot, p, 4.5f * u, u, seed);
+                forNotes.Add(SheetNotes.Ink.Upright(p.X - 4.5f * u, p.Y - 4.5f * u, 9 * u, 9 * u));
             }
         }
+        if (sheet.RouteOf is { } whose && !targetNamed)
+        {
+            int covered = sheet.OwnFrom ?? route.Count;
+            var portion = route.Take(covered).ToList();
+            var marked = portion.FirstOrDefault(w => w.IsAttack)
+                ?? portion.FirstOrDefault(w => w.Name.Contains("ACTION", StringComparison.OrdinalIgnoreCase) || w.Name.Contains("Attack", StringComparison.OrdinalIgnoreCase))
+                ?? portion.MaxBy(w => portion.Count == 0 ? 0 : Math.Pow(w.Position.North - portion[0].Position.North, 2) + Math.Pow(w.Position.East - portion[0].Position.East, 2));
+            if (marked is not null)
+                HoldCaption(whose, at(marked.Position.North, marked.Position.East), 8 * u, Graphite);
+        }
+
+        PointF? homeAt = null;
+        (float X, float Y, float W, float H)? homeName = null;
         if (sheet.HomeField is { } home)
         {
-            var p = at(home.Position.North, home.Position.East);
+            homeAt = at(home.Position.North, home.Position.East);
+            var size = Measure(g, home.Name, hand);
+            float nx = homeAt.Value.X + 11 * u, ny = homeAt.Value.Y - hand.Size * 0.7f;
+            homeName = (nx, ny, size.Width, size.Height);
+            forNotes.Add(SheetNotes.Ink.Upright(homeAt.Value.X - 8 * u, homeAt.Value.Y - 8 * u, 16 * u, 16 * u));
+            forNotes.Add(SheetNotes.Ink.Upright(nx, ny, size.Width, size.Height));
+        }
+
+        float pad = 3 * u;
+        foreach (var leg in legs)
+        {
+            var size = Measure(g, leg.Note, handSmall);
+            var place = SheetNotes.Course(leg.P.X, leg.P.Y, leg.Q.X, leg.Q.Y, size.Width, size.Height, pad, forNotes);
+            LegNote(g, leg.Note, handSmall, place);
+            forNotes.Add(place.Box);
+            forName.Add(place.Box);
+        }
+        foreach (var caption in captions)
+            Centred(g, caption.Word, handSmall, caption.Ink, caption.At.X, caption.At.Y + caption.Below);
+
+        if (homeAt is { } fieldAt && homeName is { } name && sheet.HomeField is { } field)
+        {
             // A field as on a period map: a ring with the runway across it.
-            using var field = new Pen(Graphite, 1.6f * u);
-            PencilCircle(g, field, p, 8 * u, u, Seed(home.Position.North, 1));
-            g.DrawLine(field, p.X - 6 * u, p.Y + 3 * u, p.X + 6 * u, p.Y - 3 * u);
-            Text(g, home.Name, hand, Graphite, p.X + 11 * u, p.Y - hand.Size * 0.7f);
+            using var pen = new Pen(Graphite, 1.6f * u);
+            PencilCircle(g, pen, fieldAt, 8 * u, u, Seed(field.Position.North, 1));
+            g.DrawLine(pen, fieldAt.X - 6 * u, fieldAt.Y + 3 * u, fieldAt.X + 6 * u, fieldAt.Y - 3 * u);
+            var placed = SheetNotes.Beside(name.X, name.Y, name.W, name.H, fieldAt.X, fieldAt.Y, 8 * u, pad * 2, forName);
+            Text(g, field.Name, hand, Graphite, placed.X, placed.Y);
         }
     }
 
-    /// <summary>
-    /// "095°  25" along a leg, kept upright, on the left of the way it is flown: an outbound and a return leg side by side
-    /// then carry their notes on their outer sides instead of on top of each other.
-    /// </summary>
-    private static void LegNote(Graphics g, string note, Font font, PointF p, PointF q, float u)
+    /// <summary>"095°  21 km" along a leg, where <see cref="SheetNotes.Course"/> put it so it clears the field's name.</summary>
+    private static void LegNote(Graphics g, string note, Font font, SheetNotes.AlongLeg place)
     {
-        float angle = (float)(Math.Atan2(q.Y - p.Y, q.X - p.X) * 180 / Math.PI);
-        bool flipped = angle is > 90 or < -90;
-        if (angle > 90) angle -= 180;
-        if (angle < -90) angle += 180;
-        var size = Measure(g, note, font);
         var state = g.Save();
-        g.TranslateTransform((p.X + q.X) / 2, (p.Y + q.Y) / 2);
-        g.RotateTransform(angle);
-        Text(g, note, font, Color.FromArgb(200, Graphite), -size.Width / 2, flipped ? 3 * u : -size.Height - 3 * u);
+        g.TranslateTransform(place.OriginX, place.OriginY);
+        g.RotateTransform(place.AngleDegrees);
+        Text(g, note, font, Color.FromArgb(200, Graphite), place.LocalX, place.LocalY);
         g.Restore(state);
     }
 
@@ -390,19 +436,32 @@ internal static class KneeboardPanel
             Note(g, $"{string.Join(", ", with)} with you", hand, Color.FromArgb(a, MatePencil), area.Right + 4 * u, area.Bottom - size.Height, map);
     }
 
-    /// <summary>The dead-reckoning patch: a dashed pencil ring, "DR" and the time, and a dotted line back to the fix it started from.</summary>
+    /// <summary>The dead-reckoning patch: a dashed pencil ring, "DR" and the time, and a dotted line along the legs from the fix to the plus.</summary>
     private static void DrawReckoning(Graphics g, PlotEntry you, Func<double, double, PointF> at, float scale, float u, Font hand, Font handSmall, RectangleF map,
-        IReadOnlyList<string> with, PlotEntry? fix)
+        IReadOnlyList<string> with, PlotEntry? fix, IReadOnlyList<(double North, double East)> pencil)
     {
         var m = you.Mark;
         var centre = at(m.North, m.East);
         float r = Math.Max(8 * u, (float)m.Size * scale);
         int seed = Seed(m.MadeUtc.Ticks, 7);
-        if (fix is { } f)
+        if (fix is not null || pencil.Count > 0)
         {
-            var (fn, fe, _) = f.Mark.Spread;
             using var trail = new Pen(Color.FromArgb(170, BluePencil), 1.2f * u) { DashStyle = DashStyle.Dot };
-            g.DrawLine(trail, at(fn, fe), centre);
+            PointF? from = null;
+            if (fix is { } f)
+            {
+                var (fn, fe, _) = f.Mark.Spread;
+                from = at(fn, fe);
+            }
+            foreach (var (cornerNorth, cornerEast) in pencil)
+            {
+                var corner = at(cornerNorth, cornerEast);
+                if (from is { } start)
+                    g.DrawLine(trail, start, corner);
+                from = corner;
+            }
+            if (from is { } last)
+                g.DrawLine(trail, last, centre);
         }
         using (var dashed = new Pen(BluePencil, 1.7f * u) { DashStyle = DashStyle.Dash })
             PencilCircle(g, dashed, centre, r, u, seed);

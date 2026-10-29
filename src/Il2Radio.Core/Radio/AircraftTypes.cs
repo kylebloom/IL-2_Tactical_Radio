@@ -78,6 +78,32 @@ public static class AircraftTypes
         return AircraftType.Unknown;
     }
 
+    /// <summary>
+    /// The type for a mission-file script name such as <c>he111h6</c> or <c>bf109f4</c>. The longest table prefix
+    /// wins once spaces and punctuation are stripped, so <c>i153</c> is the Chaika and not the Rata.
+    /// </summary>
+    public static AircraftType ClassifyScript(string typeKey)
+    {
+        string key = LettersAndDigits(typeKey);
+        if (key.Length == 0)
+            return AircraftType.Unknown;
+        AircraftType? best = null;
+        int bestLength = 0;
+        foreach (var (prefix, type) in Table)
+        {
+            string p = LettersAndDigits(prefix);
+            if (p.Length > bestLength && key.StartsWith(p, StringComparison.Ordinal))
+            {
+                best = type;
+                bestLength = p.Length;
+            }
+        }
+        return best ?? AircraftType.Unknown;
+    }
+
+    private static string LettersAndDigits(string text) =>
+        new string(text.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
+
     /// <summary>The type with this <see cref="AircraftType.Family"/> (as carried by a speech token), or null.</summary>
     public static AircraftType? ByFamily(string family) =>
         family == AircraftType.Unknown.Family ? AircraftType.Unknown : Table.Select(e => e.Type).FirstOrDefault(t => t.Family == family);

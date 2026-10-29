@@ -38,7 +38,7 @@ public static class RadioChat
         RadioCommand.FlightPosition => "Flight, report your position.",
         RadioCommand.Rejoin => "Flight, I am separated. Request rejoin.",
         RadioCommand.EnemyContacts => "Flight, report contacts.",
-        RadioCommand.IdentifyContact => "Flight, identify nearest contact.",
+        RadioCommand.IdentifyContact => "Flight, identify nearest enemy.",
         RadioCommand.RoutePosition => "Flight, where are we on the route?",
         RadioCommand.SteerHome => "Flight, request steer home.",
         RadioCommand.SteerTarget => "Flight, request steer to the target.",

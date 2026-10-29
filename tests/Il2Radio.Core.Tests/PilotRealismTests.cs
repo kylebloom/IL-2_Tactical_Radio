@@ -285,7 +285,7 @@ public class PilotRealismTests
     }
 
     [Fact]
-    public void Friendly_aircraft_beside_a_pilot_are_with_him_not_on_him()
+    public void A_friendly_beside_a_pilot_is_not_the_nearest_enemy()
     {
         Start(Overcast);
         LogFlightMember("Heinz Koelzig", 1);
@@ -295,9 +295,8 @@ public class PilotRealismTests
             Mate("d", "Ernst Lignitz", 8_000, 0, alt: 3000, heading: 0),
             Acmi.Object("g", 8_000, 200, 3000, "Josef Weinbergmair", "Axis", "Bf 109 G-2", heading: 90));
 
-        var identify = Assert.Single(EnemyCommands.Identify(_tracker, See).Replies);
-        Assert.StartsWith("Number two, with me: ", identify.Text);
-        Assert.DoesNotContain(identify.Tokens!, t => t.Word == SpeechWord.OnMe);
+        Assert.Equal("Number one, no contacts to identify.",
+            Assert.Single(EnemyCommands.Identify(_tracker, See).Replies).Text);
     }
 
     [Fact]

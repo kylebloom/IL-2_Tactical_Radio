@@ -44,13 +44,13 @@ The **Status** tab lists checks marked `[ok]` or `[!!]`. Every `[!!]` says what 
 | Numpad 2 | Ask your flight where it is |
 | Numpad 3 | Separated: ask your flight to help you rejoin |
 | Numpad 4 | Ask your flight what enemy or unknown aircraft it can see |
-| Numpad 5 | Ask your flight to identify the nearest aircraft it can see |
+| Numpad 5 | Ask your flight to identify the nearest enemy or unknown aircraft it can see |
 | Numpad 0 | Open the radio menu in the game; choose with Numpad 1–5. Numpad 0 again goes back, Numpad . closes it |
 | Numpad / | Your kneeboard: small, then large, then put away |
 | Numpad 7 / 9 | Page back / forward through earlier messages |
 | Numpad . | Quit the radio |
 
-The **Kneeboard** is a sheet of your briefed route and home field, north up, with the map squares and a scale, so you need not open IL-2's map. Nothing on it is live: it has pencil marks only for what the radio has said, each with its age, fading as it gets older. You are marked when your leader tells you where you are on the route, when a mate has you with him, or when you fix your own position by an airfield you can see (radio menu, Kneeboard › Fix position); between fixes a dashed patch carries you on by dead reckoning and grows quickly. Mates are marked where they last reported, contacts where they were called.
+The **Kneeboard** is a sheet of your briefed route and home field, north up, with the map squares and a scale, so you need not open IL-2's map. On an escort it shows the bombers' route out and back, dashed and labelled as theirs, and then your own leg home. Nothing on it is live: it has pencil marks only for what the radio has said, each with its age, fading as it gets older. You are marked when your leader tells you where you are on the route, when a mate has you with him, or when you fix your own position by an airfield you can see (radio menu, Kneeboard › Fix position); between fixes a dashed ring carries a pencil on by dead reckoning — the course and speed noted at the fix, walked off by a wrong wind — and the ring grows quickly. The plus is that pencil, not the aircraft. Mates are marked where they last reported, contacts where they were called.
 
 The **Help** tab in the radio window explains when to use each call. Your flight also speaks up on its own: a new heading on a turn, a change in the contacts it can see, and a loss the game's own pilots don't call. Each of these can be turned off on the Settings tab.
 

@@ -171,6 +171,7 @@ public class KneeboardTests
         Assert.True(sheet.Labelled);
         Assert.Equal("Tusov", sheet.HomeField?.Name);
         Assert.Equal(4, sheet.Route.Count);
+        Assert.Null(sheet.RouteOf);
         // Route and field span 105–125 km north and 157–185 km east; a square of margin, snapped out to the 10 km lines.
         Assert.True(sheet.South <= 95_000 && sheet.North >= 135_000);
         Assert.True(sheet.West <= 147_000 && sheet.East >= 195_000);
@@ -197,6 +198,246 @@ public class KneeboardTests
 
         Assert.True(escort.Sheet!.HeightMetres >= KneeboardSheet.MinSpanMetres);
         Assert.True(escort.Sheet.WidthMetres >= KneeboardSheet.MinSpanMetres);
+        Assert.Null(escort.Sheet.RouteOf);
+    }
+
+    [Fact]
+    public void An_escort_plots_the_covered_flights_route_and_names_it_as_theirs()
+    {
+        var escort = new Kneeboard();
+        escort.Reset(Plan("""
+            MCU_Waypoint
+            {
+              Index = 33;
+              Name = "WAYPOINT_LAND";
+              Targets = [];
+              Objects = [21];
+              XPos = 119859.883;
+              YPos = 500;
+              ZPos = 157809.234;
+            }
+            Plane
+            {
+              Name = "Karl Holle";
+              Index = 50;
+              LinkTrId = 51;
+              Country = 201;
+              Callsign = 11;
+              Callnum = 1;
+              Script = "LuaScripts\\WorldObjects\\Planes\\he111h6.txt";
+              XPos = 120000;
+              YPos = 1000;
+              ZPos = 158000;
+            }
+            MCU_TR_Entity
+            {
+              Index = 51;
+              MisObjID = 50;
+            }
+            MCU_Waypoint
+            {
+              Index = 60;
+              Name = "FRIENDLY_B-WAYPOINT";
+              Targets = [61];
+              Objects = [51];
+              XPos = 120000;
+              YPos = 1000;
+              ZPos = 158000;
+            }
+            MCU_Waypoint
+            {
+              Index = 61;
+              Name = "CMD_AttackArea";
+              Targets = [];
+              Objects = [51];
+              XPos = 190000;
+              YPos = 3000;
+              ZPos = 210000;
+            }
+            MCU_CMD_Cover
+            {
+              Index = 70;
+              Name = "Cover";
+              Targets = [51];
+              Objects = [21];
+            }
+            """));
+
+        var sheet = escort.Sheet!;
+        Assert.Equal("bombers", sheet.RouteOf);
+        Assert.Equal("BOMBERS' ROUTE", sheet.RouteHeading);
+        Assert.Equal(["FRIENDLY_B-WAYPOINT", "CMD_AttackArea"], sheet.Route.Select(w => w.Name).ToArray());
+        Assert.Null(sheet.OwnFrom);
+        Assert.Equal("Tusov", sheet.HomeField?.Name);
+        Assert.True(sheet.North >= 190_000);
+        Assert.True(sheet.East >= 210_000);
+    }
+
+    [Fact]
+    public void An_escort_follows_the_bombers_home_and_then_draws_its_own_leg_back()
+    {
+        var escort = new Kneeboard();
+        escort.Reset(Plan("""
+            MCU_Waypoint
+            {
+              Index = 33;
+              Name = "WAYPOINT_LAND";
+              Targets = [];
+              Objects = [21];
+              XPos = 119859.883;
+              YPos = 500;
+              ZPos = 157809.234;
+            }
+            Plane
+            {
+              Name = "Karl Holle";
+              Index = 50;
+              LinkTrId = 51;
+              Country = 201;
+              Callsign = 11;
+              Callnum = 1;
+              Script = "LuaScripts\\WorldObjects\\Planes\\he111h6.txt";
+              XPos = 120000;
+              YPos = 1000;
+              ZPos = 158000;
+            }
+            MCU_TR_Entity
+            {
+              Index = 51;
+              MisObjID = 50;
+            }
+            MCU_Waypoint
+            {
+              Index = 60;
+              Name = "FRIENDLY_B-WAYPOINT";
+              Targets = [61];
+              Objects = [51];
+              XPos = 119916;
+              YPos = 2000;
+              ZPos = 157812;
+            }
+            MCU_Waypoint
+            {
+              Index = 61;
+              Name = "FRIENDLY_BOMBERS_ACTION";
+              Targets = [62];
+              Objects = [51];
+              XPos = 197524;
+              YPos = 2000;
+              ZPos = 215736;
+            }
+            MCU_Activate
+            {
+              Index = 62;
+              Name = "Activate";
+              Targets = [];
+              Objects = [63];
+            }
+            MCU_TR_ComplexTrigger
+            {
+              Index = 63;
+              Name = "Complex Trigger";
+              Objects = [];
+              OnEvents
+              {
+                OnEvent
+                {
+                  Type = 71;
+                  TarId = 64;
+                }
+              }
+            }
+            MCU_Timer
+            {
+              Index = 64;
+              Name = "5s_DELAY";
+              Targets = [65];
+              Objects = [];
+            }
+            MCU_Waypoint
+            {
+              Index = 65;
+              Name = "FRIENDLY_B-WAYPOINT";
+              Targets = [];
+              Objects = [51];
+              XPos = 123487;
+              YPos = 2500;
+              ZPos = 178855;
+            }
+            MCU_CMD_Cover
+            {
+              Index = 70;
+              Name = "Cover";
+              Targets = [51];
+              Objects = [21];
+            }
+            """));
+
+        var sheet = escort.Sheet!;
+        Assert.Equal("bombers", sheet.RouteOf);
+        Assert.Equal(3, sheet.OwnFrom);
+        Assert.Equal(
+            ["FRIENDLY_B-WAYPOINT", "FRIENDLY_BOMBERS_ACTION", "FRIENDLY_B-WAYPOINT", "WAYPOINT_LAND"],
+            sheet.Route.Select(w => w.Name).ToArray());
+        Assert.Equal(123_487, sheet.Route[2].Position.North, 0);
+        Assert.Equal("Tusov", sheet.HomeField?.Name);
+    }
+
+    [Fact]
+    public void A_sweep_keeps_its_own_route_when_the_flight_also_covers_someone()
+    {
+        var sweep = new Kneeboard();
+        sweep.Reset(Plan(Sweep + """
+            Plane
+            {
+              Name = "Karl Holle";
+              Index = 50;
+              LinkTrId = 51;
+              Country = 201;
+              Callsign = 11;
+              Callnum = 1;
+              Script = "LuaScripts\\WorldObjects\\Planes\\he111h6.txt";
+              XPos = 120000;
+              YPos = 1000;
+              ZPos = 158000;
+            }
+            MCU_TR_Entity
+            {
+              Index = 51;
+              MisObjID = 50;
+            }
+            MCU_Waypoint
+            {
+              Index = 60;
+              Name = "FRIENDLY_B-WAYPOINT";
+              Targets = [61];
+              Objects = [51];
+              XPos = 120000;
+              YPos = 1000;
+              ZPos = 158000;
+            }
+            MCU_Waypoint
+            {
+              Index = 61;
+              Name = "CMD_AttackArea";
+              Targets = [];
+              Objects = [51];
+              XPos = 190000;
+              YPos = 3000;
+              ZPos = 210000;
+            }
+            MCU_CMD_Cover
+            {
+              Index = 70;
+              Name = "Cover";
+              Targets = [51];
+              Objects = [21];
+            }
+            """));
+
+        Assert.Null(sweep.Sheet!.RouteOf);
+        Assert.Equal(4, sweep.Sheet.Route.Count);
+        Assert.Contains(sweep.Sheet.Route, w => w.Name == "CMD_AttackArea" && w.Position.North == 105_000);
     }
 
     [Fact]
@@ -234,21 +475,125 @@ public class KneeboardTests
     }
 
     [Fact]
-    public void Dead_reckoning_follows_his_own_course_and_speed_with_an_error_and_a_growing_patch()
+    public void A_noted_course_and_speed_are_rounded_the_way_he_would_write_them()
+    {
+        Assert.Equal(90, Kneeboard.NotedCourse(94));
+        Assert.Equal(100, Kneeboard.NotedCourse(96));
+        Assert.Equal(0, Kneeboard.NotedCourse(355));
+        Assert.Equal(100, Kneeboard.NotedSpeed(100), 3); // 360 km/h already on a step
+        Assert.Equal(380 / 3.6, Kneeboard.NotedSpeed(105), 3); // 378 km/h, written as 380
+        var (north, east) = Kneeboard.WindError(T0);
+        Assert.InRange(Math.Sqrt(north * north + east * east) * 3.6, Kneeboard.WindErrorMinKmh - 0.01, Kneeboard.WindErrorMaxKmh + 0.01);
+    }
+
+    [Fact]
+    public void Dead_reckoning_holds_the_noted_course_and_speed_and_walks_off_on_a_wrong_wind()
     {
         OnLegOne();
         Record(RadioCommand.RoutePosition, RouteCommands.RoutePosition(_tracker), T0);
         var start = Picture(T0).Player!.Mark;
+        var (windNorth, windEast) = Kneeboard.WindError(T0);
 
         for (int s = 1; s <= 60; s++)
-            _kneeboard.Advance(T0.AddSeconds(s), 90, 100); // a minute due east at 100 m/s: 6 km
+            _kneeboard.Advance(T0.AddSeconds(s), 90, 100); // a minute due east at 100 m/s, which is 360 km/h
         var dr = Picture(T0.AddSeconds(60)).Player!.Mark;
 
-        double east = dr.East - start.East, north = dr.North - start.North;
-        Assert.InRange(east, 6_000 * (1 - Kneeboard.SpeedErrorShare) - 100, 6_000 * (1 + Kneeboard.SpeedErrorShare) + 100);
-        Assert.InRange(Math.Abs(north), 0, 6_600 * Math.Sin(Kneeboard.HeadingErrorDegrees * Math.PI / 180) + 1);
-        Assert.False(Math.Abs(east - 6_000) < 1 && Math.Abs(north) < 1, "the dead reckoning must not be the truth");
-        Assert.InRange(dr.Size - start.Size, Kneeboard.DriftPerMetre * 5_400 + Kneeboard.DriftPerMinute - 1, Kneeboard.DriftPerMetre * 6_600 + Kneeboard.DriftPerMinute + 1);
+        // The pencil flies the noted 090 at 100 m/s. The wind is the only reason it is not the truth.
+        Assert.InRange(dr.East, start.East + 6_000 + windEast * 60 - 1, start.East + 6_000 + windEast * 60 + 1);
+        Assert.InRange(dr.North, start.North + windNorth * 60 - 1, start.North + windNorth * 60 + 1);
+        Assert.True(Math.Abs(windNorth) > 0.1 || Math.Abs(windEast) > 0.1, "the wind must move the pencil off the track");
+        Assert.Empty(Picture(T0.AddSeconds(60)).Pencil);
+        Assert.InRange(dr.Size - start.Size, Kneeboard.DriftPerMetre * 6_000 + Kneeboard.DriftPerMinute - 1, Kneeboard.DriftPerMetre * 6_000 + Kneeboard.DriftPerMinute + 1);
+    }
+
+    [Fact]
+    public void Dead_reckoning_does_not_follow_a_change_of_speed_or_a_few_degrees_of_course()
+    {
+        OnLegOne();
+        Record(RadioCommand.RoutePosition, RouteCommands.RoutePosition(_tracker), T0);
+        var start = Picture(T0).Player!.Mark;
+        var (windNorth, windEast) = Kneeboard.WindError(T0);
+
+        for (int s = 1; s <= 10; s++)
+            _kneeboard.Advance(T0.AddSeconds(s), 96, 100); // 096 is written 100; 100 m/s is the note
+        for (int s = 11; s <= 60; s++)
+            _kneeboard.Advance(T0.AddSeconds(s), 96, 150); // slowing or speeding is not replotted until the next leg
+        var dr = Picture(T0.AddSeconds(60)).Player!.Mark;
+
+        double course = Kneeboard.NotedCourse(96) * Math.PI / 180;
+        double north = (Kneeboard.NotedSpeed(100) * Math.Cos(course) + windNorth) * 60;
+        double east = (Kneeboard.NotedSpeed(100) * Math.Sin(course) + windEast) * 60;
+        Assert.InRange(dr.North, start.North + north - 1, start.North + north + 1);
+        Assert.InRange(dr.East, start.East + east - 1, start.East + east + 1);
+    }
+
+    [Fact]
+    public void A_turn_is_plotted_late_from_the_pencil_once_the_new_course_settles()
+    {
+        OnLegOne();
+        Record(RadioCommand.RoutePosition, RouteCommands.RoutePosition(_tracker), T0);
+        var start = Picture(T0).Player!.Mark;
+        var (windNorth, windEast) = Kneeboard.WindError(T0);
+
+        for (int s = 1; s <= 30; s++)
+            _kneeboard.Advance(T0.AddSeconds(s), 90, 100);
+        for (int s = 31; s <= 50; s++)
+            _kneeboard.Advance(T0.AddSeconds(s), 0, 100); // onto north; the pencil keeps 090 until the course has held
+        var picture = Picture(T0.AddSeconds(50));
+        var dr = picture.Player!.Mark;
+
+        // Eight more seconds on the old leg, then twelve on 360. The corner is where he noted the turn.
+        const int eastSeconds = 38, northSeconds = 12;
+        Assert.InRange(dr.East, start.East + 100 * eastSeconds + windEast * 50 - 1, start.East + 100 * eastSeconds + windEast * 50 + 1);
+        Assert.InRange(dr.North, start.North + 100 * northSeconds + windNorth * 50 - 1, start.North + 100 * northSeconds + windNorth * 50 + 1);
+        var corner = Assert.Single(picture.Pencil);
+        Assert.InRange(corner.East, start.East + 100 * eastSeconds + windEast * eastSeconds - 1, start.East + 100 * eastSeconds + windEast * eastSeconds + 1);
+        Assert.InRange(corner.North, start.North + windNorth * eastSeconds - 1, start.North + windNorth * eastSeconds + 1);
+    }
+
+    [Fact]
+    public void A_brief_weave_is_not_a_new_leg()
+    {
+        OnLegOne();
+        Record(RadioCommand.RoutePosition, RouteCommands.RoutePosition(_tracker), T0);
+        var start = Picture(T0).Player!.Mark;
+        var (windNorth, windEast) = Kneeboard.WindError(T0);
+
+        for (int s = 1; s <= 20; s++)
+            _kneeboard.Advance(T0.AddSeconds(s), 90, 100);
+        for (int s = 21; s <= 25; s++)
+            _kneeboard.Advance(T0.AddSeconds(s), 180, 100); // five seconds off, short of the time a new course must hold
+        for (int s = 26; s <= 35; s++)
+            _kneeboard.Advance(T0.AddSeconds(s), 90, 100);
+        var dr = Picture(T0.AddSeconds(35)).Player!.Mark;
+
+        Assert.InRange(dr.East, start.East + 100 * 35 + windEast * 35 - 1, start.East + 100 * 35 + windEast * 35 + 1);
+        Assert.InRange(dr.North, start.North + windNorth * 35 - 1, start.North + windNorth * 35 + 1);
+        Assert.Empty(Picture(T0.AddSeconds(35)).Pencil);
+    }
+
+    [Fact]
+    public void Heading_that_will_not_settle_freezes_the_pencil_and_grows_the_patch_faster()
+    {
+        OnLegOne();
+        Record(RadioCommand.RoutePosition, RouteCommands.RoutePosition(_tracker), T0);
+
+        PlotMark? held = null;
+        for (int s = 1; s <= 40; s++)
+        {
+            double heading = s <= 10 ? 90 : s % 2 == 0 ? 0 : 180;
+            _kneeboard.Advance(T0.AddSeconds(s), heading, 100);
+            if (s == 30)
+                held = Picture(T0.AddSeconds(s)).Player!.Mark; // still plotting; the fight has not yet frozen the pencil
+        }
+        var frozen = Picture(T0.AddSeconds(40)).Player!.Mark;
+        Assert.NotNull(held);
+
+        Assert.InRange(frozen.East, held.East - 1, held.East + 1);
+        Assert.InRange(frozen.North, held.North - 1, held.North + 1);
+        double extra = Kneeboard.DriftPerMinute * 10 / 60.0 + Kneeboard.ManeuverDriftPerMinute * 10 / 60.0;
+        Assert.InRange(frozen.Size - held.Size, extra - 1, extra + 1);
+        Assert.Empty(Picture(T0.AddSeconds(40)).Pencil);
     }
 
     [Fact]
@@ -462,5 +807,43 @@ public class KneeboardTests
         Assert.Equal(KneeboardView.Large, KneeboardPlacement.Next(KneeboardView.Small));
         Assert.Equal(KneeboardView.Hidden, KneeboardPlacement.Next(KneeboardView.Large));
         Assert.Null(KneeboardPlacement.ParseView("2"));
+    }
+
+    [Fact]
+    public void A_course_stays_centred_on_the_left_of_its_leg_when_the_paper_there_is_free()
+    {
+        var east = SheetNotes.Course(0, 0, 200, 0, 40, 10, 3, []);
+        Assert.InRange(east.OriginX, 99.9f, 100.1f);
+        Assert.InRange(east.OriginY, -0.1f, 0.1f);
+        Assert.InRange(east.AngleDegrees, -0.1f, 0.1f);
+        Assert.InRange(east.LocalX, -20.1f, -19.9f);
+        Assert.InRange(east.LocalY, -13.1f, -12.9f);
+
+        // A leg flown west is turned upright, and the words stay on the left of that way, which is below the line.
+        var west = SheetNotes.Course(200, 0, 0, 0, 40, 10, 3, []);
+        Assert.InRange(west.AngleDegrees, -0.1f, 0.1f);
+        Assert.InRange(west.LocalY, 2.9f, 3.1f);
+    }
+
+    [Fact]
+    public void A_short_leg_home_does_not_write_its_course_through_the_field_name()
+    {
+        // The escort's last leg: about 21 km, mostly west, with the words longer than the clear paper at Tusov.
+        var ring = SheetNotes.Ink.Upright(-8, -8, 16, 16);
+        var name = SheetNotes.Ink.Upright(11, -11, 56, 18);
+        var place = SheetNotes.Course(84, -14, 0, 0, 120, 16, 3, [ring, name]);
+
+        Assert.False(place.Box.Hits(ring, 6));
+        Assert.False(place.Box.Hits(name, 6));
+    }
+
+    [Fact]
+    public void The_field_name_moves_when_its_usual_place_is_already_written_on()
+    {
+        var taken = SheetNotes.Ink.Upright(11, -11, 56, 18);
+        var name = SheetNotes.Beside(11, -11, 56, 18, 0, 0, 8, 6, [taken]);
+
+        Assert.False(name.Box.Hits(taken, 6));
+        Assert.True(MathF.Abs(name.X - 11) > 1 || MathF.Abs(name.Y + 11) > 1);
     }
 }

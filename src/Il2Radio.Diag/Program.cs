@@ -394,6 +394,19 @@ int MissionCmd(string? path)
         Console.WriteLine(plan.HomeField(chains) is { } home
             ? $"Home field: {home.Name} (country {home.Country}) {home.Position}"
             : "Home field: none of the player's country in this mission");
+        if (KneeboardSheet.For(plan) is { } sheet)
+        {
+            Console.WriteLine(sheet.RouteOf is { } whose
+                ? $"Kneeboard: {sheet.RouteHeading} ({whose}), {sheet.Route.Count} waypoints, home {sheet.HomeField?.Name ?? "none"}"
+                : $"Kneeboard: own route, {sheet.Route.Count} waypoints, home {sheet.HomeField?.Name ?? "none"}");
+            if (sheet.RouteOf is not null)
+                for (int i = 0; i < sheet.Route.Count; i++)
+                {
+                    var w = sheet.Route[i];
+                    string party = sheet.OwnFrom is int own && i >= own ? "ours" : "theirs";
+                    Console.WriteLine($"    {i + 1,2} {party,-6} {w.Name,-24} {w.Position}");
+                }
+        }
     }
 
     Console.WriteLine("\nPlanned aircraft by coalition and type:");

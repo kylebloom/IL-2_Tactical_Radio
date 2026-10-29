@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Il2Radio.Core.Audio;
 
 namespace Il2Radio.Windows;
 
@@ -8,25 +9,26 @@ namespace Il2Radio.Windows;
 /// the Windows audio-session peak meter, to guess when IL-2's AI radio is talking. Only reads the
 /// meter Windows keeps for the mixer; nothing touches the game.
 ///
-/// IL-2 mixes radio, engine and guns into one session, so radio can't be told apart directly.
-/// The heuristic: the engine is a steady floor, a transmission rises clearly above it. A slow
-/// baseline follows the floor; the channel counts as busy while the short-term peak is
-/// <see cref="Ratio"/> times above it, and for <see cref="Hang"/> after (the pauses between words).
-/// Gunfire also counts as busy, which is no bad thing for holding a reply. UNVERIFIED against real
-/// IL-2 chatter: the monitor shows the levels so the threshold can be tuned with --radio-wait-ratio.
+/// IL-2 mixes radio, engine and guns into one session, so radio can't be told apart by a level alone.
+/// The engine is a steady floor. A transmission either jumps <see cref="Ratio"/> times above that
+/// floor, or flutters (the peak rising and falling within half a second) the way speech does.
+/// The floor follows a steady level and stays put while the peak is fluttering, so ongoing chatter
+/// does not become the new floor. Every audio session of the process is watched; the loudest peak
+/// counts. The channel stays busy for <see cref="Hang"/> after (the pauses between words). Gunfire
+/// also counts as busy, which is no bad thing for holding a reply. The 2026-10-28 flight held two
+/// replies in 55 minutes on the jump test alone: speech under a loud engine never cleared that bar.
 /// </summary>
 internal sealed class Il2AudioMeter : IDisposable
 {
     public const string ProcessName = "Il-2";
-    public static readonly TimeSpan Hang = TimeSpan.FromSeconds(0.8);
+    public static readonly TimeSpan Hang = TimeSpan.FromSeconds(1.2);
 
     private readonly System.Threading.Timer _timer;
     private readonly object _gate = new();
-    private IAudioMeterInformation? _meter;
-    private int _meterPid;
+    private readonly List<(IAudioMeterInformation Meter, int Pid)> _meters = new();
+    private readonly TransmissionDetector _detector;
     private DateTime _nextLookupUtc;
     private DateTime _busyUntilUtc;
-    private double _baseline = -1;
     private double _peak;
 
     private readonly string _processName;
@@ -36,6 +38,7 @@ internal sealed class Il2AudioMeter : IDisposable
         _processName = processName;
         Ratio = ratio;
         Floor = floor;
+        _detector = new TransmissionDetector(ratio, floor);
         _timer = new System.Threading.Timer(_ => Sample(), null, 0, 50);
     }
 
@@ -57,9 +60,9 @@ internal sealed class Il2AudioMeter : IDisposable
         get
         {
             lock (_gate)
-                return _meter is null
+                return _meters.Count == 0
                     ? $"IL-2 audio: no {_processName}.exe audio session yet (replies are not held)"
-                    : $"IL-2 audio: peak {_peak:F2}, baseline {_baseline:F2}, ratio {Ratio:F1} -> {(DateTime.UtcNow < _busyUntilUtc ? "BUSY, holding replies" : "clear")}";
+                    : $"IL-2 audio: peak {_peak:F2}, baseline {_detector.Baseline:F2}, ratio {Ratio:F1}, {_meters.Count} session(s) -> {(DateTime.UtcNow < _busyUntilUtc ? "BUSY, holding replies" : "clear")}";
         }
     }
 
@@ -70,19 +73,26 @@ internal sealed class Il2AudioMeter : IDisposable
             var now = DateTime.UtcNow;
             try
             {
-                if (_meter is null || !Alive(_meterPid))
+                if (_meters.Count == 0 || _meters.Exists(m => !Alive(m.Pid)))
                 {
-                    if (now < _nextLookupUtc)
+                    if (_meters.Count == 0 && now < _nextLookupUtc)
                         return;
                     _nextLookupUtc = now.AddSeconds(3);
                     Release();
-                    (_meter, _meterPid) = FindSession(_processName);
-                    if (_meter is null)
+                    _meters.AddRange(FindSessions(_processName));
+                    if (_meters.Count == 0)
                         return;
                 }
 
-                _meter.GetPeakValue(out float value);
-                _peak = value;
+                double peak = 0;
+                foreach (var (meter, _) in _meters)
+                {
+                    meter.GetPeakValue(out float value);
+                    if (value > peak)
+                        peak = value;
+                }
+
+                _peak = peak;
             }
             catch (COMException)
             {
@@ -90,9 +100,7 @@ internal sealed class Il2AudioMeter : IDisposable
                 return;
             }
 
-            // Follow the floor quickly downwards and slowly upwards (~10 s), so a transmission barely moves it.
-            _baseline = _baseline < 0 ? _peak : _peak < _baseline ? _baseline + (_peak - _baseline) * 0.2 : _baseline + (_peak - _baseline) * 0.005;
-            if (_peak >= Floor && _peak > _baseline * Ratio)
+            if (_detector.Observe(_peak))
                 _busyUntilUtc = now + Hang;
         }
     }
@@ -110,18 +118,19 @@ internal sealed class Il2AudioMeter : IDisposable
         }
     }
 
-    /// <summary>The peak meter of Il-2.exe's session on the default render device, if it has one.</summary>
-    private static (IAudioMeterInformation?, int) FindSession(string processName)
+    /// <summary>The peak meters of every Il-2.exe session on the default render device.</summary>
+    private static List<(IAudioMeterInformation Meter, int Pid)> FindSessions(string processName)
     {
+        var found = new List<(IAudioMeterInformation, int)>();
         var pids = Process.GetProcessesByName(processName).Select(p => { using (p) return p.Id; }).ToHashSet();
         if (pids.Count == 0)
-            return (null, 0);
+            return found;
 
         var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
         try
         {
             if (enumerator.GetDefaultAudioEndpoint(EDataFlow.Render, ERole.Multimedia, out var device) != 0)
-                return (null, 0);
+                return found;
             var iid = typeof(IAudioSessionManager2).GUID;
             device.Activate(ref iid, ClsctxAll, IntPtr.Zero, out object managerObject);
             var manager = (IAudioSessionManager2)managerObject;
@@ -131,10 +140,11 @@ internal sealed class Il2AudioMeter : IDisposable
             {
                 sessions.GetSession(i, out var control);
                 if (control is IAudioSessionControl2 control2 && control2.GetProcessId(out uint pid) == 0 && pids.Contains((int)pid))
-                    return ((IAudioMeterInformation)control, (int)pid);
-                Marshal.ReleaseComObject(control);
+                    found.Add(((IAudioMeterInformation)control, (int)pid));
+                else
+                    Marshal.ReleaseComObject(control);
             }
-            return (null, 0);
+            return found;
         }
         finally
         {
@@ -144,9 +154,9 @@ internal sealed class Il2AudioMeter : IDisposable
 
     private void Release()
     {
-        if (_meter is not null)
-            Marshal.ReleaseComObject(_meter);
-        _meter = null;
+        foreach (var (meter, _) in _meters)
+            Marshal.ReleaseComObject(meter);
+        _meters.Clear();
     }
 
     public void Dispose()

@@ -18,7 +18,7 @@ Five calls from the numpad, with `realism: pilot` as the default in the player's
 | Numpad 2 | "Flight, report your position." | The player's own flight |
 | Numpad 3 | "Flight, I am separated. Request rejoin." | The main part of that flight |
 | Numpad 4 | "Flight, report contacts." | The flight, or any friendly in range when flying alone |
-| Numpad 5 | "Flight, identify nearest contact." | The same observers, one contact |
+| Numpad 5 | "Flight, identify nearest enemy." | The same observers, the nearest hostile or still-unknown aircraft (since 2026-10-28; before that, the nearest aircraft of any side) |
 
 The player's line is English text plus a microphone click. It is not spoken. Replies are IL-2's own pilot recordings for the speaker's nation. Words those recordings have no clip for stay on the screen (since 2026-10-26 nothing else speaks; before that a German phrase voice filled them). The on-screen text stays English.
 

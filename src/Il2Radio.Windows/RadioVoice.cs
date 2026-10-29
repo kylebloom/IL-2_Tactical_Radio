@@ -69,7 +69,7 @@ internal sealed class RadioVoice : IDisposable
     public Func<bool>? ChannelBusy { get; set; }
 
     /// <summary>Longest a reply is held for IL-2's chatter before it goes out anyway.</summary>
-    public static readonly TimeSpan MaxHold = TimeSpan.FromSeconds(8);
+    public static readonly TimeSpan MaxHold = TimeSpan.FromSeconds(15);
 
     /// <summary>How many transmissions were held for IL-2's radio, and for how long in total (for the evidence file).</summary>
     public (int Count, TimeSpan Total) Held => (Volatile.Read(ref _heldCount), TimeSpan.FromTicks(Interlocked.Read(ref _heldTicks)));

@@ -23,7 +23,7 @@ public static class RadioCommands
         RadioCommand.FlightPosition => "Request flight position",
         RadioCommand.Rejoin => "Separated — request rejoin",
         RadioCommand.EnemyContacts => "Request enemy contacts",
-        RadioCommand.IdentifyContact => "Identify nearest contact",
+        RadioCommand.IdentifyContact => "Identify nearest enemy",
         RadioCommand.RoutePosition => "Where am I on the route",
         RadioCommand.SteerHome => "Steer home",
         RadioCommand.SteerTarget => "Steer to target",

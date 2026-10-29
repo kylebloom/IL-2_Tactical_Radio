@@ -33,8 +33,16 @@ static class KneeboardTest
             flight = [me];
         if (flight.Select(a => plan.BriefedRoutes.GetValueOrDefault(a.Index)).FirstOrDefault(r => r is { Count: >= 3 }) is not { } route)
         {
-            Console.Error.WriteLine("The player's flight has no briefed route of three waypoints (an escort?). Pass a sweep or patrol mission.");
-            return 1;
+            // An escort is briefed with only its landing. The sheet still carries the covered route, so draw that.
+            var sheetOnly = new Kneeboard();
+            sheetOnly.Reset(plan);
+            if (sheetOnly.Picture(DateTime.UtcNow, KneeboardView.Large) is null)
+            {
+                Console.Error.WriteLine("The player's flight has no briefed route.");
+                return 1;
+            }
+            Write(sheetOnly, DateTime.UtcNow);
+            return 0;
         }
 
         var tracker = new ContactTracker();
@@ -113,23 +121,28 @@ static class KneeboardTest
         Ask(RadioCommand.SteerHome, now.AddSeconds(10));
         var later = now.AddSeconds(70);
 
-        Directory.CreateDirectory(outputDir);
-        foreach (var view in new[] { KneeboardView.Small, KneeboardView.Large })
+        Write(kneeboard, later);
+        return 0;
+
+        void Write(Kneeboard drawn, DateTime at)
         {
-            var picture = kneeboard.Picture(later, view)!;
-            string path = Path.Combine(outputDir, $"kneeboard-{view.ToString().ToLowerInvariant()}.png");
-            KneeboardPanel.Save(picture, screenHeight, path);
-            Console.WriteLine($"wrote {path}");
-            if (view == KneeboardView.Large)
+            Directory.CreateDirectory(outputDir);
+            foreach (var view in new[] { KneeboardView.Small, KneeboardView.Large })
             {
-                foreach (var m in picture.Marks)
-                    Console.WriteLine($"  mark {m.Mark.Subject} {m.Mark.Label} {m.Mark.Shape} {m.Mark.Size / 1000:F1} km, {m.AgeText}, alpha {m.Alpha:F2}");
-                if (picture.Player is { } p)
-                    Console.WriteLine($"  you: dead reckoning, {p.Mark.Size / 1000:F1} km radius; {(picture.OffSheet is { } edge ? "off the sheet " + edge : "on the sheet")}");
-                foreach (string line in picture.Footer)
-                    Console.WriteLine($"  footer: {line}");
+                var picture = drawn.Picture(at, view)!;
+                string path = Path.Combine(outputDir, $"kneeboard-{view.ToString().ToLowerInvariant()}.png");
+                KneeboardPanel.Save(picture, screenHeight, path);
+                Console.WriteLine($"wrote {path}");
+                if (view == KneeboardView.Large)
+                {
+                    foreach (var m in picture.Marks)
+                        Console.WriteLine($"  mark {m.Mark.Subject} {m.Mark.Label} {m.Mark.Shape} {m.Mark.Size / 1000:F1} km, {m.AgeText}, alpha {m.Alpha:F2}");
+                    if (picture.Player is { } p)
+                        Console.WriteLine($"  you: dead reckoning, {p.Mark.Size / 1000:F1} km radius; {(picture.OffSheet is { } edge ? "off the sheet " + edge : "on the sheet")}");
+                    foreach (string line in picture.Footer)
+                        Console.WriteLine($"  footer: {line}");
+                }
             }
         }
-        return 0;
     }
 }

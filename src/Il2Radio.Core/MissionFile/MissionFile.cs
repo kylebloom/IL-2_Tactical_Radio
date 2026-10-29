@@ -193,6 +193,23 @@ public sealed record MissionPlan(
     public IReadOnlyDictionary<int, IReadOnlyList<PlannedWaypoint>> BriefedRoutes { get; init; }
         = new Dictionary<int, IReadOnlyList<PlannedWaypoint>>();
 
+    /// <summary>
+    /// Waypoints of the same flight that come after <see cref="BriefedRoutes"/>, once the objective is done.
+    /// Career does not link these from the attack waypoint: the waypoint arms a trigger, and the trigger's
+    /// bomb-drop event leads through a timer to the flight's next waypoint (the bombers' way home). The route
+    /// calls keep the briefed order; the kneeboard uses this to draw the leg back. Plan, not a live position.
+    /// </summary>
+    public IReadOnlyDictionary<int, IReadOnlyList<PlannedWaypoint>> AfterObjective { get; init; }
+        = new Dictionary<int, IReadOnlyList<PlannedWaypoint>>();
+
+    /// <summary>
+    /// The plane index an aircraft was ordered to cover, keyed by the escort's plane index.
+    /// <c>MCU_CMD_Cover</c> names the escort in <c>Objects</c> and the covered aircraft's entity in <c>Targets</c>.
+    /// VERIFIED on the Career escort in this install's <c>_gen.Mission</c>, 2026-10-28: the fighter leader's Cover
+    /// targets the He 111 leader, and that bomber's waypoints are the route drawn on the map. Plan, not a live position.
+    /// </summary>
+    public IReadOnlyDictionary<int, int> CoverOf { get; init; } = new Dictionary<int, int>();
+
     /// <summary>Every airfield in the mission, any country.</summary>
     public IReadOnlyList<PlannedAirfield> Airfields { get; init; } = [];
 
@@ -244,12 +261,14 @@ public sealed record MissionPlan(
             })
             .ToList();
 
-        var waypoints = ParseRoutes(blocks, out var briefed);
+        var waypoints = ParseRoutes(blocks, out var briefed, out var afterObjective);
         return new MissionPlan(options.GetString("GuiMap"), options.Get("Date") ?? "", options.Get("Time") ?? "", countries, aircraft)
         {
             Weather = MissionWeather.FromOptions(options),
             Waypoints = waypoints,
             BriefedRoutes = briefed,
+            AfterObjective = afterObjective,
+            CoverOf = ParseCover(blocks),
             Routes = waypoints.ToDictionary(
                 kv => kv.Key,
                 kv => (IReadOnlyList<IReadOnlyList<WorldPoint>>)kv.Value.Select(path => (IReadOnlyList<WorldPoint>)path.Select(w => w.Position).ToList()).ToList()),
@@ -261,9 +280,35 @@ public sealed record MissionPlan(
         };
     }
 
+    /// <summary>Escort plane index to the plane index it was ordered to cover. See <see cref="CoverOf"/>.</summary>
+    private static Dictionary<int, int> ParseCover(IReadOnlyList<MissionBlock> roots)
+    {
+        var all = Walk(roots).ToList();
+        var planeOfEntity = new Dictionary<int, int>();
+        foreach (var entity in all.Where(b => b.Type == "MCU_TR_Entity"))
+        {
+            int index = entity.GetInt("Index"), plane = entity.GetInt("MisObjID");
+            if (index >= 0 && plane >= 0)
+                planeOfEntity[index] = plane;
+        }
+
+        var cover = new Dictionary<int, int>();
+        foreach (var block in all.Where(b => b.Type == "MCU_CMD_Cover"))
+        {
+            int covered = IntList(block.Get("Targets")).Select(e => planeOfEntity.GetValueOrDefault(e, -1)).FirstOrDefault(p => p >= 0, -1);
+            if (covered < 0)
+                continue;
+            foreach (int entity in IntList(block.Get("Objects")))
+                if (planeOfEntity.TryGetValue(entity, out int escort))
+                    cover.TryAdd(escort, covered);
+        }
+        return cover;
+    }
+
     /// <summary>Waypoint chains keyed by the plane index their entity points at (<c>MisObjID</c>).</summary>
     private static Dictionary<int, IReadOnlyList<IReadOnlyList<PlannedWaypoint>>> ParseRoutes(IReadOnlyList<MissionBlock> roots,
-        out Dictionary<int, IReadOnlyList<PlannedWaypoint>> briefed)
+        out Dictionary<int, IReadOnlyList<PlannedWaypoint>> briefed,
+        out Dictionary<int, IReadOnlyList<PlannedWaypoint>> afterObjective)
     {
         var all = Walk(roots).ToList();
         var blockByIndex = new Dictionary<int, MissionBlock>();
@@ -321,11 +366,18 @@ public sealed record MissionPlan(
         }
 
         briefed = new Dictionary<int, IReadOnlyList<PlannedWaypoint>>();
+        afterObjective = new Dictionary<int, IReadOnlyList<PlannedWaypoint>>();
         foreach (var (entity, points) in byEntity)
         {
-            if (planeOfEntity.TryGetValue(entity, out int plane) && !briefed.ContainsKey(plane)
-                && BriefedOrder(points, blockByIndex) is { Count: > 0 } order)
-                briefed[plane] = order;
+            if (!planeOfEntity.TryGetValue(entity, out int plane) || briefed.ContainsKey(plane))
+                continue;
+            var nodes = BriefedNodes(points, blockByIndex);
+            if (nodes.Count == 0)
+                continue;
+            briefed[plane] = nodes.Select(w => new PlannedWaypoint(w.Position, w.Name)).ToList();
+            var homeward = WaypointsAfter(nodes[^1], points, blockByIndex, nodes.Select(n => n.Index).ToHashSet());
+            if (homeward.Count > 0)
+                afterObjective[plane] = homeward.Select(w => new PlannedWaypoint(w.Position, w.Name)).ToList();
         }
 
         return routes;
@@ -335,7 +387,7 @@ public sealed record MissionPlan(
     private const int TimedLinkDepth = 6;
 
     /// <summary>One flight's waypoints in briefed order; see <see cref="MissionPlan.BriefedRoutes"/>.</summary>
-    private static List<PlannedWaypoint> BriefedOrder(List<WaypointNode> points, Dictionary<int, MissionBlock> blocks)
+    private static List<WaypointNode> BriefedNodes(List<WaypointNode> points, Dictionary<int, MissionBlock> blocks)
     {
         var byIndex = points.GroupBy(p => p.Index).ToDictionary(g => g.Key, g => g.First());
         int[] Direct(WaypointNode w) => w.Targets.Where(byIndex.ContainsKey).ToArray();
@@ -409,7 +461,67 @@ public sealed record MissionPlan(
             }
         }
 
-        return sequence.Select(w => new PlannedWaypoint(w.Position, w.Name)).ToList();
+        return sequence;
+    }
+
+    /// <summary>
+    /// The same flight's next waypoint after <paramref name="from"/>, when it is reached by arming a trigger
+    /// (an <c>MCU_Activate</c> the waypoint targets) whose event, usually the bomb drop, leads through timers
+    /// and counters. Direct waypoint links are already in the briefed order. See <see cref="MissionPlan.AfterObjective"/>.
+    /// </summary>
+    private static List<WaypointNode> WaypointsAfter(WaypointNode from, List<WaypointNode> points, Dictionary<int, MissionBlock> blocks, HashSet<int> visited)
+    {
+        var ours = points.GroupBy(p => p.Index).ToDictionary(g => g.Key, g => g.First());
+        var seen = new HashSet<int>(visited);
+        var frontier = from.Targets.ToList();
+        WaypointNode? next = null;
+        for (int depth = 0; depth < TimedLinkDepth && frontier.Count > 0 && next is null; depth++)
+        {
+            var following = new List<int>();
+            foreach (int id in frontier)
+            {
+                if (!seen.Add(id))
+                    continue;
+                if (ours.TryGetValue(id, out var waypoint))
+                {
+                    next = waypoint;
+                    break;
+                }
+                if (!blocks.TryGetValue(id, out var block))
+                    continue;
+                following.AddRange(IntList(block.Get("Targets")));
+                if (block.Type == "MCU_Activate")
+                    following.AddRange(IntList(block.Get("Objects")));
+                foreach (var child in block.Children)
+                    following.AddRange(EventTargets(child));
+            }
+            frontier = following;
+        }
+
+        if (next is null)
+            return [];
+        var tail = new List<WaypointNode> { next };
+        var taken = new HashSet<int>(visited) { next.Index };
+        for (var at = next; ;)
+        {
+            int onward = at.Targets.FirstOrDefault(t => ours.ContainsKey(t) && !taken.Contains(t), -1);
+            if (onward < 0)
+                break;
+            taken.Add(onward);
+            at = ours[onward];
+            tail.Add(at);
+        }
+        return tail;
+    }
+
+    /// <summary><c>OnEvent</c> targets nested under a block, including one <c>OnEvents</c> wrapper.</summary>
+    private static IEnumerable<int> EventTargets(MissionBlock block)
+    {
+        if (block.Type == "OnEvent" && block.GetInt("TarId") is var id && id >= 0)
+            yield return id;
+        foreach (var child in block.Children)
+            foreach (int nested in EventTargets(child))
+                yield return nested;
     }
 
     private static List<IReadOnlyList<PlannedWaypoint>> OrderPaths(List<WaypointNode> points)
